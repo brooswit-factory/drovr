@@ -2,28 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { HerdrClient } from "@brooswit/herdr-sdk";
 import { DrovrClient } from "../src/drovr-client.js";
 import { buildFakeHerdrClient } from "./support/fake-herdr-client.js";
-
-/**
- * Learns HerdrClient's method surface at runtime from a real (never-
- * connected) instance -- no hard-coded name list. This is the same
- * discovery technique `src/service-proxy.ts` uses to wrap services, so
- * this test genuinely fails if that technique, or DrovrClient's use of
- * it, stops reaching a method: it isn't asserting against a name list
- * that could itself silently miss the same drift.
- */
-function enumerateSurface(client: HerdrClient): Array<{ service: string; method: string }> {
-  const surface: Array<{ service: string; method: string }> = [];
-  for (const [key, value] of Object.entries(client)) {
-    if (value === null || typeof value !== "object") continue;
-    const proto = Object.getPrototypeOf(value);
-    if (proto === null || proto === Object.prototype) continue;
-    for (const method of Object.getOwnPropertyNames(proto)) {
-      if (method === "constructor") continue;
-      surface.push({ service: key, method });
-    }
-  }
-  return surface;
-}
+import { enumerateSurface } from "./support/enumerate-surface.js";
 
 describe("DrovrClient parity with HerdrClient", () => {
   test("sanity: the SDK currently exposes 91 methods across 12 services", () => {
