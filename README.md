@@ -36,6 +36,36 @@ Some of the evidence behind that call:
 
 ## Consuming drovr
 
-Coming in the next story — drovr does not yet wrap or override anything.
-This package is currently a scaffold: a build, a dependency on
-`@brooswit/herdr-sdk`, tests, and CI.
+`DrovrClient` is a drop-in, pass-through replacement for `HerdrClient`: same
+services, same methods, same results (by reference), same errors (same
+instance, `isTimeout` intact), same event stream. Migrating is only the
+import and the constructor call.
+
+**Before:**
+
+```ts
+import { HerdrClient } from "@brooswit/herdr-sdk";
+
+const herdr = new HerdrClient({ socketPath, timeoutMs });
+await herdr.agent.list();
+```
+
+**After:**
+
+```ts
+import { DrovrClient } from "@brooswit/drovr";
+
+const herdr = new DrovrClient({ socketPath, timeoutMs });
+await herdr.agent.list();
+```
+
+`DrovrClient` is structurally assignable to `HerdrClient`, so a field typed
+`private readonly herdr: HerdrClient` keeps compiling unchanged. Everything a
+consumer needs from the SDK — `HerdrError`, `isTimeout`, `Subscription`, and
+the generated/typed-escape-hatch types — is re-exported from `@brooswit/drovr`
+too, so a migrated consumer never has to import from both packages.
+
+Right now `DrovrClient` does not correct or override anything — it's the
+choke point every call routes through, with no behaviour change, that a
+later story (DROVR-6) hangs a correction/override registry on. See
+`src/choke-point.ts` for that seam.
