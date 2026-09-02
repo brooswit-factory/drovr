@@ -7,6 +7,13 @@ export {
   type Invoke,
   passThroughChokePoint,
 } from "./choke-point.js";
+export {
+  type Correction,
+  type CorrectionContext,
+  type CorrectionRegistry,
+  createCorrectionChokePoint,
+  defaultCorrections,
+} from "./corrections.js";
 
 // Re-exported so a migrated consumer never has to import from both
 // drovr and @brooswit/herdr-sdk for the pieces DrovrClient hands back

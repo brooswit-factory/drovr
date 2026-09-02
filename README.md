@@ -12,6 +12,12 @@ daemon) and `candlestix` drive it directly through the SDK. drovr's job is:
 1. to catch block situations herdr does not report, and
 2. to override herdr's reporting where that reporting is wrong.
 
+`@brooswit/drovr` is a **library**: you consume it by importing
+`DrovrClient` into a TypeScript/JavaScript project, the same way you'd
+import `HerdrClient`. It ships no CLI and no executable. If a `drovr`
+program is on your `PATH`, it is a different, unrelated program — not this
+package.
+
 ## Why it exists
 
 butchr and candlestix both drive herdr. Without drovr, each of them would
@@ -65,7 +71,23 @@ consumer needs from the SDK — `HerdrError`, `isTimeout`, `Subscription`, and
 the generated/typed-escape-hatch types — is re-exported from `@brooswit/drovr`
 too, so a migrated consumer never has to import from both packages.
 
-Right now `DrovrClient` does not correct or override anything — it's the
-choke point every call routes through, with no behaviour change, that a
-later story (DROVR-6) hangs a correction/override registry on. See
-`src/choke-point.ts` for that seam.
+## The correction seam
+
+Every service method call and every `call()` funnels through a single choke
+point (`src/choke-point.ts`) that applies a per-wire-method correction
+registry (`src/corrections.ts`). **The registry ships empty in this
+package today** — no method is corrected, so `DrovrClient`'s observable
+behaviour is identical to `HerdrClient`'s: same results by reference, same
+errors (same instance, `isTimeout` intact), same event stream. A method
+with no registry entry is untouched by construction, not by convention.
+
+`DrovrClient#raw` is the uncorrected escape hatch: `drovr.raw.agent.list()`
+bypasses the registry regardless of what's registered for `agent.list`, so
+you can always tell drovr's correction apart from herdr's own report.
+
+A later epic adds a correction by adding one entry to the registry — no
+consumer of `DrovrClient` has to change, and no consumer ever needs to know
+which calls are corrected. See
+[`docs/correction-seam.md`](docs/correction-seam.md) for how the registry
+key is resolved, why it has to be the wire method name, how recursion
+through a correction is bounded, and a full worked example of adding one.
