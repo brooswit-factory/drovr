@@ -1,0 +1,42 @@
+{
+  "name": "@brooswit/drovr",
+  "version": "0.0.0",
+  "description": "Wrapper around the herdr SDK: catches block situations herdr does not report, and overrides herdr's reporting where it is wrong",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brooswit-factory/drovr.git"
+  },
+  "homepage": "https://github.com/brooswit-factory/drovr#readme",
+  "bugs": {
+    "url": "https://github.com/brooswit-factory/drovr/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun --sourcemap=external && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test",
+    "check": "bun run typecheck && bun test && bun run build"
+  },
+  "dependencies": {
+    "@brooswit/herdr-sdk": "^0.1.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "bun": ">=1.1"
+  }
+}
