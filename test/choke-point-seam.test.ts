@@ -9,18 +9,25 @@ import { enumerateSurface } from "./support/enumerate-surface.js";
  * this proves the seam DROVR-6 will hang off actually admits a registry:
  * every call's identity is visible, and both a normal result and a thrown
  * error can be observed or replaced from outside the choke point.
+ *
+ * DROVR-6 update: identity now carries the WIRE method (e.g. "agent.get"),
+ * not the JS method name (e.g. "get") -- see `src/service-proxy.ts`. This
+ * test's assertions changed to match (JS name -> wire name, raw JS args ->
+ * wire params) for that reason; the guarantee itself -- a custom choke
+ * point observes every call's identity and can replace a result or recover
+ * from an error -- is unchanged and still exercised end to end.
  */
 describe("the choke point is a real seam for a future override registry", () => {
   test("a custom choke point sees every call's identity and can replace a result or recover from an error", async () => {
     const seen: CallIdentity[] = [];
     const { client } = buildFakeHerdrClient({
-      resultFor: (call) => (call.method === "get" ? { real: true } : undefined),
-      errorFor: (call) => (call.method === "focus" ? new Error("herdr said no") : undefined),
+      resultFor: (call) => (call.method === "agent.get" ? { real: true } : undefined),
+      errorFor: (call) => (call.method === "agent.focus" ? new Error("herdr said no") : undefined),
     });
 
     const overriding: ChokePoint = async (identity, invoke) => {
       seen.push(identity);
-      if (identity.service === "agent" && identity.method === "list") return { overridden: true };
+      if (identity.method === "agent.list") return { overridden: true };
       try {
         return await invoke();
       } catch {
@@ -35,9 +42,9 @@ describe("the choke point is a real seam for a future override registry", () => 
     expect(await (drovr.agent.focus("x") as Promise<unknown>)).toEqual({ recovered: true });
 
     expect(seen).toEqual([
-      { service: "agent", method: "list", args: [] },
-      { service: "agent", method: "get", args: ["x"] },
-      { service: "agent", method: "focus", args: ["x"] },
+      { service: "agent", method: "agent.list", args: [{}] },
+      { service: "agent", method: "agent.get", args: [{ target: "x" }] },
+      { service: "agent", method: "agent.focus", args: [{ target: "x" }] },
     ]);
   });
 });
@@ -55,6 +62,14 @@ describe("the choke point is a real seam for a future override registry", () => 
  * lifted into `test/support/` so both tests share one definition instead
  * of two that could drift), so a service or method the SDK adds tomorrow
  * is covered automatically -- no name is hard-coded here.
+ *
+ * DROVR-6: identity.method is now the WIRE method, not the JS method name
+ * enumerateSurface reports (see `src/service-proxy.ts`) -- there is no
+ * name table here to translate one to the other, so "reached the choke
+ * point" is proven by count + uniqueness (every enumerated JS method
+ * produced exactly one, distinct, wire-level call) instead of a per-name
+ * lookup. A collision here (two JS methods resolving to the same wire
+ * identity, or one producing none) would fail this.
  */
 describe("every enumerated service method routes through the choke point", () => {
   test("a recording choke point observes every enumerated {service, method} pair", async () => {
@@ -75,10 +90,47 @@ describe("every enumerated service method routes through the choke point", () =>
       await (fn as (...a: unknown[]) => Promise<unknown>).call(drovrService, { probe: true });
     }
 
+    expect(seen.length).toBe(surface.length);
+    expect(new Set(seen.map((identity) => `${identity.service}::${identity.method}`)).size).toBe(surface.length);
+  });
+});
+
+/**
+ * DROVR-6 correction (mandatory, from the epic): wire-name recovery leans
+ * on herdr's *internal* structure -- every service method being a thin
+ * delegation onto the base `Service` class -- which is true of the
+ * installed SDK but not a contract herdr owes drovr. If a future method
+ * doesn't route through that trapped point, the safe runtime fallback is
+ * no correction (§5 of DROVR-10/DROVR-6) -- but that fallback is silent by
+ * nature (a correction that just never fires), so this test is what makes
+ * the failure loud and, critically, NAMES the offending method instead of
+ * only reporting a count mismatch. See docs/correction-seam.md.
+ */
+describe("every method on the runtime surface resolves to a wire name", () => {
+  test("each enumerated {service, method} pair yields exactly one, non-empty wire-level identity", async () => {
+    const { client } = buildFakeHerdrClient();
+    const seen: CallIdentity[] = [];
+    const recording: ChokePoint = (identity, invoke) => {
+      seen.push(identity);
+      return invoke();
+    };
+    const drovr = new DrovrClient({ herdr: client, chokePoint: recording });
+    const surface = enumerateSurface(client);
+    expect(surface.length).toBeGreaterThan(0);
+
     for (const { service, method } of surface) {
+      const before = seen.length;
+      const drovrService = (drovr as unknown as Record<string, Record<string, unknown> | undefined>)[service];
+      const fn = drovrService?.[method];
+      await (fn as (...a: unknown[]) => Promise<unknown>).call(drovrService, { probe: true });
+      const produced = seen.slice(before);
+
+      expect(produced.length, `${service}.${method} never reached the choke point -- no wire name was resolved`).toBe(
+        1,
+      );
       expect(
-        seen.some((identity) => identity.service === service && identity.method === method),
-        `choke point never saw ${service}.${method} -- that service is bypassing the seam`,
+        typeof produced[0]?.method === "string" && produced[0].method.length > 0,
+        `${service}.${method} resolved to an empty or non-string wire name`,
       ).toBe(true);
     }
   });

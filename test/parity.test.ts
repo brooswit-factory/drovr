@@ -25,12 +25,15 @@ describe("DrovrClient parity with HerdrClient", () => {
     }
 
     expect(calls.length).toBe(surface.length);
-    for (const { service, method } of surface) {
-      expect(
-        calls.some((c) => c.service === service && c.method === method),
-        `inner client never saw ${service}.${method}`,
-      ).toBe(true);
-    }
+    // DROVR-6: `calls[].method` is now the WIRE method (see
+    // `src/service-proxy.ts`), not the JS method name `surface` enumerates
+    // -- there is deliberately no name table here to translate one to the
+    // other (§5 of DROVR-6/DROVR-10), so reachability is proven by count +
+    // uniqueness: every enumerated JS method reached the inner client under
+    // exactly one, distinct wire identity. `test/choke-point-seam.test.ts`
+    // has the dedicated, per-method "names the offending method" version of
+    // this guarantee.
+    expect(new Set(calls.map((c) => `${c.service}::${c.method}`)).size).toBe(surface.length);
   });
 
   test("call() reaches the inner client with the method name and params intact", async () => {

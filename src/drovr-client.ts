@@ -2,12 +2,15 @@ import { HerdrClient, type HerdrClientOptions } from "@brooswit/herdr-sdk";
 import type { Method, ParamsOf, ResultOf } from "@brooswit/herdr-sdk";
 import { passThroughChokePoint, type ChokePoint } from "./choke-point.js";
 import { wrapServices } from "./service-proxy.js";
+import { createCorrectionChokePoint, defaultCorrections, type CorrectionRegistry } from "./corrections.js";
 
 export interface DrovrClientOptions extends HerdrClientOptions {
   /** Test seam: inject a fake/mock inner client instead of constructing a real `HerdrClient`. */
   herdr?: HerdrClient;
-  /** DROVR-6 seam: override the choke point every call routes through. Defaults to pass-through. */
+  /** Test seam: override the choke point every call routes through. Defaults to the correction registry below. */
   chokePoint?: ChokePoint;
+  /** Test seam: override the correction registry the default choke point applies. Defaults to the empty, shipped registry. */
+  corrections?: CorrectionRegistry;
 }
 
 /**
@@ -39,13 +42,36 @@ export class DrovrClient {
   readonly ui!: HerdrClient["ui"];
   readonly events!: HerdrClient["events"];
 
+  /**
+   * The raw, uncorrected escape hatch (§4 property 4 of DROVR-6): a
+   * `DrovrClient` sharing this instance's inner herdr client, but wired to
+   * `passThroughChokePoint` so it never consults the correction registry.
+   * This is what `ctx.client` (see `corrections.ts`) hands a correction, so
+   * a correction calling back through it can never re-enter any corrector
+   * -- bounding recursion structurally instead of by a depth counter. It's
+   * also how a consumer tells "is herdr still wrong about this?" apart from
+   * drovr's own correction.
+   */
+  readonly raw: DrovrClient;
+
   private readonly inner: HerdrClient;
   private readonly chokePoint: ChokePoint;
 
   constructor(options: DrovrClientOptions = {}) {
-    const { herdr, chokePoint, ...herdrOptions } = options;
+    const { herdr, chokePoint, corrections, ...herdrOptions } = options;
     this.inner = herdr ?? new HerdrClient(herdrOptions);
-    this.chokePoint = chokePoint ?? passThroughChokePoint;
+
+    if (chokePoint === passThroughChokePoint) {
+      // Base case: this construction *is* the raw client (see the `raw`
+      // branch below) -- terminate the recursion here instead of building
+      // yet another raw client underneath it.
+      this.chokePoint = passThroughChokePoint;
+      this.raw = this;
+    } else {
+      this.raw = new DrovrClient({ herdr: this.inner, chokePoint: passThroughChokePoint });
+      this.chokePoint = chokePoint ?? createCorrectionChokePoint(corrections ?? defaultCorrections, () => this.raw);
+    }
+
     Object.assign(this, wrapServices(this.inner, this.chokePoint));
   }
 
