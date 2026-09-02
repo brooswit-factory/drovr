@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HerdrError, isTimeout } from "@brooswit/herdr-sdk";
 import { DrovrClient } from "../src/drovr-client.js";
-import type { CorrectionRegistry } from "../src/corrections.js";
+import { defaultCorrections, type CorrectionRegistry } from "../src/corrections.js";
 import { buildFakeHerdrClient } from "./support/fake-herdr-client.js";
 
 /**
@@ -139,12 +139,31 @@ describe("correction registry", () => {
   });
 
   // The registry ships empty: behaviour with the real, shipped default is
-  // identical to plain pass-through.
-  test("the default (empty) registry changes no behaviour", async () => {
+  // identical to plain pass-through -- for the one method this exercises.
+  // On its own this is NOT a guarantee that the shipped registry is empty:
+  // a correction registered on any OTHER method would sail straight
+  // through this test undetected. See the dedicated assertion below, which
+  // reads `defaultCorrections` directly instead of spot-checking behaviour
+  // through a single method.
+  test("the default (empty) registry changes no behaviour for agent.list", async () => {
     const sentinel = { agents: [] };
     const { client } = buildFakeHerdrClient({ resultFor: () => sentinel });
     const drovr = new DrovrClient({ herdr: client });
 
     expect(await (drovr.agent.list() as Promise<unknown>)).toBe(sentinel);
+  });
+
+  // THE blocking guarantee: the registry this epic ships genuinely has no
+  // entries, checked by reading the shipped object rather than by spot-
+  // checking one method's behaviour. A correction registered on ANY wire
+  // method -- not just the one or two a behavioural test happens to probe
+  // -- fails this and names the offending key(s), because a behavioural
+  // test that only exercises "agent.list" cannot see a correction smuggled
+  // in on "server.ping" or any other of the ~91 methods. This is the
+  // property the epic said would be checked hardest: "this epic changed no
+  // behaviour" rests entirely on this registry being empty.
+  test("the shipped default registry has no entries", () => {
+    const smuggledKeys = Object.keys(defaultCorrections);
+    expect(smuggledKeys, `defaultCorrections must ship empty -- found: ${smuggledKeys.join(", ")}`).toEqual([]);
   });
 });

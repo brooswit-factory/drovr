@@ -134,6 +134,18 @@ invoked for that call, and the method's own real result is returned as-is.
 That's the deliberate, safe fallback: no wire name means no correction,
 never a guessed key.
 
+One instance of that fallback is deliberate rather than a gap: calling
+`.call` itself on a wrapped service (`drovr.<service>.call(wireMethod,
+params)`) no longer reaches the choke point — the `get` trap returns
+`Service.prototype.call` unwrapped, because `call` isn't itself a
+`this.call` delegation onto anything. This isn't a consumer-reachable hole:
+`Service#call` is `protected` in the SDK's own types (calling it from
+outside doesn't type-check without a cast), and it's declared on
+`Service.prototype`, one level above each concrete service class, so
+`enumerateSurface`'s reflection over a service's *own* prototype methods
+never yields it — no route to a wire method that's actually part of
+`DrovrClient`'s surface escapes a registration this way.
+
 ### What that depends on, and which test defends it
 
 Recovering the wire name this way depends on every service method being a

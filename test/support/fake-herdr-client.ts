@@ -87,9 +87,20 @@ export function buildFakeHerdrClient(
     const proto = Object.getPrototypeOf(value);
     if (proto === null || proto === Object.prototype) continue;
     const fakeService = Object.create(proto, {
+      // writable/configurable: true -- matching a real class method (the
+      // real SDK's `Service.prototype.call` is both). Left at the
+      // `Object.create` default of `false` here before, a Proxy `get` trap
+      // (as `wrapService` uses) is only allowed to report a value that
+      // matches the target's own for a non-configurable, non-writable
+      // property (a JS Proxy invariant) -- so merely READING `.call` off a
+      // wrapped fake service threw a Proxy-invariant TypeError, a fixture
+      // divergence from the real SDK unrelated to whatever a test using it
+      // was actually checking.
       call: {
         value: (method: string, params: unknown) =>
           Promise.resolve().then(() => respond({ service: key, method, args: [params] })),
+        writable: true,
+        configurable: true,
       },
     });
     client[key] = fakeService;
