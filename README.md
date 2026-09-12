@@ -42,10 +42,10 @@ Some of the evidence behind that call:
 
 ## Consuming drovr
 
-`DrovrClient` is a drop-in, pass-through replacement for `HerdrClient`: same
-services, same methods, same results (by reference), same errors (same
-instance, `isTimeout` intact), same event stream. Migrating is only the
-import and the constructor call.
+`DrovrClient` is a drop-in replacement for `HerdrClient`: same services and
+methods, with targeted report corrections. Unmatched results retain object
+identity; original errors retain their instance and `isTimeout` behavior.
+The event stream is unchanged. Migrating is the import and constructor call.
 
 **Before:**
 
@@ -81,7 +81,7 @@ Claude flags into Codex flags, select a model, change authentication, or fall
 back to a different provider after a failure.
 
 Both kinds use the same `agent.prompt`, `agent.get`, `agent.read`, and
-`agent.wait` methods. Herdr owns terminal interaction and status detection;
+`agent.wait` methods. Herdr owns terminal interaction and base status detection;
 the consuming application owns agent-specific instruction files, MCP
 configuration, model selection, and permission policy. In particular, passing
 through an agent kind does not imply support for another client's MCP channel
@@ -94,19 +94,29 @@ both providers without launching agents or consuming model quota.
 
 Every service method call and every `call()` funnels through a single choke
 point (`src/choke-point.ts`) that applies a per-wire-method correction
-registry (`src/corrections.ts`). **The registry ships empty in this
-package today** — no method is corrected, so `DrovrClient`'s observable
-behaviour is identical to `HerdrClient`'s: same results by reference, same
-errors (same instance, `isTimeout` intact), same event stream. A method
-with no registry entry is untouched by construction, not by convention.
+registry (`src/corrections.ts`). The default correction catches the current
+Codex directory trust dialog when Herdr reports `idle` or `done`: a complete active
+dialog on a raw visible pane read changes `agent_status` to `blocked` and
+`interactive_ready` to `false`. It covers `agent.list`, `agent.get`,
+`agent.start`, `agent.prompt`, and successful `agent.wait` results, including
+their `call()` routes. It never presses keys or approves trust.
+
+The correction is deliberately limited to idle/done Codex reports and this English
+dialog layout. Read failures and nonmatches preserve the original result.
+`wait` still waits on Herdr's own classification; Drovr cannot interrupt a
+server-side wait or correct a thrown error. `start` and `prompt` are corrected
+after their actions occur, so this is not a preflight input guard. Events,
+session snapshots, and pane status reports remain raw. Consumers should poll
+`agent.list/get` and inspect returned status before sending work or treating a
+wait as successful; do not depend exclusively on events or readiness flags.
+See [validation and release notes](docs/codex-trust.md) for exact limits.
 
 `DrovrClient#raw` is the uncorrected escape hatch: `drovr.raw.agent.list()`
 bypasses the registry regardless of what's registered for `agent.list`, so
 you can always tell drovr's correction apart from herdr's own report.
 
-A later epic adds a correction by adding one entry to the registry — no
-consumer of `DrovrClient` has to change, and no consumer ever needs to know
-which calls are corrected. See
+Further corrections can be added to the registry. A custom `corrections`
+option replaces defaults (`{}` disables them). See
 [`docs/correction-seam.md`](docs/correction-seam.md) for how the registry
 key is resolved, why it has to be the wire method name, how recursion
 through a correction is bounded, and a full worked example of adding one.

@@ -6,9 +6,10 @@ DROVR-6 hangs on that choke point: how to add a correction, why the seam is
 shaped the way it is, and the traps a future change to this file or to the
 `@brooswit/herdr-sdk` dependency could fall into.
 
-This epic ships the mechanism only. **The registry is empty** — see
-`src/corrections.ts`'s `defaultCorrections`. No method's result is corrected
-today; `DrovrClient`'s observable behaviour is identical to `HerdrClient`'s.
+The original epic shipped the mechanism with an empty registry. The default
+registry now corrects idle Codex directory trust prompts on five agent report
+paths; see [current behavior and release notes](codex-trust.md). The design
+history and hypothetical example below describe how the seam was established.
 
 ## Adding a correction (worked example)
 
@@ -227,7 +228,6 @@ settled the shape above:
   composer and never be submitted, which looks, from outside, identical to
   a busy agent.
 
-Corrected detection for these is explicitly **out of scope for this epic** —
-DROVR-10/DROVR-6 builds only the seam. Block detection that doesn't depend
-on herdr's classification, and corrected agent enumeration/counting, are
-separate, already-filed epics that will register their corrections here.
+These cases were outside the original DROVR-10/DROVR-6 seam epic. The current
+Codex trust correction is one narrow implementation on that seam; it does not
+address the other cases above.

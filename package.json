@@ -1,6 +1,6 @@
 {
   "name": "@brooswit/drovr",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Wrapper around the herdr SDK: catches block situations herdr does not report, and overrides herdr's reporting where it is wrong",
   "license": "MIT",
   "repository": {
@@ -21,12 +21,15 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
+  "publishConfig": { "access": "public" },
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun --sourcemap=external && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
+    "prepack": "bun run check",
     "check": "bun run typecheck && bun test && bun run build"
   },
   "dependencies": {

@@ -1,6 +1,7 @@
 import type { Method, ParamsOf, ResultOf } from "@brooswit/herdr-sdk";
 import type { ChokePoint, Invoke } from "./choke-point.js";
 import type { DrovrClient } from "./drovr-client.js";
+import { correctCodexTrustAgent, correctCodexTrustList } from "./codex-trust.js";
 
 /**
  * What a correction sees and can use. `client` is the RAW hatch (see
@@ -27,12 +28,15 @@ export type Correction<M extends Method> = (
 export type CorrectionRegistry = { [M in Method]?: Correction<M> };
 
 /**
- * `DrovrClient`'s default registry. Ships EMPTY in this epic on purpose --
- * a later epic adds a correction by adding an entry directly here (or by
- * passing its own registry via `DrovrClientOptions.corrections`). See
- * `docs/correction-seam.md` for a worked example.
+ * Default report corrections. A custom registry replaces these entries.
  */
-export const defaultCorrections: CorrectionRegistry = {};
+export const defaultCorrections: CorrectionRegistry = {
+  "agent.list": correctCodexTrustList,
+  "agent.get": correctCodexTrustAgent,
+  "agent.start": correctCodexTrustAgent,
+  "agent.prompt": correctCodexTrustAgent,
+  "agent.wait": correctCodexTrustAgent,
+};
 
 /**
  * Builds the choke point that applies a correction registry, keyed on the

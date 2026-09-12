@@ -9,15 +9,15 @@ export interface DrovrClientOptions extends HerdrClientOptions {
   herdr?: HerdrClient;
   /** Test seam: override the choke point every call routes through. Defaults to the correction registry below. */
   chokePoint?: ChokePoint;
-  /** Test seam: override the correction registry the default choke point applies. Defaults to the empty, shipped registry. */
+  /** Replace the default corrections; an empty registry opts out. */
   corrections?: CorrectionRegistry;
 }
 
 /**
- * Drop-in pass-through for `HerdrClient`. Every service method call and
+ * Drop-in wrapper for `HerdrClient`. Every service method call and
  * every `call()` funnels through a single choke point (see
- * `choke-point.ts`) that today does nothing but forward to a real inner
- * `HerdrClient` and return its result, or rethrow its error, unchanged.
+ * `choke-point.ts`) that applies default report corrections after the inner
+ * `HerdrClient` responds. Unmatched results and original errors are unchanged.
  *
  * The 12 service fields below are wrapped dynamically at construction time
  * (see `service-proxy.ts`) — nothing in this file forwards an individual
