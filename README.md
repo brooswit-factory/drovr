@@ -71,6 +71,25 @@ consumer needs from the SDK — `HerdrError`, `isTimeout`, `Subscription`, and
 the generated/typed-escape-hatch types — is re-exported from `@brooswit/drovr`
 too, so a migrated consumer never has to import from both packages.
 
+## Agent selection
+
+Drovr supports both **Codex** and **Claude**, and passes other agent kinds
+through to Herdr as well. Select the agent with `agent.start({ kind: "codex",
+name, pane_id, args })` or `kind: "claude"`. The caller supplies the existing
+shell pane and arguments appropriate to that agent. Drovr does not translate
+Claude flags into Codex flags, select a model, change authentication, or fall
+back to a different provider after a failure.
+
+Both kinds use the same `agent.prompt`, `agent.get`, `agent.read`, and
+`agent.wait` methods. Herdr owns terminal interaction and status detection;
+the consuming application owns agent-specific instruction files, MCP
+configuration, model selection, and permission policy. In particular, passing
+through an agent kind does not imply support for another client's MCP channel
+notifications. Each executable must be installed and authenticated locally.
+
+`test/agent-kinds.test.ts` verifies typed startup and lifecycle forwarding for
+both providers without launching agents or consuming model quota.
+
 ## The correction seam
 
 Every service method call and every `call()` funnels through a single choke
