@@ -28,6 +28,28 @@ or MCP CLI override. `AgyAgentLaunch.skipPermissions` defaults to false; only
 explicit `true` adds AGY's `--dangerously-skip-permissions` flag. Permission
 policy belongs to the caller. This option does not configure workspace trust.
 
+AGY's new-workspace trust screen remains even with permission prompts skipped,
+and parent-directory trust does not extend to children. After creating a
+factory-owned workspace and immediately before launching an unattended worker,
+the caller must await:
+
+```ts
+await prepareManagedAgentWorkspace({ provider, cwd, unattended: true });
+```
+
+For AGY, this helper validates the existing directory, resolves its realpath,
+and adds only that exact path to `trustedWorkspaces` in
+`~/.gemini/antigravity-cli/settings.json`. It refuses root, home, and ancestors
+of home. Missing settings are created; other settings and existing trust entries
+are preserved. Invalid JSON or an invalid settings schema rejects without an
+overwrite, so callers must propagate preparation failures and skip launch.
+Updates use a mode-0600 temporary file and atomic replacement, with cleanup on
+failure. Concurrent helper calls are serialized within the process; this is not
+a lock against independent external settings writers. Other providers and calls
+without explicit `unattended: true` perform no filesystem work. Tests can pass an
+isolated settings path as the second argument. Launch-argument construction
+remains free of these side effects.
+
 `managedAgentProviderOfProcess` recognizes supported provider processes from
 their executable or reported process name. `checkManagedAgentArgv` validates
 the persistent launch arguments that must survive restoration while ignoring
@@ -47,9 +69,10 @@ Codex launches while continuing to manage already-running workers.
 ## Release handoff
 
 The original managed-runtime APIs require Drovr 0.2.0; AGY `skipPermissions`
-requires 0.3.1. See the [changelog](changelog.md). The prepared immutable GitHub
-release asset is `artifacts/brooswit-drovr-0.3.1.tgz`; it is intentionally ignored
-by Git. After the reviewed source commit is merged and tagged `v0.3.1`, publish that
+requires 0.3.1 and workspace preparation requires 0.3.2. See the
+[changelog](changelog.md). The prepared immutable GitHub release asset is
+`artifacts/brooswit-drovr-0.3.2.tgz`; it is intentionally ignored by Git.
+After the reviewed source commit is merged and tagged `v0.3.2`, publish that
 archive as the matching GitHub release asset. Consumers must update both their
 dependency URL and lockfile to the new version. Do not replace the existing
 release assets.
