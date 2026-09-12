@@ -32,6 +32,7 @@ export {
   type ManagedAgentLaunch,
   type ClaudeAgentLaunch,
   type CodexAgentLaunch,
+  type AgyAgentLaunch,
   type McpServerLaunchConfig,
   type DisabledMcpServer,
   type CodexMcpInventory,

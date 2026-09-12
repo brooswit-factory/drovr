@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentStartParams, checkManagedAgentArgv, inventoryCodexMcpServers, managedAgentProviderOfProcess, parseCodexMcpInventory } from "../src/index.js";
+import { buildAgentStartParams, checkManagedAgentArgv, inventoryCodexMcpServers, managedAgentProviderOfProcess, parseCodexMcpInventory, type AgyAgentLaunch } from "../src/index.js";
 
 describe("provider-owned agent launch plans", () => {
   test("recognizes managed providers from executable or process name", () => {
@@ -79,6 +79,30 @@ describe("provider-owned agent launch plans", () => {
       args: [
         "--prompt-interactive", "follow your AGENTS.md",
         ...(model ? ["--model", model] : []),
+      ],
+    });
+  });
+
+  test.each([false, true])("AGY permission skipping is explicitly %s", (skipPermissions) => {
+    const launch: AgyAgentLaunch = {
+      provider: "agy",
+      name: "agy-worker",
+      paneId: "w1:p3",
+      cwd: "/work dir/TEST-3",
+      prompt: "follow your AGENTS.md",
+      model: "test-model",
+      timeoutMs: 30_000,
+      skipPermissions,
+    };
+    expect(buildAgentStartParams(launch)).toEqual({
+      kind: "agy",
+      name: "agy-worker",
+      pane_id: "w1:p3",
+      timeout_ms: 30_000,
+      args: [
+        "--prompt-interactive", "follow your AGENTS.md",
+        "--model", "test-model",
+        ...(skipPermissions ? ["--dangerously-skip-permissions"] : []),
       ],
     });
   });

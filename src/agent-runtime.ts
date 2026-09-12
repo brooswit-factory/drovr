@@ -125,6 +125,8 @@ export interface CodexAgentLaunch extends AgentLaunchBase {
 
 export interface AgyAgentLaunch extends AgentLaunchBase {
   provider: "agy";
+  /** Skip AGY permission prompts only when explicitly enabled by the caller. */
+  skipPermissions?: boolean;
 }
 
 export type ManagedAgentLaunch = ClaudeAgentLaunch | CodexAgentLaunch | AgyAgentLaunch;
@@ -188,13 +190,15 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
   }
 
   if (launch.provider === "agy") {
-    // AGY inherits cwd from the pane; no per-worker MCP override is verified.
+    // AGY inherits cwd from the pane and MCP configuration externally (including
+    // stdio bridges); this adapter does not supply cwd or MCP CLI overrides.
     return {
       ...common,
       kind: "agy",
       args: [
         "--prompt-interactive", launch.prompt,
         ...(launch.model ? ["--model", launch.model] : []),
+        ...(launch.skipPermissions === true ? ["--dangerously-skip-permissions"] : []),
       ],
     };
   }
