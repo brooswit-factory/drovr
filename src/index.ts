@@ -13,6 +13,7 @@ export {
 export {
   resolveManagedAgent,
   promptManagedAgent,
+  closeManagedAgent,
   type ManagedAgentIdentity,
   type ManagedAgentResolution,
 } from "./managed-agent.js";

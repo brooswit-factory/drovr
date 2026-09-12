@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DrovrClient, promptManagedAgent, resolveManagedAgent, type results } from "../src/index.js";
+import { closeManagedAgent, DrovrClient, promptManagedAgent, resolveManagedAgent, type results } from "../src/index.js";
 import { buildFakeHerdrClient } from "./support/fake-herdr-client.js";
 
 const identity = { cwd: "/work/KAN-42", provider: "codex" as const };
@@ -65,5 +65,23 @@ describe("managed agent identity", () => {
   test("does not trust a matching alias in another workspace", async () => {
     const { client } = clientWith([agent({ cwd: "/work/OTHER" })]);
     expect((await resolveManagedAgent(client, identity)).status).toBe("missing");
+  });
+
+  test("closes the pane resolved from durable workspace identity", async () => {
+    const expected = agent({ name: null });
+    const { client, calls } = clientWith([expected]);
+    const result = await closeManagedAgent(client, identity);
+    expect(result.closed).toBe(true);
+    expect(calls).toContainEqual({ service: "pane", method: "pane.close", args: [{ pane_id: expected.pane_id }] });
+  });
+
+  test("does not close when workspace identity is missing or ambiguous", async () => {
+    const missing = clientWith([]);
+    expect((await closeManagedAgent(missing.client, identity)).closed).toBe(false);
+    expect(missing.calls.some((call) => call.method === "pane.close")).toBe(false);
+
+    const ambiguous = clientWith([agent(), agent({ pane_id: "w1:p3" })]);
+    expect((await closeManagedAgent(ambiguous.client, identity)).closed).toBe(false);
+    expect(ambiguous.calls.some((call) => call.method === "pane.close")).toBe(false);
   });
 });

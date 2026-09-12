@@ -61,3 +61,13 @@ export async function promptManagedAgent(
   const result = await client.agent.prompt({ target: resolution.agent.pane_id, text });
   return { resolution, prompted: result.agent };
 }
+
+export async function closeManagedAgent(
+  client: DrovrClient,
+  identity: ManagedAgentIdentity,
+): Promise<{ resolution: ManagedAgentResolution; closed: boolean }> {
+  const resolution = await resolveManagedAgent(client, identity);
+  if (resolution.status !== "found") return { resolution, closed: false };
+  await client.pane.close(resolution.agent.pane_id);
+  return { resolution, closed: true };
+}
