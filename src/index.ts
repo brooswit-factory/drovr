@@ -1,5 +1,24 @@
 export const DROVR_PACKAGE_NAME = "@brooswit/drovr";
 
+export {
+  ProviderAvailabilityRegistry,
+  processProviderAvailability,
+  selectAvailableProvider,
+  runWithProviderFallback,
+  type ProviderAccount,
+  type ProviderQuotaRefusal,
+  type ProviderAvailability,
+  type ProviderSelection,
+  type ProviderAttemptResult,
+  type ProviderFallbackResult,
+} from "./provider-fallback.js";
+export {
+  classifySessionLimitText,
+  detectSessionLimitRefusal,
+  type SessionLimitOutcome,
+  type SessionLimitRefusal,
+} from "./session-limit.js";
+
 export { DrovrClient, type DrovrClientOptions } from "./drovr-client.js";
 export {
   buildAgentStartParams,
