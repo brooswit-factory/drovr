@@ -2,6 +2,30 @@ export const DROVR_PACKAGE_NAME = "@brooswit/drovr";
 
 export { DrovrClient, type DrovrClientOptions } from "./drovr-client.js";
 export {
+  buildAgentStartParams,
+  managedAgentProviderOfProcess,
+  checkManagedAgentArgv,
+  parseCodexMcpInventory,
+  inventoryCodexMcpServers,
+  type ManagedAgentProvider,
+  type ManagedAgentProcess,
+  type ManagedAgentArgvCheck,
+  type ManagedAgentLaunch,
+  type ClaudeAgentLaunch,
+  type CodexAgentLaunch,
+  type McpServerLaunchConfig,
+  type DisabledMcpServer,
+  type CodexMcpInventory,
+  type CodexMcpInventoryProbeResult,
+} from "./agent-runtime.js";
+export {
+  resolveManagedAgent,
+  promptManagedAgent,
+  closeManagedAgent,
+  type ManagedAgentIdentity,
+  type ManagedAgentResolution,
+} from "./managed-agent.js";
+export {
   type CallIdentity,
   type ChokePoint,
   type Invoke,

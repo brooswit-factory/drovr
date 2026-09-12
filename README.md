@@ -71,24 +71,34 @@ consumer needs from the SDK — `HerdrError`, `isTimeout`, `Subscription`, and
 the generated/typed-escape-hatch types — is re-exported from `@brooswit/drovr`
 too, so a migrated consumer never has to import from both packages.
 
-## Agent selection
+## Managed agents
 
-Drovr supports both **Codex** and **Claude**, and passes other agent kinds
-through to Herdr as well. Select the agent with `agent.start({ kind: "codex",
-name, pane_id, args })` or `kind: "claude"`. The caller supplies the existing
-shell pane and arguments appropriate to that agent. Drovr does not translate
-Claude flags into Codex flags, select a model, change authentication, or fall
-back to a different provider after a failure.
+Drovr supports both **Codex** and **Claude**, while passing other Herdr agent
+kinds through unchanged. `buildAgentStartParams` translates a provider-neutral
+launch request into Herdr's typed `agent.start` contract. The caller still owns
+workspace policy, instructions, model selection, and which MCP connection the
+worker receives; Drovr owns the provider-specific CLI shape.
+
+Managed-agent operations use the workspace directory as durable identity and
+the pane ID only as a current live handle. `resolveManagedAgent`,
+`promptManagedAgent`, and `closeManagedAgent` recover through the workspace
+when a cached pane handle is stale or Herdr has lost the friendly name. An
+ambiguous workspace fails closed.
+
+Drovr also owns provider process recognition, persistent argument validation,
+and Codex MCP inventory parsing/probing. It never logs raw inventory output,
+which may contain credentials. See
+[`docs/managed-runtime.md`](docs/managed-runtime.md) for the boundary and API.
 
 Both kinds use the same `agent.prompt`, `agent.get`, `agent.read`, and
 `agent.wait` methods. Herdr owns terminal interaction and base status detection;
-the consuming application owns agent-specific instruction files, MCP
-configuration, model selection, and permission policy. In particular, passing
-through an agent kind does not imply support for another client's MCP channel
-notifications. Each executable must be installed and authenticated locally.
+the consuming application owns agent-specific instruction files, model
+selection, and permission policy. Each executable must be installed and
+authenticated locally. Drovr never silently falls back to another provider.
 
-`test/agent-kinds.test.ts` verifies typed startup and lifecycle forwarding for
-both providers without launching agents or consuming model quota.
+The test suite verifies typed startup, lifecycle forwarding, identity recovery,
+process health, and inventory handling without launching agents or consuming
+model quota.
 
 ## The correction seam
 

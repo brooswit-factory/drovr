@@ -1,7 +1,7 @@
 {
   "name": "@brooswit/drovr",
-  "version": "0.1.0",
-  "description": "Wrapper around the herdr SDK: catches block situations herdr does not report, and overrides herdr's reporting where it is wrong",
+  "version": "0.2.0",
+  "description": "Provider-neutral managed-agent runtime and correction layer over the Herdr SDK",
   "license": "MIT",
   "repository": {
     "type": "git",
