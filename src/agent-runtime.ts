@@ -54,6 +54,48 @@ export interface DisabledMcpServer {
   transport: "stdio" | "streamable_http";
 }
 
+export interface CodexMcpInventoryProbeResult {
+  exitCode: number;
+  stdout: { toString(): string } | string;
+}
+
+export type CodexMcpInventory =
+  | { ok: true; servers: DisabledMcpServer[] }
+  | { ok: false; reason: string };
+
+export function parseCodexMcpInventory(output: string, excludedNames: readonly string[] = []): DisabledMcpServer[] {
+  const servers: unknown = JSON.parse(output);
+  if (!Array.isArray(servers) || servers.some((server) => !server || typeof server.name !== "string")) {
+    throw new Error("Invalid Codex MCP inventory");
+  }
+  const excluded = new Set(excludedNames);
+  return servers.filter((server) => !excluded.has(server.name)).map((server) => {
+    if (!/^[A-Za-z0-9_-]+$/.test(server.name)) throw new Error("Unsupported Codex MCP server name; cannot isolate workers");
+    const transport = server.transport?.type;
+    if (transport !== "stdio" && transport !== "streamable_http") throw new Error("Unknown Codex MCP transport");
+    return { name: server.name, transport };
+  });
+}
+
+export function inventoryCodexMcpServers(
+  excludedNames: readonly string[] = [],
+  probe: () => CodexMcpInventoryProbeResult = () => Bun.spawnSync(
+    ["codex", "mcp", "list", "--json"],
+    { stdout: "pipe", stderr: "pipe", timeout: 10_000 },
+  ),
+): CodexMcpInventory {
+  try {
+    const result = probe();
+    if (result.exitCode !== 0) throw new Error("inventory failed");
+    return { ok: true, servers: parseCodexMcpInventory(result.stdout.toString(), excludedNames) };
+  } catch {
+    return {
+      ok: false,
+      reason: "Codex MCP inventory unavailable or invalid; fix `codex mcp list --json` for the service user and retry;",
+    };
+  }
+}
+
 interface AgentLaunchBase {
   provider: ManagedAgentProvider;
   name: string;

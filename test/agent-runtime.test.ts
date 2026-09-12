@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentStartParams, checkManagedAgentArgv, managedAgentProviderOfProcess } from "../src/index.js";
+import { buildAgentStartParams, checkManagedAgentArgv, inventoryCodexMcpServers, managedAgentProviderOfProcess, parseCodexMcpInventory } from "../src/index.js";
 
 describe("provider-owned agent launch plans", () => {
   test("recognizes managed providers from executable or process name", () => {
@@ -15,6 +15,22 @@ describe("provider-owned agent launch plans", () => {
       ok: false,
       reason: "argv lacks --mcp-config /w/mcp.json, --dangerously-load-development-channels server:butchr",
     });
+  });
+
+  test("parses and filters Codex MCP inventory", () => {
+    const output = JSON.stringify([
+      { name: "butchr", transport: { type: "streamable_http" } },
+      { name: "yappr", transport: { type: "stdio" } },
+    ]);
+    expect(parseCodexMcpInventory(output, ["butchr"])).toEqual([{ name: "yappr", transport: "stdio" }]);
+    expect(() => parseCodexMcpInventory(JSON.stringify([{ name: "bad.name", transport: { type: "stdio" } }]))).toThrow("Unsupported Codex MCP server name");
+  });
+
+  test("bounds Codex MCP probing into an explicit result", () => {
+    expect(inventoryCodexMcpServers(["butchr"], () => ({ exitCode: 0, stdout: "[]" }))).toEqual({ ok: true, servers: [] });
+    const failed = inventoryCodexMcpServers([], () => { throw new Error("secret provider output"); });
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.reason).not.toContain("secret provider output");
   });
   test("builds the complete Claude launch for Herdr", () => {
     expect(buildAgentStartParams({

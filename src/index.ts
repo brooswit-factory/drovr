@@ -5,6 +5,8 @@ export {
   buildAgentStartParams,
   managedAgentProviderOfProcess,
   checkManagedAgentArgv,
+  parseCodexMcpInventory,
+  inventoryCodexMcpServers,
   type ManagedAgentProvider,
   type ManagedAgentProcess,
   type ManagedAgentArgvCheck,
@@ -13,6 +15,8 @@ export {
   type CodexAgentLaunch,
   type McpServerLaunchConfig,
   type DisabledMcpServer,
+  type CodexMcpInventory,
+  type CodexMcpInventoryProbeResult,
 } from "./agent-runtime.js";
 export {
   resolveManagedAgent,
