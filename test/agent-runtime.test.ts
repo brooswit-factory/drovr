@@ -5,6 +5,8 @@ describe("provider-owned agent launch plans", () => {
   test("recognizes managed providers from executable or process name", () => {
     expect(managedAgentProviderOfProcess({ argv: ["/usr/bin/claude"] })).toBe("claude");
     expect(managedAgentProviderOfProcess({ argv: ["node"], name: "codex" })).toBe("codex");
+    expect(managedAgentProviderOfProcess({ argv: ["/home/worker/.local/bin/agy"] })).toBe("agy");
+    expect(managedAgentProviderOfProcess({ name: "agy" })).toBe("agy");
     expect(managedAgentProviderOfProcess({ argv: ["fish"], name: "fish" })).toBeUndefined();
   });
 
@@ -56,6 +58,27 @@ describe("provider-owned agent launch plans", () => {
         "--permission-mode", "bypassPermissions",
         "--mcp-config", "/work/TEST-1/mcp.json",
         "--dangerously-load-development-channels", "server:butchr",
+      ],
+    });
+  });
+
+  test.each([undefined, "test-model"])("builds an interactive AGY launch with model %s and pane-owned cwd", (model) => {
+    expect(buildAgentStartParams({
+      provider: "agy",
+      name: "agy-worker",
+      paneId: "w1:p3",
+      cwd: "/work dir/TEST-3",
+      prompt: "follow your AGENTS.md",
+      ...(model ? { model } : {}),
+      timeoutMs: 30_000,
+    })).toEqual({
+      kind: "agy",
+      name: "agy-worker",
+      pane_id: "w1:p3",
+      timeout_ms: 30_000,
+      args: [
+        "--prompt-interactive", "follow your AGENTS.md",
+        ...(model ? ["--model", model] : []),
       ],
     });
   });

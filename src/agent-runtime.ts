@@ -1,6 +1,6 @@
 import type { ParamsOf } from "@brooswit/herdr-sdk";
 
-export type ManagedAgentProvider = "claude" | "codex";
+export type ManagedAgentProvider = "claude" | "codex" | "agy";
 
 export interface ManagedAgentProcess {
   argv?: readonly string[] | null;
@@ -14,6 +14,7 @@ export function managedAgentProviderOfProcess(process: ManagedAgentProcess): Man
   const name = executableName(process.name ?? "");
   if (command === "claude" || name === "claude") return "claude";
   if (command === "codex" || name === "codex") return "codex";
+  if (command === "agy" || name === "agy") return "agy";
   return undefined;
 }
 
@@ -122,7 +123,11 @@ export interface CodexAgentLaunch extends AgentLaunchBase {
   bypassApprovalsAndSandbox?: boolean;
 }
 
-export type ManagedAgentLaunch = ClaudeAgentLaunch | CodexAgentLaunch;
+export interface AgyAgentLaunch extends AgentLaunchBase {
+  provider: "agy";
+}
+
+export type ManagedAgentLaunch = ClaudeAgentLaunch | CodexAgentLaunch | AgyAgentLaunch;
 
 function safeName(name: string): string {
   if (!/^[A-Za-z0-9_-]+$/.test(name)) {
@@ -178,6 +183,18 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
         ...(launch.developmentChannels?.length
           ? ["--dangerously-load-development-channels", ...launch.developmentChannels]
           : []),
+      ],
+    };
+  }
+
+  if (launch.provider === "agy") {
+    // AGY inherits cwd from the pane; no per-worker MCP override is verified.
+    return {
+      ...common,
+      kind: "agy",
+      args: [
+        "--prompt-interactive", launch.prompt,
+        ...(launch.model ? ["--model", launch.model] : []),
       ],
     };
   }
