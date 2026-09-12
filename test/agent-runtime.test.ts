@@ -71,6 +71,7 @@ describe("provider-owned agent launch plans", () => {
       mcpServers: [{ name: "butchr", url: "http://localhost:7717/mcp", headers: {
         "x-issue": "TEST-2",
         "x-butchr-provider": "codex",
+        "x-quoted": "a \"quoted\" value",
       } }],
       disabledMcpServers: [
         { name: "yappr", transport: "stdio" },
@@ -86,7 +87,11 @@ describe("provider-owned agent launch plans", () => {
     expect(Bun.TOML.parse(configs[0]!)).toEqual({ mcp_servers: { butchr: {
       url: "http://localhost:7717/mcp",
       enabled: true,
-      http_headers: { "x-issue": "TEST-2", "x-butchr-provider": "codex" },
+      http_headers: {
+        "x-issue": "TEST-2",
+        "x-butchr-provider": "codex",
+        "x-quoted": "a \"quoted\" value",
+      },
     } } });
     expect(Bun.TOML.parse(configs[1]!)).toEqual({ projects: { "/work dir/TEST-2": { trust_level: "trusted" } } });
     expect(configs).toContain('mcp_servers.yappr={enabled=false,command="false"}');

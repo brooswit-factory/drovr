@@ -131,15 +131,21 @@ function safeName(name: string): string {
   return name;
 }
 
-function inlineToml(value: unknown): string {
+function tomlString(value: string): string {
   return JSON.stringify(value);
+}
+
+function tomlStringMap(value: Readonly<Record<string, string>>): string {
+  return `{ ${Object.entries(value)
+    .map(([key, entry]) => `${tomlString(key)} = ${tomlString(entry)}`)
+    .join(", ")} }`;
 }
 
 function codexMcpArg(server: McpServerLaunchConfig): string {
   const headers = server.headers && Object.keys(server.headers).length
-    ? `, http_headers = ${inlineToml(server.headers)}`
+    ? `, http_headers = ${tomlStringMap(server.headers)}`
     : "";
-  return `mcp_servers.${safeName(server.name)}={ url = ${inlineToml(server.url)}${headers}, enabled = true }`;
+  return `mcp_servers.${safeName(server.name)}={ url = ${tomlString(server.url)}${headers}, enabled = true }`;
 }
 
 function disabledCodexMcpArg(server: DisabledMcpServer): string {
@@ -187,7 +193,7 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
       ...launch.mcpServers.flatMap((server) => ["--config", codexMcpArg(server)]),
       ...(launch.trustWorkspace === false
         ? []
-        : ["--config", `projects={${inlineToml(launch.cwd)}={trust_level="trusted"}}`]),
+        : ["--config", `projects={${tomlString(launch.cwd)}={trust_level="trusted"}}`]),
       ...(launch.disabledMcpServers ?? []).flatMap((server) => ["--config", disabledCodexMcpArg(server)]),
     ],
   };
