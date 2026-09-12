@@ -2,6 +2,47 @@ import type { ParamsOf } from "@brooswit/herdr-sdk";
 
 export type ManagedAgentProvider = "claude" | "codex";
 
+export interface ManagedAgentProcess {
+  argv?: readonly string[] | null;
+  name?: string | null;
+}
+
+const executableName = (value: string): string => value.replace(/\\/g, "/").split("/").pop() ?? value;
+
+export function managedAgentProviderOfProcess(process: ManagedAgentProcess): ManagedAgentProvider | undefined {
+  const command = executableName(process.argv?.[0] ?? "");
+  const name = executableName(process.name ?? "");
+  if (command === "claude" || name === "claude") return "claude";
+  if (command === "codex" || name === "codex") return "codex";
+  return undefined;
+}
+
+export type ManagedAgentArgvCheck = { ok: true } | { ok: false; reason: string };
+
+const REQUIRED_CLAUDE_FLAGS = ["--permission-mode", "--mcp-config", "--dangerously-load-development-channels"] as const;
+
+function flagValue(argv: readonly string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  return index >= 0 ? argv[index + 1] : undefined;
+}
+
+export function checkManagedAgentArgv(expected: readonly string[], observed: readonly string[]): ManagedAgentArgvCheck {
+  const missing: string[] = [];
+  if (expected.includes("--dangerously-bypass-approvals-and-sandbox")) {
+    if (!observed.includes("--dangerously-bypass-approvals-and-sandbox")) missing.push("--dangerously-bypass-approvals-and-sandbox");
+    for (const flag of ["--cd", "--config"]) {
+      const wants = expected.flatMap((value, index) => value === flag ? [expected[index + 1]] : []);
+      const values = observed.flatMap((value, index) => value === flag ? [observed[index + 1]] : []);
+      for (const want of wants) if (!values.includes(want)) missing.push(`${flag} ${want}`);
+    }
+  }
+  for (const flag of REQUIRED_CLAUDE_FLAGS) {
+    const want = flagValue(expected, flag);
+    if (want !== undefined && flagValue(observed, flag) !== want) missing.push(`${flag} ${want}`);
+  }
+  return missing.length ? { ok: false, reason: `argv lacks ${missing.join(", ")}` } : { ok: true };
+}
+
 export interface McpServerLaunchConfig {
   name: string;
   url: string;
@@ -109,4 +150,3 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
     ],
   };
 }
-

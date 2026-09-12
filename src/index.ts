@@ -3,7 +3,11 @@ export const DROVR_PACKAGE_NAME = "@brooswit/drovr";
 export { DrovrClient, type DrovrClientOptions } from "./drovr-client.js";
 export {
   buildAgentStartParams,
+  managedAgentProviderOfProcess,
+  checkManagedAgentArgv,
   type ManagedAgentProvider,
+  type ManagedAgentProcess,
+  type ManagedAgentArgvCheck,
   type ManagedAgentLaunch,
   type ClaudeAgentLaunch,
   type CodexAgentLaunch,

@@ -1,7 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentStartParams } from "../src/index.js";
+import { buildAgentStartParams, checkManagedAgentArgv, managedAgentProviderOfProcess } from "../src/index.js";
 
 describe("provider-owned agent launch plans", () => {
+  test("recognizes managed providers from executable or process name", () => {
+    expect(managedAgentProviderOfProcess({ argv: ["/usr/bin/claude"] })).toBe("claude");
+    expect(managedAgentProviderOfProcess({ argv: ["node"], name: "codex" })).toBe("codex");
+    expect(managedAgentProviderOfProcess({ argv: ["fish"], name: "fish" })).toBeUndefined();
+  });
+
+  test("checks provider-owned persistent launch arguments", () => {
+    const expected = ["--permission-mode", "bypassPermissions", "--mcp-config", "/w/mcp.json", "--dangerously-load-development-channels", "server:butchr"];
+    expect(checkManagedAgentArgv(expected, expected)).toEqual({ ok: true });
+    expect(checkManagedAgentArgv(expected, ["--permission-mode", "bypassPermissions"])).toEqual({
+      ok: false,
+      reason: "argv lacks --mcp-config /w/mcp.json, --dangerously-load-development-channels server:butchr",
+    });
+  });
   test("builds the complete Claude launch for Herdr", () => {
     expect(buildAgentStartParams({
       provider: "claude",
