@@ -20,6 +20,7 @@ export {
 } from "./session-limit.js";
 
 export { DrovrClient, type DrovrClientOptions } from "./drovr-client.js";
+export { prepareManagedAgentWorkspace, type ManagedAgentWorkspace } from "./managed-workspace.js";
 export {
   buildAgentStartParams,
   managedAgentProviderOfProcess,
