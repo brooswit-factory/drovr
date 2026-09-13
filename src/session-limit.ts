@@ -130,7 +130,7 @@ const DECORATIVE = /^[─│╭╮╰╯·\s]*$/;
  * block, or a diff line — the same anchoring prompt.ts's FOOTER uses, for
  * the same reason (KAN-756 comment 14956): the position IS the signal.
  */
-const REFUSAL_LINE = /^You(?:'|’)ve hit your session limit\b.*$/;
+const REFUSAL_LINE = /^You(?:'|’)ve hit your (?:session|weekly) limit\b.*$/;
 const RESET_TIME = /resets\s+(\d{1,2}):(\d{2})\s*(am|pm)?/i;
 
 /**
@@ -335,4 +335,3 @@ function resolveResetTime(m: RegExpExecArray, now: Date): number | null {
   if (candidate.getTime() < now.getTime()) candidate.setDate(candidate.getDate() + 1);
   return candidate.getTime();
 }
-

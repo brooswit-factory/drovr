@@ -7,6 +7,15 @@ const fixture = (name: string) => readFileSync(new URL(`./fixtures/session-limit
 const fixtureBytes = (name: string) => readFileSync(new URL(`./fixtures/session-limit/${name}`, import.meta.url));
 
 describe("detectSessionLimitRefusal", () => {
+  test("recognises the observed weekly refusal without inventing a clock-only reset", () => {
+    const banner = "  ⎿ You've hit your weekly limit · resets Sep 17, 8am (America/Los_Angeles)\n     /usage-credits to finish what you’re working on.\n\n✻ Churned for 1s · done 6:13 AM\n✔ Update installed · Restart to update\n❯\n  ⏵⏵ bypass permissions on";
+    const result = detectSessionLimitRefusal(banner, new Date("2026-09-13T13:20:00Z"));
+    expect(result).not.toBeNull();
+    expect(result!.raw).toContain("weekly limit");
+    expect(result!.resetsAt).toBeNull();
+    expect(detectSessionLimitRefusal(banner.replace("  ⎿", "     ⎿"), new Date())).toBeNull();
+    expect(classifySessionLimitText(banner + "\nThis is quoted documentation.", new Date()).kind).toBe("suppressed");
+  });
   // BUTCHR-259: `pane-cap-session-limit.txt` used to be a hand-built, bare
   // "You've hit…" line with no tool-result prefix at all — a shape that, per
   // the epic's own measurement, NEVER occurs in production (every real
@@ -242,4 +251,3 @@ describe("classifySessionLimitText", () => {
     if (outcome.kind === "recognised") expect(outcome.resetsAt).toBe(new Date(2026, 7, 28, 17, 10, 0).getTime());
   });
 });
-
