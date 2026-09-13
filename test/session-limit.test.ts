@@ -7,12 +7,23 @@ const fixture = (name: string) => readFileSync(new URL(`./fixtures/session-limit
 const fixtureBytes = (name: string) => readFileSync(new URL(`./fixtures/session-limit/${name}`, import.meta.url));
 
 describe("detectSessionLimitRefusal", () => {
-  test("recognises the observed weekly refusal without inventing a clock-only reset", () => {
+  test("dated reset uses the printed zone, validates dates, and handles year boundaries", () => {
+    const reset = (value: string, now = new Date("2026-09-13T13:00:00Z")) =>
+      detectSessionLimitRefusal(`You've hit your weekly limit · resets ${value}`, now)!.resetsAt;
+    expect(reset("Sep 17, 8:30am (America/New_York)")).toBe(Date.parse("2026-09-17T12:30:00Z"));
+    expect(reset("Jan 2, 8am (America/Los_Angeles)", new Date("2026-12-30T12:00:00Z"))).toBe(Date.parse("2027-01-02T16:00:00Z"));
+    expect(reset("Nov 5, 8am (America/Los_Angeles)")).toBe(Date.parse("2026-11-05T16:00:00Z"));
+    for (const value of ["Feb 30, 8am (UTC)", "Sep 17, 13am (UTC)", "Sep 17, 8:99am (UTC)", "Sep 17, 8am (Not/AZone)", "Sep 17, 8am"]) {
+      expect(reset(value)).toBeNull();
+    }
+    expect(reset("Mar 8, 2:30am (America/Los_Angeles)", new Date("2026-03-01T00:00:00Z"))).toBeNull();
+  });
+  test("recognises the observed weekly refusal and its named-zone dated reset", () => {
     const banner = "  ⎿ You've hit your weekly limit · resets Sep 17, 8am (America/Los_Angeles)\n     /usage-credits to finish what you’re working on.\n\n✻ Churned for 1s · done 6:13 AM\n✔ Update installed · Restart to update\n❯\n  ⏵⏵ bypass permissions on";
     const result = detectSessionLimitRefusal(banner, new Date("2026-09-13T13:20:00Z"));
     expect(result).not.toBeNull();
     expect(result!.raw).toContain("weekly limit");
-    expect(result!.resetsAt).toBeNull();
+    expect(result!.resetsAt).toBe(Date.parse("2026-09-17T15:00:00Z"));
     expect(detectSessionLimitRefusal(banner.replace("  ⎿", "     ⎿"), new Date())).toBeNull();
     expect(classifySessionLimitText(banner + "\nThis is quoted documentation.", new Date()).kind).toBe("suppressed");
   });

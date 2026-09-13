@@ -276,7 +276,7 @@ export function classifySessionLimitText(text: string, now: Date): SessionLimitO
     if (embedReason) return { kind: "suppressed", raw: trimmed, reason: embedReason };
 
     const rt = RESET_TIME.exec(rest);
-    if (!rt) return { kind: "recognised", resetsAt: null, raw: rest };
+    if (!rt) return { kind: "recognised", resetsAt: resolveDatedReset(rest, now), raw: rest };
     return { kind: "recognised", resetsAt: resolveResetTime(rt, now), raw: rest };
   }
 
@@ -292,7 +292,7 @@ export function classifySessionLimitText(text: string, now: Date): SessionLimitO
     const m = REFUSAL_LINE.exec(line);
     if (!m) continue;
     const rt = RESET_TIME.exec(line);
-    if (!rt) return { kind: "recognised", resetsAt: null, raw: line };
+    if (!rt) return { kind: "recognised", resetsAt: resolveDatedReset(line, now), raw: line };
     return { kind: "recognised", resetsAt: resolveResetTime(rt, now), raw: line };
   }
   return { kind: "not-recognised" };
@@ -321,6 +321,32 @@ function embeddedAfter(lines: string[], fromIndex: number): string | null {
       `(more ticket prose, or a truncation tail), not a live banner`
     );
   }
+  return null;
+}
+
+function resolveDatedReset(text: string, now: Date): number | null {
+  const m = /resets\s+([A-Za-z]{3})\s+(\d{1,2}),\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)/i.exec(text);
+  if (!m) return null;
+  const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(m[1]!.toLowerCase());
+  const day = Number(m[2]), clockHour = Number(m[3]), minute = Number(m[4] ?? 0);
+  if (month < 0 || day < 1 || day > 31 || clockHour < 1 || clockHour > 12 || minute > 59) return null;
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", { timeZone: m[6], year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", hourCycle: "h23" });
+    const parts = (date: Date) => Object.fromEntries(formatter.formatToParts(date).filter(p => p.type !== "literal").map(p => [p.type, Number(p.value)]));
+    const localNow = parts(now);
+    const year = localNow.year! + (localNow.month === 12 && month === 0 ? 1 : 0);
+    const hour = clockHour % 12 + (m[5]!.toLowerCase() === "pm" ? 12 : 0);
+    const target = Date.UTC(year, month, day, hour, minute);
+    if (new Date(target).getUTCMonth() !== month) return null;
+    let candidate = target;
+    // Invert the named-zone wall clock; recheck after offset changes at DST boundaries.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const p = parts(new Date(candidate));
+      const observed = Date.UTC(p.year!, p.month! - 1, p.day!, p.hour!, p.minute!);
+      if (observed === target) return candidate;
+      candidate += target - observed;
+    }
+  } catch { /* Unknown zones or invalid dates leave the reset unknown. */ }
   return null;
 }
 
