@@ -73,3 +73,4 @@ export {
 // unchanged: error types (HerdrError, isTimeout), the subscription handle,
 // and the SDK's own generated/typed-escape-hatch types.
 export * from "@brooswit/herdr-sdk";
+export { prepareAgyHome, type AgyStdioServer } from "./agy-home.js";
