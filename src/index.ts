@@ -20,6 +20,14 @@ export {
 } from "./session-limit.js";
 
 export { DrovrClient, type DrovrClientOptions } from "./drovr-client.js";
+export { startManagedAgent, AgentShellReadinessError, type AgentStartOptions, type ShellReadinessDiagnostics } from "./agent-start.js";
+export {
+  ManagedConversationRunner,
+  runConversationProcess,
+  type ManagedConversationRunnerOptions,
+  type ManagedConversationResult,
+  type RunProcess,
+} from "./managed-conversation.js";
 export { prepareManagedAgentWorkspace, type ManagedAgentWorkspace } from "./managed-workspace.js";
 export {
   buildAgentStartParams,

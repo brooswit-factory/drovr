@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0
+
+- Add `ManagedConversationRunner` for direct AGY, Codex, and Claude CLI messages
+  and native conversation resume, with an injectable `RunProcess` adapter and
+  interactive `attachArgv`. This API is separate from Herdr-managed workers.
+- Preserve USRR's AGY permission and JSON argument behavior; map Codex JSONL and
+  Claude JSON results to `{ conversationId, response }`. Reject incomplete turns,
+  failed results, and changed resume IDs without exposing process diagnostics.
+- Leave provider selection, saved provider/ID pairs, and known account availability
+  to consumers. No quota classification or cross-provider resume is added.
+- Export `startManagedAgent` and `AgentShellReadinessError` for bounded retries
+  of Herdr's explicit pre-launch `agent_pane_busy` refusal, with sanitized
+  readiness diagnostics. Other launch failures propagate unchanged.
+
+See [conversation runtime](managed-conversation.md) for API and verification limits.
+Release asset: `brooswit-drovr-0.4.0.tgz`.
+
 ## 0.3.2
 
 - Add `prepareManagedAgentWorkspace({ provider, cwd, unattended }, settingsPath?)`.
