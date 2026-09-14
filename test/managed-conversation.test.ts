@@ -6,6 +6,7 @@ import {
   ManagedConversationRunner, runConversationProcess,
   type ManagedAgentProvider, type RunProcess,
 } from "../src/index.js";
+import { ManagedConversationQuotaError } from "../src/managed-conversation.js";
 
 const id = "01a097e9-8423-76f2-9e3d-b3c7918b9380";
 const cwd = "/factory/work dir/USRR";
@@ -143,13 +144,49 @@ describe("direct managed conversations", () => {
     const stdout = JSON.stringify({
       type: "result", subtype: "success", is_error: true,
       session_id: "b0d9be65-a076-4e12-8e05-b1b261740278", terminal_reason: "api_error",
-      api_error_status: 429, result: "You've hit your weekly limit", num_turns: 1,
+      api_error_status: 429, result: "You've hit your weekly limit \u00b7 resets Sep 17, 8am (America/Los_Angeles)", num_turns: 1,
     });
     for (const exitCode of [0, 1]) {
       const runner = new ManagedConversationRunner({ provider: "claude", cwd, run: async () => ({ exitCode, stdout, stderr: "" }) });
-      await expect(runner.message("hello")).rejects.toThrow();
-      await expect(runner.message("continue", "b0d9be65-a076-4e12-8e05-b1b261740278")).rejects.toThrow();
+      for (const resume of [undefined, "b0d9be65-a076-4e12-8e05-b1b261740278"]) {
+        const error = await runner.message("hello", resume).catch(error => error);
+        expect(error).toBeInstanceOf(ManagedConversationQuotaError);
+        expect(error.provider).toBe("claude");
+        expect(error.refusal.raw).toBe(JSON.parse(stdout).result);
+        expect(error.refusal.resetsAt).not.toBeNull();
+        expect(new Date(error.refusal.resetsAt).toISOString()).toMatch(/-09-17T15:00:00.000Z$/);
+      }
     }
+  });
+
+  test("only the measured Claude API refusal envelope produces typed quota", async () => {
+    const refusal = { type: "result", subtype: "success", is_error: true, session_id: id,
+      terminal_reason: "api_error", api_error_status: 429, result: "You've hit your weekly limit" };
+    const cases = [
+      { ...refusal, is_error: false }, { ...refusal, terminal_reason: "tool_error" },
+      { ...refusal, api_error_status: 500 }, { ...refusal, api_error_status: "429" },
+      { ...refusal, type: "assistant" }, { ...refusal, subtype: "error_max_turns" },
+      { ...refusal, session_id: "" }, { ...refusal, result: "Rate limit exceeded" },
+      { ...refusal, result: "Quoted: You've hit your weekly limit" },
+      { ...refusal, result: "tool output\nYou've hit your weekly limit" },
+      { ...refusal, result: JSON.stringify(refusal) },
+      { type: "tool_result", content: refusal },
+    ];
+    for (const value of cases) {
+      const runner = new ManagedConversationRunner({ provider: "claude", cwd,
+        run: async () => ({ exitCode: 1, stdout: JSON.stringify(value), stderr: JSON.stringify(refusal) }) });
+      const error = await runner.message("hello").catch(error => error);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(ManagedConversationQuotaError);
+    }
+    for (const provider of providers) {
+      const runner = new ManagedConversationRunner({ provider, cwd,
+        run: async () => ({ exitCode: provider === "claude" ? 137 : 1, stdout: JSON.stringify(refusal), stderr: "" }) });
+      expect(await runner.message("hello").catch(error => error)).not.toBeInstanceOf(ManagedConversationQuotaError);
+    }
+    const successful = new ManagedConversationRunner({ provider: "claude", cwd,
+      run: async () => ({ exitCode: 0, stdout: claude(refusal.result), stderr: "" }) });
+    expect((await successful.message("hello")).response).toBe(refusal.result);
   });
 
   test("invalid IDs never reach a process or interactive picker", async () => {

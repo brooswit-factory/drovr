@@ -1,4 +1,18 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
+import type { ProviderQuotaRefusal } from "./provider-fallback.js";
+import { detectSessionLimitRefusal } from "./session-limit.js";
+
+/** Confirmed native CLI quota refusal, never inferred from arbitrary failures. */
+export class ManagedConversationQuotaError extends Error {
+  readonly provider = "claude" as const;
+  readonly refusal: ProviderQuotaRefusal;
+
+  constructor(refusal: ProviderQuotaRefusal) {
+    super("Claude native conversation quota blocked");
+    this.name = "ManagedConversationQuotaError";
+    this.refusal = { ...refusal };
+  }
+}
 
 export interface ManagedConversationResult {
   conversationId: string;
@@ -64,6 +78,16 @@ function parseClaude(stdout: string): ManagedConversationResult {
   return { conversationId: value.session_id, response: value.result };
 }
 
+function claudeQuota(stdout: string): ProviderQuotaRefusal | null {
+  let value: unknown;
+  try { value = JSON.parse(stdout); } catch { return null; }
+  // Measured --print JSON refusal: subtype remains success despite the API error.
+  if (!record(value) || value.type !== "result" || value.subtype !== "success" || value.is_error !== true
+    || value.terminal_reason !== "api_error" || value.api_error_status !== 429 || !validId(value.session_id)
+    || typeof value.result !== "string" || /[\r\n]/.test(value.result)) return null;
+  return detectSessionLimitRefusal(value.result, new Date());
+}
+
 function parseCodex(stdout: string): ManagedConversationResult {
   let conversationId: string | undefined;
   let response: string | undefined;
@@ -91,7 +115,7 @@ function parseCodex(stdout: string): ManagedConversationResult {
   return { conversationId, response };
 }
 
-/** A single provider's native conversation. Selection and durable state belong to the caller. */
+/** Single-provider transport; ManagedConversationLifecycle owns selection and identity, with durable storage through its commit callback. */
 export class ManagedConversationRunner {
   readonly provider: ManagedAgentProvider;
   private readonly cwd: string;
@@ -142,6 +166,10 @@ export class ManagedConversationRunner {
     let processResult: Awaited<ReturnType<RunProcess>>;
     try { processResult = await this.run(argv, this.cwd); }
     catch { throw new Error(`${this.provider} conversation process failed`); }
+    if (this.provider === "claude" && (processResult.exitCode === 0 || processResult.exitCode === 1)) {
+      const refusal = claudeQuota(processResult.stdout);
+      if (refusal) throw new ManagedConversationQuotaError(refusal);
+    }
     if (processResult.exitCode !== 0) throw new Error(`${this.provider} conversation process exited unsuccessfully`);
     const result = this.provider === "agy" ? parseAgy(processResult.stdout)
       : this.provider === "codex" ? parseCodex(processResult.stdout) : parseClaude(processResult.stdout);
