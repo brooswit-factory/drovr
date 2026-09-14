@@ -155,7 +155,10 @@ export class ManagedHerdrLifecycle {
                       if (conversationId !== paneId) throw new HandoffBlocked("Import target changed");
                       await this.options.client.agent.prompt({ target: paneId, text: importPrompt });
                     } else {
-                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...prepared.launch, paneId, prompt: importPrompt }), this.options.startOptions);
+                      // Herdr 0.8.2 rejects literal newlines in launch argv.
+                      // Transcript data is already JSON-escaped by the session;
+                      // only the surrounding instruction separators change.
+                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...prepared.launch, paneId, prompt: importPrompt.replaceAll("\n", " ") }), this.options.startOptions);
                     }
                     const response = await this.awaitAcknowledgement(target, token);
                     return { conversationId: paneId, response: response.replace(token, HANDOFF_ACK) };

@@ -46,3 +46,12 @@ not terminal echoes or user messages. The source pane remains until the target
 acknowledges and source identity and history are rechecked. Missing or ambiguous
 source identity fails closed. Consumers must upgrade their dependency and use
 the lifecycle APIs to receive this behavior.
+
+Herdr terminal workers require its official provider integration to report native
+session identity. Install the Codex integration with `herdr integration install
+codex` and review that specific hook in Codex before unattended launches. Drovr
+does not broadly approve arbitrary hooks. Private AGY homes can use
+`prepareAgyHome({ home, cwd, servers, setupFromHome, installHerdrIntegration: true })`
+to reuse completed onboarding/theme and install Herdr's official integration.
+This does not copy source MCP identities, trust lists, or history. Butchr requests
+this preparation for its isolated AGY workers.

@@ -32,6 +32,7 @@ function fixture(options: { readFail?: boolean; startFail?: boolean; ack?: "miss
       get: async (pane: string) => { events.push(`get:${pane}`); return { agent: rows.find(a => a.pane_id === pane)! }; },
       start: async (params: any) => {
         events.push(`start:${params.pane_id}`);
+        if (params.args.some((arg: string) => arg.includes("\n"))) throw new Error("Herdr cannot encode multiline launch arguments");
         if (options.startFail) throw new Error("start failed");
         rows.push(row(params.pane_id, params.kind));
         await gate;
