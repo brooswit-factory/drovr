@@ -9,6 +9,8 @@ export interface ManagedAgentWorkspace {
   provider: ManagedAgentProvider;
   cwd: string;
   unattended?: boolean;
+  /** Explicit resident-agent intent; permits only this user's exact home, never its parents. */
+  allowHomeWorkspace?: boolean;
 }
 
 let pendingPreparation: Promise<void> = Promise.resolve();
@@ -43,12 +45,12 @@ async function readSettings(settingsPath: string): Promise<Record<string, unknow
   }
 }
 
-async function prepareAgyWorkspace(cwd: string, settingsPath: string): Promise<void> {
+async function prepareAgyWorkspace(cwd: string, settingsPath: string, allowHomeWorkspace = false): Promise<void> {
   if (!isAbsolute(cwd)) throw new Error("Managed workspace must be an absolute directory path");
   const workspace = await realpath(cwd);
   if (!(await stat(workspace)).isDirectory()) throw new Error("Managed workspace must be an existing directory");
   const home = await realpath(homedir());
-  if (workspace === parse(workspace).root || workspace === home || home.startsWith(`${workspace}${sep}`)) {
+  if (workspace === parse(workspace).root || (workspace === home && !allowHomeWorkspace) || home.startsWith(`${workspace}${sep}`)) {
     throw new Error("Refusing broad root or home workspace trust");
   }
   const settings = await readSettings(settingsPath);
@@ -88,7 +90,7 @@ export function prepareManagedAgentWorkspace(
   if (workspace.provider !== "agy" || workspace.unattended !== true) return Promise.resolve();
   const cwd = workspace.cwd;
   const target = resolve(settingsPath ?? join(homedir(), ".gemini", "antigravity-cli", "settings.json"));
-  const preparation = pendingPreparation.then(() => prepareAgyWorkspace(cwd, target));
+  const preparation = pendingPreparation.then(() => prepareAgyWorkspace(cwd, target, workspace.allowHomeWorkspace === true));
   pendingPreparation = preparation.catch(() => {});
   return preparation;
 }

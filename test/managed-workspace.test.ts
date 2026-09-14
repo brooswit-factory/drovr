@@ -24,6 +24,16 @@ async function fixture() {
 }
 
 describe("managed workspace preparation", () => {
+  test("resident intent permits exact own home but never root or a home ancestor", async () => {
+    const f = await fixture();
+    const home = await fs.realpath(homedir());
+    await expect(f.prepare(home)).rejects.toThrow("Refusing broad");
+    await prepareManagedAgentWorkspace({ provider: "agy", cwd: home, unattended: true, allowHomeWorkspace: true }, f.settingsPath);
+    expect(JSON.parse(await fs.readFile(f.settingsPath, "utf8"))).toEqual({ trustedWorkspaces: [home] });
+    for (const cwd of [parse(home).root, dirname(home)]) {
+      await expect(prepareManagedAgentWorkspace({ provider: "agy", cwd, unattended: true, allowHomeWorkspace: true }, f.settingsPath)).rejects.toThrow("Refusing broad");
+    }
+  });
   test("creates private settings for only the exact existing directory and is idempotent", async () => {
     const f = await fixture();
     await f.prepare();
