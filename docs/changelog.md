@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add provider-neutral `createResidentAgentMessenger` for sending one message to a
+  running resident and reading its reply. Claude sends through `claude attach` in a
+  PTY and proves delivery and reply from that session's own transcript. It never
+  resumes or forks. Codex and AGY refuse with `unsupported-provider`.
+- Add `readClaudeTranscriptTail` for incremental reads of live Claude transcripts.
+
+See [resident agent messaging](resident-agent.md).
+
 ## 0.4.0
 
 - Add `ManagedConversationRunner` for direct AGY, Codex, and Claude CLI messages

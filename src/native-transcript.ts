@@ -155,6 +155,47 @@ function validateAgy(text: string): string {
   return text;
 }
 
+export interface ClaudeTranscriptTail {
+  /** Byte offset just past the last complete record returned; pass it back to continue. */
+  offset: number;
+  /** Complete JSONL records from the requested offset; a partial final record is left for the next read. */
+  text: string;
+}
+
+/** Incremental read of a live Claude transcript, which may exceed the whole-file limit. */
+export async function readClaudeTranscriptTail(
+  options: { sessionId: string; cwd: string; home?: string }, offset: number,
+): Promise<ClaudeTranscriptTail> {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(options.sessionId)) fail("invalid native session ID");
+  if (!isAbsolute(options.cwd) || options.cwd.includes("\0")) fail("cwd must be absolute");
+  if (!Number.isSafeInteger(offset) || offset < 0) fail("invalid transcript offset");
+  const home = options.home ?? homedir();
+  if (!isAbsolute(home) || home.includes("\0") || home.split("/").includes("..")) fail("home must be absolute without parent traversal");
+  const project = resolve(options.cwd).replace(/[^a-zA-Z0-9]/g, "-");
+  const file = await openSafe(join(home, ".claude", "projects", project, `${options.sessionId}.jsonl`));
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile()) fail("expected a regular file");
+    if (stat.size < offset) fail("transcript shrank below the read offset");
+    const buffer = Buffer.alloc(Math.min(stat.size - offset, MAX_BYTES));
+    let size = 0;
+    while (size < buffer.length) {
+      const { bytesRead } = await file.read(buffer, size, buffer.length - size, offset + size);
+      if (!bytesRead) break;
+      size += bytesRead;
+    }
+    const complete = buffer.subarray(0, size).lastIndexOf(0x0a) + 1;
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, complete));
+      return { offset: offset + complete, text };
+    } catch {
+      fail("file is not valid UTF-8");
+    }
+  } finally {
+    await file.close();
+  }
+}
+
 /** Read native text unchanged; compaction and handoff remain separate operations. */
 export async function readNativeTranscript(options: NativeTranscriptOptions): Promise<string> {
   const { provider, session, cwd } = options;

@@ -1,7 +1,23 @@
 export const DROVR_PACKAGE_NAME = "@brooswit/drovr";
 export { ManagedConversationLifecycle, type ManagedConversationLifecycleOptions, type ManagedConversationMessageOptions, type ManagedConversationCommitContext } from "./managed-conversation-lifecycle.js";
 export { ManagedHerdrLifecycle, type ManagedHerdrIdentity, type ManagedHerdrLifecycleOptions, type ManagedHerdrStartRequest, type ManagedHerdrResult } from "./managed-herdr-lifecycle.js";
-export { readNativeTranscript, nativeTranscriptReply, NativeTranscriptUnavailableError, type NativeTranscriptOptions } from "./native-transcript.js";
+export { readNativeTranscript, readClaudeTranscriptTail, nativeTranscriptReply, NativeTranscriptUnavailableError, type NativeTranscriptOptions, type ClaudeTranscriptTail } from "./native-transcript.js";
+export {
+  createResidentAgentMessenger,
+  ClaudeResidentMessenger,
+  ResidentMessageRefusal,
+  listClaudeBackgroundSessions,
+  openClaudeAttach,
+  RESIDENT_MESSAGE_MAX_CHARS,
+  type ResidentAgentTarget,
+  type ResidentAgentMessenger,
+  type ResidentMessageOptions,
+  type ResidentMessageResult,
+  type ResidentMessageRefusalReason,
+  type ResidentTerminal,
+  type ClaudeBackgroundListing,
+  type ClaudeResidentDeps,
+} from "./resident-agent.js";
 export { ManagedConversationSession, HANDOFF_ACK, HANDOFF_CHUNK_CHARS, type ConversationIdentity, type ConversationSessionOptions } from "./conversation-session.js";
 export { providerSetupSeed, applyProviderSetupSeed, type ProviderSetupFile } from "./provider-setup.js";
 

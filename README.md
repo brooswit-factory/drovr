@@ -90,6 +90,10 @@ and Codex MCP inventory parsing/probing. It never logs raw inventory output,
 which may contain credentials. See
 [`docs/managed-runtime.md`](docs/managed-runtime.md) for the boundary and API.
 
+To message an already-running resident agent's same session, use
+`createResidentAgentMessenger`. Only Claude has a proven transport; see
+[`docs/resident-agent.md`](docs/resident-agent.md).
+
 Both kinds use the same `agent.prompt`, `agent.get`, `agent.read`, and
 `agent.wait` methods. Herdr owns terminal interaction and base status detection;
 the consuming application owns agent-specific instruction files, model
