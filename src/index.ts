@@ -53,12 +53,31 @@ export { startManagedAgent, AgentShellReadinessError, type AgentStartOptions, ty
 export {
   ManagedConversationRunner,
   ManagedConversationQuotaError,
+  AgyDeniedActionsError,
   runConversationProcess,
   type ManagedConversationRunnerOptions,
   type ManagedConversationResult,
   type RunProcess,
 } from "./managed-conversation.js";
 export { prepareManagedAgentWorkspace, type ManagedAgentWorkspace } from "./managed-workspace.js";
+export {
+  mcpAccessProvisioning,
+  applyMcpAccess,
+  setMcpAccess,
+  switchProviderMcpAccess,
+  awaitIdentityRelease,
+  IdentityStillHeldError,
+  realMcpSettingsIo,
+  type McpServerAccess,
+  type McpAccessDeclaration,
+  type McpAccessProvisioning,
+  type McpAccessApplied,
+  type McpAccessChange,
+  type McpSettingsEdit,
+  type McpSettingsIo,
+  type McpRestartDeps,
+  type IdentityReleaseOptions,
+} from "./mcp-access.js";
 export {
   buildAgentStartParams,
   buildProviderLaunchArgs,

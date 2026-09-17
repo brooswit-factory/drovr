@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Drovr owns MCP access across vendors: one `McpAccessDeclaration` renders into
+  Claude's `enabledMcpjsonServers`, AGY's `permissions.allow: ["mcp(<server>/*)"]`
+  and Codex's start arguments. `setMcpAccess` provisions then restarts, because
+  every vendor reads this at process start; `switchProviderMcpAccess` provisions
+  the target before its first process starts; both gate readiness on
+  `awaitIdentityRelease`, a real check with a deadline, never a sleep. See
+  [MCP access](mcp-access.md).
+- Refuse an AGY turn that answers `SUCCESS` with an empty response and a
+  populated `denied_actions` (`AgyDeniedActionsError`), instead of persisting a
+  denied turn as an assistant turn that said nothing.
 - Add `deliverToResident`, which refuses to read a notification channel's
   transport acknowledgement as delivery to a resident. A stream-level ack is
   confirmed against the resident's own transcript and, when the message never
