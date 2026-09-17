@@ -52,6 +52,53 @@ throws `IdentityStillHeldError` rather than declaring a new agent ready while
 the old holder is still there. A sleep long enough to usually work is also a
 sleep that lies when it does not.
 
+## Subscribing is a separate act from enabling, and a launch-time one
+
+Enabling a server lets an agent *call* it. Being woken by it is a different
+act: a launch-time argument naming the server's development channel. Drovr
+reports the difference as `restart`:
+
+| `restart` | What it means | What satisfies it |
+| --- | --- | --- |
+| `none` | Already as declared | Nothing |
+| `restart` | Enablement changed on disk | Any restart, including a respawn |
+| `fresh-launch` | A subscription the running process lacks | A fresh launch or fork **only** |
+
+A respawn carries no arguments, ever. A caller that respawns to pick up a
+subscription gets a session that looks restarted and is still not subscribed —
+measured: `off`/`on` resumed the same session id and changed nothing.
+
+When the caller does not say what the running process was launched with,
+`subscriptionUnverified` is true and `restart` stays driven by the files alone.
+Unknown is a third answer on purpose: guessing "unsubscribed" would demand a
+fresh launch on every call and never converge, and guessing "subscribed" would
+reproduce the bug this is here to catch.
+
+## The ceiling: most agents can never be woken
+
+`notificationSupport(provider, runtime)` states this rather than emitting a
+flag that does nothing:
+
+- **AGY and Codex: never.** Rendering a channel frame is Claude Code's
+  behaviour. It is the wrong runtime, not a missing setting.
+- **Headless Claude (`--print`): never.** No acceptor exists for the frame's
+  prompt, and print mode skips channels.
+- **Interactive Claude, freshly launched with its channels: supported** — and
+  still carrying a caveat that Drovr states rather than hides: each frame needs
+  a human to accept its prompt, so an unattended session may never render one.
+
+So "channel delivery for everyone" is not achievable and Drovr does not claim
+it. Everything else is poll-only: it reads its buffer when something else
+prompts it.
+
+**Therefore the "poke an idle agent through the channel" pattern does not
+work**, and Drovr does not offer it. A poke to an idle agent lands in a
+bounded, ephemeral buffer that nobody will drain. The mechanism that does work
+on an idle Claude session is `deliverToResident`: it types into the session's
+own attach terminal and proves delivery from that session's transcript. Use a
+channel for an agent that is already listening; use the resident transport to
+wake one that is not.
+
 ## Idle inbound addressability is not a configuration problem
 
 Outbound from a resident conversation works and is verified end to end: a
@@ -65,5 +112,19 @@ addressable is unaddressable exactly when it is idle.
 
 Making an idle agent addressable requires the persistent daemon to hold the
 connection instead of the per-turn provider process. That is a design decision
-about where the identity lives, not a bug in anyone's configuration, and it is
-recorded here as open rather than quietly worked around.
+about where the identity lives, not a bug in anyone's configuration.
+
+**The decision: the persistent daemon should hold the connection, and a
+per-turn provider child should not register the durable identity at all.**
+
+The reasoning is that a per-turn child cannot make a durable identity
+addressable no matter how it is configured — the lifetime of the registration
+is the lifetime of the process, and the whole purpose of the layer is to
+outlive its agents. Registering from the child also actively harms: it takes
+the single per-identity connection slot, so the moment that child dies without
+being reaped, every later connection is refused and the model reports zero
+tools (see the release rule above).
+
+This moves identity ownership out of Drovr's per-turn spawn and into the
+daemon that already runs continuously, so it is not Drovr's change to land
+alone. Recorded here as decided, not done.

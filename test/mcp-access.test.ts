@@ -6,6 +6,7 @@ import {
   applyMcpAccess,
   awaitIdentityRelease,
   mcpAccessProvisioning,
+  notificationSupport,
   setMcpAccess,
   switchProviderMcpAccess,
   type McpAccessDeclaration,
@@ -74,11 +75,11 @@ describe("one declaration, each vendor's own dialect", () => {
     });
   });
 
-  test("access that is already granted rewrites nothing and restarts nothing", async () => {
+  test("access that is already granted, to a process already subscribed, does nothing", async () => {
     const f = files({
       [`${YAPPR.cwd}/.claude/settings.local.json`]: JSON.stringify({ enabledMcpjsonServers: ["yappr"] }),
     });
-    const applied = await applyMcpAccess("claude", YAPPR, f.io);
+    const applied = await applyMcpAccess("claude", YAPPR, f.io, { notificationServers: ["yappr"] });
     expect(applied).toMatchObject({ changed: false, restartRequired: false, written: [] });
     expect(f.written).toEqual([]);
   });
@@ -120,7 +121,7 @@ describe("a write alone never reaches a running agent", () => {
       stop: async () => { stopped = true; },
       released: async () => true,
       start: async () => "session-2",
-    });
+    }, { notificationServers: ["yappr"] });
     expect(stopped).toBe(false);
     expect(change.restarted).toBeUndefined();
   });
@@ -201,5 +202,89 @@ describe("a denied AGY turn is a denial, not an empty answer", () => {
   test("an ordinary empty answer with nothing denied is unchanged", async () => {
     const stdout = JSON.stringify({ status: "SUCCESS", conversation_id: "c1", response: "" });
     expect(await runner(stdout).message("hello")).toEqual({ conversationId: "c1", response: "" });
+  });
+});
+
+describe("subscribing is a separate act from enabling, and a launch-time one", () => {
+  test("REGRESSION: a subscription the running process lacks needs a FRESH launch, not a restart", async () => {
+    const f = files({
+      [`${YAPPR.cwd}/.claude/settings.local.json`]: JSON.stringify({ enabledMcpjsonServers: ["yappr"] }),
+    });
+    // Enablement is already on disk, so nothing is written — and yet the
+    // running process still has no subscription, because that was a launch
+    // argument it never received.
+    const applied = await applyMcpAccess("claude", YAPPR, f.io, { notificationServers: [] });
+    expect(applied.written).toEqual([]);
+    // FALSIFIER: "restart" here is what a respawn satisfies, and a respawn
+    // carries no flags ever — the session comes back still unsubscribed.
+    expect(applied.restart).toBe("fresh-launch");
+  });
+
+  test("a process already launched with the channel needs nothing", async () => {
+    const f = files({
+      [`${YAPPR.cwd}/.claude/settings.local.json`]: JSON.stringify({ enabledMcpjsonServers: ["yappr"] }),
+    });
+    const applied = await applyMcpAccess("claude", YAPPR, f.io, { notificationServers: ["yappr"] });
+    expect(applied.restart).toBe("none");
+  });
+
+  test("enablement alone is satisfied by an ordinary restart", async () => {
+    const f = files();
+    const applied = await applyMcpAccess("claude", { ...YAPPR, servers: [{ name: "yappr" }] }, f.io);
+    expect(applied.changed).toBe(true);
+    expect(applied.restart).toBe("restart");
+  });
+
+  test("an unknown subscription state is reported, never guessed either way", async () => {
+    const f = files({ [`${YAPPR.cwd}/.claude/settings.local.json`]: JSON.stringify({ enabledMcpjsonServers: ["yappr"] }) });
+    const applied = await applyMcpAccess("claude", YAPPR, f.io);
+    // Guessing "unsubscribed" demands a fresh launch on every call and never
+    // converges; guessing "subscribed" reproduces the bug. So: say so.
+    expect(applied.restart).toBe("none");
+    expect(applied.subscriptionUnverified).toBe(true);
+  });
+
+  test("the restart is told which kind it must be", async () => {
+    const f = files({ [`${YAPPR.cwd}/.claude/settings.local.json`]: JSON.stringify({ enabledMcpjsonServers: ["yappr"] }) });
+    const kinds: string[] = [];
+    await setMcpAccess("claude", YAPPR, {
+      io: f.io, stop: async () => {}, released: async () => true,
+      start: async (kind) => { kinds.push(kind); return "session-2"; },
+    }, { notificationServers: [] });
+    expect(kinds).toEqual(["fresh-launch"]);
+  });
+});
+
+describe("the ceiling on notifications is stated, not silently missed", () => {
+  test.each(["agy", "codex"] as const)("%s can never be woken by a channel frame", (provider) => {
+    const support = notificationSupport(provider);
+    expect(support.supported).toBe(false);
+    if (!support.supported) expect(support.reason).toContain("Claude Code");
+  });
+
+  test("headless Claude has no acceptor, so it is not supported either", () => {
+    const support = notificationSupport("claude", "print");
+    expect(support.supported).toBe(false);
+    if (!support.supported) expect(support.reason).toContain("acceptor");
+  });
+
+  test("interactive Claude is supported, with its conditions and its caveat named", () => {
+    const support = notificationSupport("claude", "interactive");
+    expect(support.supported).toBe(true);
+    if (support.supported) {
+      expect(support.requires).toContain("a fresh launch or fork, never a respawn");
+      // Honest about what is still not guaranteed once every condition holds.
+      expect(support.caveat).toContain("accept");
+    }
+  });
+
+  test("asking agy for notifications reports the refusal instead of dropping it", async () => {
+    const f = files();
+    const applied = await applyMcpAccess("agy", YAPPR, f.io);
+    expect(applied.notificationServers).toEqual(["yappr"]);
+    expect(applied.notifications.supported).toBe(false);
+    // FALSIFIER: no fresh launch is demanded for a subscription that can never
+    // arrive; promising one would be a restart loop that never converges.
+    expect(applied.restart).toBe("restart");
   });
 });

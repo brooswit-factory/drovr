@@ -9,6 +9,12 @@
   the target before its first process starts; both gate readiness on
   `awaitIdentityRelease`, a real check with a deadline, never a sleep. See
   [MCP access](mcp-access.md).
+- Report subscription as its own launch-time act: `restart: "fresh-launch"`
+  when a running process lacks a declared channel, since a respawn carries no
+  arguments and can never apply one, and `subscriptionUnverified` when the
+  caller has not said what the process was launched with. `notificationSupport`
+  states the ceiling — AGY and Codex are the wrong runtime, headless Claude has
+  no acceptor, and even a supported session needs a human to accept each frame.
 - Refuse an AGY turn that answers `SUCCESS` with an empty response and a
   populated `denied_actions` (`AgyDeniedActionsError`), instead of persisting a
   denied turn as an assistant turn that said nothing.

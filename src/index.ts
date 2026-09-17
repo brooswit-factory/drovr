@@ -62,6 +62,7 @@ export {
 export { prepareManagedAgentWorkspace, type ManagedAgentWorkspace } from "./managed-workspace.js";
 export {
   mcpAccessProvisioning,
+  notificationSupport,
   applyMcpAccess,
   setMcpAccess,
   switchProviderMcpAccess,
@@ -70,6 +71,10 @@ export {
   realMcpSettingsIo,
   type McpServerAccess,
   type McpAccessDeclaration,
+  type McpRuntime,
+  type McpRestartKind,
+  type NotificationSupport,
+  type RunningMcpAccess,
   type McpAccessProvisioning,
   type McpAccessApplied,
   type McpAccessChange,

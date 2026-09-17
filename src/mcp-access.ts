@@ -34,6 +34,22 @@ export interface McpAccessDeclaration {
   cwd: string;
   /** The agent's own home, for vendors that keep permissions there. Defaults to this user's. */
   home?: string;
+  /** How the agent's process runs; decides whether notifications can reach it at all. */
+  runtime?: McpRuntime;
+}
+
+/**
+ * What the agent that is running right now was actually started with.
+ *
+ * `notificationServers` left undefined means "not known", which is a third
+ * answer, not a quiet zero. Treating unknown as unsubscribed would demand a
+ * fresh launch on every call and never converge; treating it as subscribed
+ * would reproduce exactly the bug this exists to catch. So unknown is reported
+ * as unverified and the caller is told it cannot claim a subscription.
+ */
+export interface RunningMcpAccess {
+  /** Servers whose channels its CURRENT process was launched with, if any. */
+  notificationServers?: readonly string[];
 }
 
 /** One vendor settings file, and the exact keys this declaration governs in it. */
@@ -50,6 +66,65 @@ export interface McpAccessProvisioning {
   edits: readonly McpSettingsEdit[];
   /** MCP servers whose notifications the process must be started with. */
   notificationServers: readonly string[];
+  /** Whether a subscription can reach this agent at all; see notificationSupport. */
+  notifications: NotificationSupport;
+}
+
+/**
+ * What it takes for a change to actually reach the agent.
+ *
+ * `restart` is enough for enablement, which every vendor re-reads at process
+ * start. A subscription needs more: it is a launch-time argument, and a
+ * respawn carries no arguments ever, so only a fresh launch or a fork can
+ * apply one. Reporting that difference is the whole point — a caller that
+ * respawns to pick up a subscription gets a session that looks restarted and
+ * is still not subscribed.
+ */
+export type McpRestartKind = "none" | "restart" | "fresh-launch";
+
+/**
+ * How the agent's process runs. Only a Claude Code session with a terminal can
+ * render a channel notification frame; `--print` has no acceptor for one and
+ * skips channels entirely.
+ */
+export type McpRuntime = "interactive" | "print";
+
+export type NotificationSupport =
+  | {
+      supported: true;
+      /** Conditions that must ALL hold; none of them is checkable after start. */
+      requires: readonly string[];
+      /** What remains unguaranteed even when they do hold. */
+      caveat: string;
+    }
+  | { supported: false; reason: string };
+
+/**
+ * Whether a notification subscription can reach this agent at all.
+ *
+ * Rendering a channel frame requires Claude Code specifically, launched with a
+ * terminal and its channels, and a human accepting a permission prompt per
+ * frame. That is the ceiling. AGY and Codex are the wrong runtime and can
+ * never be woken this way, and headless Claude has no acceptor — so Drovr says
+ * so here instead of emitting a flag that does nothing and letting a caller
+ * believe a subscription exists.
+ */
+export function notificationSupport(provider: ManagedAgentProvider, runtime: McpRuntime = "interactive"): NotificationSupport {
+  if (provider !== "claude") {
+    return { supported: false, reason: `${provider} cannot render a channel notification frame; only Claude Code does` };
+  }
+  if (runtime === "print") {
+    return { supported: false, reason: "headless Claude (--print) has no acceptor for a channel frame and skips channels" };
+  }
+  return {
+    supported: true,
+    requires: [
+      "Claude Code with a terminal, not --print",
+      "launched with the server's development channel",
+      "a fresh launch or fork, never a respawn",
+    ],
+    caveat: "each frame still needs a human to accept its prompt, so an unattended session may never render one",
+  };
 }
 
 const NAME = /^[A-Za-z0-9_-]+$/;
@@ -82,13 +157,17 @@ export function mcpAccessProvisioning(
   if (!isAbsolute(declaration.cwd)) throw new Error("MCP access declaration needs an absolute workspace");
   const names = declaration.servers.map((server) => safeName(server.name));
   const notificationServers = declaration.servers.filter((server) => server.notifications).map((server) => server.name);
-  if (names.length === 0) return { edits: [], notificationServers: [] };
+  const notifications = notificationServers.length === 0
+    ? ({ supported: false, reason: "this declaration asks for no notifications" } as NotificationSupport)
+    : notificationSupport(provider, declaration.runtime ?? "interactive");
+  if (names.length === 0) return { edits: [], notificationServers: [], notifications };
 
   if (provider === "claude") {
     // Measured: without this, the session sits blocked on an approval prompt it
     // cannot be answered out of, and its identity never registers at all.
     return {
       notificationServers,
+      notifications,
       edits: [{
         path: join(declaration.cwd, ".claude", "settings.local.json"),
         describes: `claude may use ${names.join(", ")} from this workspace's .mcp.json`,
@@ -103,6 +182,7 @@ export function mcpAccessProvisioning(
     const allow = declaration.servers.flatMap(agyPermissions);
     return {
       notificationServers,
+      notifications,
       edits: [{
         path: join(declaration.home ?? homedir(), ".gemini", "antigravity-cli", "settings.json"),
         describes: `agy may call ${allow.join(", ")}`,
@@ -118,7 +198,7 @@ export function mcpAccessProvisioning(
 
   // Codex takes its MCP servers as `--config` arguments at start (see
   // buildAgentStartParams); it keeps no per-workspace permission file.
-  return { notificationServers, edits: [] };
+  return { notificationServers, notifications, edits: [] };
 }
 
 export interface McpSettingsIo {
@@ -166,9 +246,19 @@ export interface McpAccessApplied {
    * not reach it. It is restarted, never merely written to.
    */
   restartRequired: boolean;
+  /** How the running agent must come back for this to reach it. */
+  restart: McpRestartKind;
   /** Files actually rewritten, for reporting. */
   written: readonly string[];
   notificationServers: readonly string[];
+  /** Subscriptions asked for that this provider and runtime cannot deliver. */
+  notifications: NotificationSupport;
+  /**
+   * True when a subscription was asked for and could be delivered, but the
+   * caller did not say what the running process was launched with. Nothing can
+   * claim this agent is subscribed until a launch is observed.
+   */
+  subscriptionUnverified: boolean;
 }
 
 /**
@@ -181,6 +271,7 @@ export async function applyMcpAccess(
   provider: ManagedAgentProvider,
   declaration: McpAccessDeclaration,
   io: McpSettingsIo = realMcpSettingsIo,
+  running: RunningMcpAccess = {},
 ): Promise<McpAccessApplied> {
   const plan = mcpAccessProvisioning(provider, declaration);
   const written: string[] = [];
@@ -202,11 +293,21 @@ export async function applyMcpAccess(
     await io.writeSettings(edit.path, `${JSON.stringify(next, null, 2)}\n`);
     written.push(edit.path);
   }
+  // A subscription the current process was not launched with can only arrive
+  // through a fresh launch; a respawn carries no arguments at all.
+  const wanted = plan.notifications.supported ? plan.notificationServers : [];
+  const known = running.notificationServers !== undefined;
+  const held = new Set(running.notificationServers ?? []);
+  const unsubscribed = known && wanted.some((server) => !held.has(server));
+  const restart: McpRestartKind = unsubscribed ? "fresh-launch" : written.length > 0 ? "restart" : "none";
   return {
     changed: written.length > 0,
-    restartRequired: written.length > 0,
+    restartRequired: restart !== "none",
+    restart,
     written,
     notificationServers: plan.notificationServers,
+    notifications: plan.notifications,
+    subscriptionUnverified: wanted.length > 0 && !known,
   };
 }
 
@@ -256,8 +357,12 @@ export async function awaitIdentityRelease(options: IdentityReleaseOptions): Pro
 export interface McpRestartDeps<T> extends Partial<IdentityReleaseOptions> {
   /** Stops the agent currently holding the identity. */
   stop: () => Promise<void>;
-  /** Starts the agent again; called only after the identity is confirmed free. */
-  start: () => Promise<T>;
+  /**
+   * Starts the agent again, only after the identity is confirmed free. It is
+   * told which kind of start this has to be: `fresh-launch` means a respawn
+   * cannot satisfy it, because the change is a launch-time argument.
+   */
+  start: (kind: Exclude<McpRestartKind, "none">) => Promise<T>;
   /** Confirms the previous holder is gone; required, because a sleep cannot. */
   released: () => Promise<boolean>;
   io?: McpSettingsIo;
@@ -284,9 +389,10 @@ export async function setMcpAccess<T>(
   provider: ManagedAgentProvider,
   declaration: McpAccessDeclaration,
   deps: McpRestartDeps<T>,
+  running: RunningMcpAccess = {},
 ): Promise<McpAccessChange<T>> {
-  const applied = await applyMcpAccess(provider, declaration, deps.io ?? realMcpSettingsIo);
-  if (!applied.restartRequired) return { applied };
+  const applied = await applyMcpAccess(provider, declaration, deps.io ?? realMcpSettingsIo, running);
+  if (applied.restart === "none") return { applied };
   await deps.stop();
   await awaitIdentityRelease({
     released: deps.released,
@@ -295,7 +401,7 @@ export async function setMcpAccess<T>(
     ...(deps.now === undefined ? {} : { now: deps.now }),
     ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
   });
-  return { applied, restarted: await deps.start() };
+  return { applied, restarted: await deps.start(applied.restart) };
 }
 
 /**
@@ -308,7 +414,8 @@ export async function setMcpAccess<T>(
 export async function switchProviderMcpAccess<T>(
   target: ManagedAgentProvider,
   declaration: McpAccessDeclaration,
-  deps: { start: () => Promise<T>; io?: McpSettingsIo } & Partial<Pick<McpRestartDeps<T>, "released" | "timeoutMs" | "pollMs" | "now" | "sleep">>,
+  deps: { start: (kind: Exclude<McpRestartKind, "none">) => Promise<T>; io?: McpSettingsIo }
+    & Partial<Pick<McpRestartDeps<T>, "released" | "timeoutMs" | "pollMs" | "now" | "sleep">>,
 ): Promise<McpAccessChange<T>> {
   const applied = await applyMcpAccess(target, declaration, deps.io ?? realMcpSettingsIo);
   if (deps.released) {
@@ -320,5 +427,6 @@ export async function switchProviderMcpAccess<T>(
       ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
     });
   }
-  return { applied, restarted: await deps.start() };
+  // A switch always starts a new process, so its subscriptions apply.
+  return { applied, restarted: await deps.start("fresh-launch") };
 }
