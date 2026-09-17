@@ -105,14 +105,24 @@ interface AgentLaunchBase {
   prompt: string;
   model?: string;
   timeoutMs?: number;
+  /**
+   * Provider-neutral MCP configuration file path. Callers state the intent once;
+   * each provider adapter below decides whether and how to spell it on the CLI.
+   */
+  mcpConfigPath?: string;
+  /**
+   * Provider-neutral development channel names. Providers without a development
+   * channel concept accept and ignore them rather than rejecting the caller.
+   */
+  developmentChannels?: readonly string[];
 }
 
 export interface ClaudeAgentLaunch extends AgentLaunchBase {
   provider: "claude";
   effort: string;
+  /** Claude always launches against an explicit MCP configuration. */
   mcpConfigPath: string;
   permissionMode?: string;
-  developmentChannels?: readonly string[];
 }
 
 export interface CodexAgentLaunch extends AgentLaunchBase {
@@ -192,6 +202,8 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
   if (launch.provider === "agy") {
     // AGY inherits cwd from the pane and MCP configuration externally (including
     // stdio bridges); this adapter does not supply cwd or MCP CLI overrides.
+    // Neutral mcpConfigPath and developmentChannels are accepted and deliberately
+    // unspelled here: AGY has no equivalent flags, and Claude's must never leak.
     return {
       ...common,
       kind: "agy",
@@ -203,6 +215,8 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
     };
   }
 
+  // Codex receives MCP servers structurally through --config; the neutral
+  // mcpConfigPath and developmentChannels are accepted without Claude coupling.
   return {
     ...common,
     kind: "codex",

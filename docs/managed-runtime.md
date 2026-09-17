@@ -22,6 +22,19 @@ and close operations act only on an unambiguous resolution.
 Herdr's `agent.start` parameters. It does not select a provider or model and
 does not fall back after failure.
 
+MCP configuration and development channels are provider-neutral launch inputs.
+`mcpConfigPath` and `developmentChannels` are accepted for every provider;
+Drovr owns the translation. Claude receives `--mcp-config <path>` and, when at
+least one channel is named, `--dangerously-load-development-channels` followed
+by the requested channels; an empty list loads no channels and emits no flag.
+Codex and AGY accept the same inputs and spell neither flag, so no caller has
+to branch on Claude to configure a managed worker.
+
+`ManagedHerdrStartRequest` carries the same two fields, so a caller can state
+them once per request instead of inside a provider-specific `prepare` result.
+A value present on the request overrides the prepared launch; an absent one
+leaves the prepared launch untouched.
+
 AGY launches inherit the pane's working directory and use external MCP
 configuration, which can connect a stdio-to-HTTP bridge. Drovr supplies no cwd
 or MCP CLI override. `AgyAgentLaunch.skipPermissions` defaults to false; only

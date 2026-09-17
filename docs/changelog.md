@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Own configurable MCP servers and development channels at the Drovr boundary.
+  `mcpConfigPath` and `developmentChannels` are provider-neutral launch inputs
+  accepted for Claude, Codex, and AGY, and `ManagedHerdrStartRequest` accepts
+  both so a caller states them once per request. Claude receives `--mcp-config`
+  and `--dangerously-load-development-channels`; other providers take the same
+  inputs without Claude-specific coupling.
+
 ## 0.7.0
 
 - Add provider-neutral `createResidentAgentMessenger` for sending one message to a
