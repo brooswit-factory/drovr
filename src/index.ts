@@ -18,6 +18,14 @@ export {
   type ClaudeBackgroundListing,
   type ClaudeResidentDeps,
 } from "./resident-agent.js";
+export {
+  deliverToResident,
+  type ChannelAck,
+  type ChannelProof,
+  type ResidentDelivery,
+  type ResidentDeliveryDeps,
+  type ResidentDeliveryOptions,
+} from "./resident-delivery.js";
 export { ManagedConversationSession, HANDOFF_ACK, HANDOFF_CHUNK_CHARS, type ConversationIdentity, type ConversationSessionOptions } from "./conversation-session.js";
 export { providerSetupSeed, applyProviderSetupSeed, type ProviderSetupFile } from "./provider-setup.js";
 

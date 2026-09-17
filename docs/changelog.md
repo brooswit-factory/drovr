@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add `deliverToResident`, which refuses to read a notification channel's
+  transport acknowledgement as delivery to a resident. A stream-level ack is
+  confirmed against the resident's own transcript and, when the message never
+  appears, the resident is woken through the proven attach transport. Fixes
+  reports acknowledged as delivered that an idle session never received.
+
 ## 0.8.0
 
 - Own configurable MCP servers and development channels at the Drovr boundary.

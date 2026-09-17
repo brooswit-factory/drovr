@@ -71,3 +71,38 @@ session's composer; attach to inspect it.
 Codex and AGY refuse with `unsupported-provider` until a same-session transport
 is proven for them. Their `ManagedConversationRunner` resume starts a separate
 CLI turn and is not a resident transport.
+
+## A channel acknowledgement is not delivery
+
+A notification channel that hands a frame to a live stream knows only that the
+stream took it. It does not know that the far side's bridge kept it, that the
+resident's session ever read it, or that any model was scheduled to look. An
+idle Claude session drains its bridge only when it chooses to call the tool,
+which an idle session never does — so a channel can answer `delivered: true`
+at the same moment the message is going nowhere. This was measured, not
+assumed: a report acknowledged as delivered never reached the idle session it
+was addressed to, and had to be re-sent through the attach transport.
+
+`deliverToResident` keeps that distinction. It sends over the caller's channel
+first, because a channel does not interrupt a session that is already
+listening, and then treats the acknowledgement as evidence rather than as an
+outcome:
+
+- `proves: "session"` — the channel proved the resident's own session recorded
+  it. That is delivery, and nothing is woken.
+- `proves: "stream"`, or no proof named at all — Drovr watches the resident's
+  own transcript for the message and, if it never appears within
+  `observationTimeoutMs`, wakes the resident through the proven attach
+  transport. An absent `proves` is read as the weaker claim; the stronger one
+  is never assumed.
+- `delivered: false` — straight to the wakeup path, with no waiting.
+
+The result says which path delivered (`channel-delivered`, `channel-observed`,
+`woken`), or `undelivered` with the transport's own refusal when neither did.
+A resident is never reported as having received something on the strength of a
+transport acknowledgement alone.
+
+The bias is deliberate: an unobserved message is re-delivered by waking, which
+can duplicate a message that was received but not witnessed in time. A human
+reading something twice is recoverable; a report silently dropped on the floor
+of an idle coordinator is not.
