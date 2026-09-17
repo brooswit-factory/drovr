@@ -32,8 +32,16 @@ to branch on Claude to configure a managed worker.
 
 `ManagedHerdrStartRequest` carries the same two fields, so a caller can state
 them once per request instead of inside a provider-specific `prepare` result.
-A value present on the request overrides the prepared launch; an absent one
-leaves the prepared launch untouched.
+The two combine differently, because their shapes differ: a request's
+`mcpConfigPath` replaces the prepared one, since a launch reads exactly one
+file, while `developmentChannels` merge. A request naming `server:yappr` adds
+it to a launch that already configures `server:butchr` rather than dropping it;
+duplicates collapse and first-mention order is kept. An empty request list adds
+nothing and preserves what the launch configures. `mergeDevelopmentChannels`
+applies the same rule for callers combining channel lists of their own.
+
+`checkManagedAgentArgv` compares every configured channel against the live
+process, not just the first, so a worker that lost one channel reads as drifted.
 
 AGY launches inherit the pane's working directory and use external MCP
 configuration, which can connect a stdio-to-HTTP bridge. Drovr supplies no cwd

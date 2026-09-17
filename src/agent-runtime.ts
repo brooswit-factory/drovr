@@ -20,11 +20,32 @@ export function managedAgentProviderOfProcess(process: ManagedAgentProcess): Man
 
 export type ManagedAgentArgvCheck = { ok: true } | { ok: false; reason: string };
 
-const REQUIRED_CLAUDE_FLAGS = ["--permission-mode", "--mcp-config", "--dangerously-load-development-channels"] as const;
+const CLAUDE_DEVELOPMENT_CHANNELS_FLAG = "--dangerously-load-development-channels";
+const REQUIRED_CLAUDE_FLAGS = ["--permission-mode", "--mcp-config", CLAUDE_DEVELOPMENT_CHANNELS_FLAG] as const;
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
   const index = argv.indexOf(flag);
   return index >= 0 ? argv[index + 1] : undefined;
+}
+
+/** Every value of a variadic flag, up to the next flag or the end of argv. */
+function flagValues(argv: readonly string[], flag: string): readonly string[] | undefined {
+  const index = argv.indexOf(flag);
+  if (index < 0) return undefined;
+  const rest = argv.slice(index + 1);
+  const next = rest.findIndex((value) => value.startsWith("--"));
+  return next < 0 ? rest : rest.slice(0, next);
+}
+
+/**
+ * Union development channel names in caller order, keeping the first mention of
+ * each. Merging rather than replacing is what lets a request add a channel to a
+ * launch that already configures others, without either side knowing the other.
+ */
+export function mergeDevelopmentChannels(
+  ...lists: readonly (readonly string[] | undefined)[]
+): readonly string[] {
+  return [...new Set(lists.flatMap((list) => list ? [...list] : []))];
 }
 
 export function checkManagedAgentArgv(expected: readonly string[], observed: readonly string[]): ManagedAgentArgvCheck {
@@ -38,6 +59,15 @@ export function checkManagedAgentArgv(expected: readonly string[], observed: rea
     }
   }
   for (const flag of REQUIRED_CLAUDE_FLAGS) {
+    if (flag === CLAUDE_DEVELOPMENT_CHANNELS_FLAG) {
+      // Variadic: a live process missing any one configured channel has drifted.
+      const wanted = flagValues(expected, flag);
+      if (!wanted?.length) continue;
+      const seen = new Set(flagValues(observed, flag) ?? []);
+      const absent = wanted.filter((channel) => !seen.has(channel));
+      if (absent.length) missing.push(`${flag} ${absent.join(" ")}`);
+      continue;
+    }
     const want = flagValue(expected, flag);
     if (want !== undefined && flagValue(observed, flag) !== want) missing.push(`${flag} ${want}`);
   }
@@ -183,6 +213,7 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
   };
 
   if (launch.provider === "claude") {
+    const channels = mergeDevelopmentChannels(launch.developmentChannels);
     return {
       ...common,
       kind: "claude",
@@ -192,9 +223,7 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
         "--effort", launch.effort,
         "--permission-mode", launch.permissionMode ?? "bypassPermissions",
         "--mcp-config", launch.mcpConfigPath,
-        ...(launch.developmentChannels?.length
-          ? ["--dangerously-load-development-channels", ...launch.developmentChannels]
-          : []),
+        ...(channels.length ? [CLAUDE_DEVELOPMENT_CHANNELS_FLAG, ...channels] : []),
       ],
     };
   }

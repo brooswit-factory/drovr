@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { results } from "@brooswit/herdr-sdk";
-import { buildAgentStartParams, type ManagedAgentLaunch, type ManagedAgentProvider } from "./agent-runtime.js";
+import { buildAgentStartParams, mergeDevelopmentChannels, type ManagedAgentLaunch, type ManagedAgentProvider } from "./agent-runtime.js";
 import { startManagedAgent, type AgentStartOptions } from "./agent-start.js";
 import { HANDOFF_ACK, ManagedConversationSession } from "./conversation-session.js";
 import type { DrovrClient } from "./drovr-client.js";
@@ -47,8 +47,9 @@ export interface ManagedHerdrStartRequest {
    */
   mcpConfigPath?: string;
   /**
-   * Provider-neutral development channel names, applied the same way. An empty
-   * list is an explicit request for no channels, not an absent preference.
+   * Provider-neutral development channel names. These are merged with whatever
+   * the prepared launch already configures, so a request adds its channels
+   * without dropping the launch's own. An empty list adds nothing.
    */
   developmentChannels?: readonly string[];
 }
@@ -62,15 +63,18 @@ export type ManagedHerdrResult = ProviderFallbackResult<string> | {
 class HandoffBlocked extends Error {}
 
 /**
- * Apply the request's provider-neutral launch inputs over whatever the caller
+ * Apply the request's provider-neutral launch inputs to whatever the caller
  * prepared. Drovr owns the translation to provider flags, so callers never
- * spell a provider's CLI; absent values leave the prepared launch untouched.
+ * spell a provider's CLI. One MCP configuration path replaces another because
+ * a launch reads exactly one file; development channels merge, because a
+ * request naming one channel must not silently drop a launch's others.
  */
 function applyNeutralLaunchInputs(launch: ManagedAgentLaunch, request: ManagedHerdrStartRequest): ManagedAgentLaunch {
+  const developmentChannels = mergeDevelopmentChannels(launch.developmentChannels, request.developmentChannels);
   return {
     ...launch,
     ...(request.mcpConfigPath === undefined ? {} : { mcpConfigPath: request.mcpConfigPath }),
-    ...(request.developmentChannels === undefined ? {} : { developmentChannels: request.developmentChannels }),
+    ...(developmentChannels.length ? { developmentChannels } : {}),
   };
 }
 

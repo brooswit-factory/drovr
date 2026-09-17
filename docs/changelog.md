@@ -8,6 +8,11 @@
   both so a caller states them once per request. Claude receives `--mcp-config`
   and `--dangerously-load-development-channels`; other providers take the same
   inputs without Claude-specific coupling.
+- Merge development channels instead of replacing them, so a request that adds
+  one channel keeps the channels its launch already configures. Duplicates
+  collapse, first-mention order is kept, and `mergeDevelopmentChannels` is
+  exported for callers combining lists themselves. `checkManagedAgentArgv` now
+  checks every configured channel against a live process rather than the first.
 
 ## 0.7.0
 

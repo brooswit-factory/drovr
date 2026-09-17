@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentStartParams, type ManagedAgentLaunch, type ManagedAgentProvider } from "../src/index.js";
+import { buildAgentStartParams, checkManagedAgentArgv, mergeDevelopmentChannels, type ManagedAgentLaunch, type ManagedAgentProvider } from "../src/index.js";
 import type { DrovrClient } from "../src/drovr-client.js";
 import { ManagedHerdrLifecycle, type ManagedHerdrStartRequest } from "../src/managed-herdr-lifecycle.js";
 import { ProviderAvailabilityRegistry } from "../src/provider-fallback.js";
 
 /** A fresh workspace: no worker exists, so start launches once and kicks off. */
-function fixture(provider: ManagedAgentProvider) {
+function fixture(provider: ManagedAgentProvider, prepared: Record<string, unknown> = {}) {
   const started: { kind: string; args: string[] }[] = [];
   const rows: { pane_id: string; cwd: string; agent: string; agent_status: string }[] = [];
   const client = {
@@ -31,10 +31,10 @@ function fixture(provider: ManagedAgentProvider) {
   });
   const base = { cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch" };
   const launch = (provider === "claude"
-    ? { ...base, provider, effort: "high", mcpConfigPath: "/prepared/mcp.json" }
+    ? { ...base, provider, effort: "high", mcpConfigPath: "/prepared/mcp.json", ...prepared }
     : provider === "codex"
-      ? { ...base, provider, mcpServers: [] }
-      : { ...base, provider }) as ManagedAgentLaunch;
+      ? { ...base, provider, mcpServers: [], ...prepared }
+      : { ...base, provider, ...prepared }) as ManagedAgentLaunch;
   const request = (overrides: Partial<ManagedHerdrStartRequest>): ManagedHerdrStartRequest => ({
     priority: [{ provider, accountId: "default" }],
     label: "role",
@@ -111,5 +111,62 @@ describe("provider-neutral MCP configuration and development channels", () => {
     const codex = buildAgentStartParams({ ...base, ...neutral, provider: "codex", mcpServers: [] }).args ?? [];
     expect(codex.join(" ")).not.toContain("/work/mcp.json");
     expect(codex.join(" ")).not.toContain("server:butchr");
+  });
+});
+
+describe("configured channels reach provider startup", () => {
+  test("a Minecraft Claude session configured with YAPPR launches with its config and channel", async () => {
+    const f = fixture("claude", { mcpConfigPath: "/sessions/minecraft/mcp.json" });
+    expect((await f.lifecycle.start(f.request({ developmentChannels: ["server:yappr"] }))).status).toBe("success");
+    const args = f.started[0]!.args;
+    expect(flagValues(args, "--mcp-config")).toEqual(["/sessions/minecraft/mcp.json"]);
+    expect(flagValues(args, "--dangerously-load-development-channels")).toEqual(["server:yappr"]);
+  });
+
+  test("a requested channel joins the launch's existing channels instead of replacing them", async () => {
+    const f = fixture("claude", { developmentChannels: ["server:butchr", "server:baker"] });
+    expect((await f.lifecycle.start(f.request({ developmentChannels: ["server:yappr"] }))).status).toBe("success");
+    expect(flagValues(f.started[0]!.args, "--dangerously-load-development-channels"))
+      .toEqual(["server:butchr", "server:baker", "server:yappr"]);
+  });
+
+  test("a channel configured on both sides is passed to the provider once", async () => {
+    const f = fixture("claude", { developmentChannels: ["server:yappr"] });
+    expect((await f.lifecycle.start(f.request({ developmentChannels: ["server:yappr", "server:butchr"] }))).status).toBe("success");
+    expect(flagValues(f.started[0]!.args, "--dangerously-load-development-channels"))
+      .toEqual(["server:yappr", "server:butchr"]);
+  });
+
+  test("an empty request list preserves the channels the launch already configures", async () => {
+    const f = fixture("claude", { developmentChannels: ["server:yappr"] });
+    expect((await f.lifecycle.start(f.request({ developmentChannels: [] }))).status).toBe("success");
+    expect(flagValues(f.started[0]!.args, "--dangerously-load-development-channels")).toEqual(["server:yappr"]);
+  });
+
+  test.each(["codex", "agy"] as const)("%s keeps its existing channels neutral and unspelled", async (provider) => {
+    const f = fixture(provider, { developmentChannels: ["server:butchr"] });
+    expect((await f.lifecycle.start(f.request({ developmentChannels: ["server:yappr"] }))).status).toBe("success");
+    expect(f.started[0]!.args.join(" ")).not.toContain("server:yappr");
+    expect(f.started[0]!.args).not.toContain("--dangerously-load-development-channels");
+  });
+
+  test("merging channels keeps first-mention order and drops duplicates", () => {
+    expect(mergeDevelopmentChannels(["server:butchr"], undefined, ["server:yappr", "server:butchr"]))
+      .toEqual(["server:butchr", "server:yappr"]);
+    expect(mergeDevelopmentChannels(undefined, [])).toEqual([]);
+  });
+
+  test("a live Claude process missing one configured channel has drifted", () => {
+    const expected = buildAgentStartParams({
+      provider: "claude", name: "minecraft", paneId: "w1:p1", cwd: "/sessions/minecraft",
+      prompt: "play", effort: "high", mcpConfigPath: "/sessions/minecraft/mcp.json",
+      developmentChannels: ["server:butchr", "server:yappr"],
+    }).args!;
+    expect(checkManagedAgentArgv(expected, expected)).toEqual({ ok: true });
+    const drifted = expected.filter(value => value !== "server:yappr");
+    expect(checkManagedAgentArgv(expected, drifted)).toEqual({
+      ok: false,
+      reason: "argv lacks --dangerously-load-development-channels server:yappr",
+    });
   });
 });
