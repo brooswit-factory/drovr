@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 - Own configurable MCP servers and development channels at the Drovr boundary.
   `mcpConfigPath` and `developmentChannels` are provider-neutral launch inputs
@@ -13,6 +13,16 @@
   collapse, first-mention order is kept, and `mergeDevelopmentChannels` is
   exported for callers combining lists themselves. `checkManagedAgentArgv` now
   checks every configured channel against a live process rather than the first.
+- Add `buildProviderLaunchArgs` for callers that spawn a provider CLI directly
+  instead of going through Herdr, so Claude's flags stay inside Drovr. Neutral
+  `ProviderLaunchInputs` name an MCP config path, the MCP servers whose
+  notifications a session needs, and any already-spelled channels; Drovr maps
+  each notifying server to `server:<name>` for Claude and to nothing for Codex
+  and AGY. `ManagedAgentLaunch` and `ManagedHerdrStartRequest` accept
+  `mcpNotificationServers` on the same terms, and the Herdr adapter now builds
+  its Claude arguments through the same function.
+
+Release asset: `brooswit-drovr-0.8.0.tgz`.
 
 ## 0.7.0
 

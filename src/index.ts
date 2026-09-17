@@ -53,12 +53,15 @@ export {
 export { prepareManagedAgentWorkspace, type ManagedAgentWorkspace } from "./managed-workspace.js";
 export {
   buildAgentStartParams,
+  buildProviderLaunchArgs,
+  developmentChannelsOf,
   mergeDevelopmentChannels,
   managedAgentProviderOfProcess,
   checkManagedAgentArgv,
   parseCodexMcpInventory,
   inventoryCodexMcpServers,
   type ManagedAgentProvider,
+  type ProviderLaunchInputs,
   type ManagedAgentProcess,
   type ManagedAgentArgvCheck,
   type ManagedAgentLaunch,

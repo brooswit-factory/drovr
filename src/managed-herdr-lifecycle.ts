@@ -52,6 +52,11 @@ export interface ManagedHerdrStartRequest {
    * without dropping the launch's own. An empty list adds nothing.
    */
   developmentChannels?: readonly string[];
+  /**
+   * MCP servers whose notifications must reach the worker. Merged the same way;
+   * Drovr, not the caller, knows how a provider names the resulting channel.
+   */
+  mcpNotificationServers?: readonly string[];
 }
 
 export type ManagedHerdrResult = ProviderFallbackResult<string> | {
@@ -71,10 +76,12 @@ class HandoffBlocked extends Error {}
  */
 function applyNeutralLaunchInputs(launch: ManagedAgentLaunch, request: ManagedHerdrStartRequest): ManagedAgentLaunch {
   const developmentChannels = mergeDevelopmentChannels(launch.developmentChannels, request.developmentChannels);
+  const mcpNotificationServers = mergeDevelopmentChannels(launch.mcpNotificationServers, request.mcpNotificationServers);
   return {
     ...launch,
     ...(request.mcpConfigPath === undefined ? {} : { mcpConfigPath: request.mcpConfigPath }),
     ...(developmentChannels.length ? { developmentChannels } : {}),
+    ...(mcpNotificationServers.length ? { mcpNotificationServers } : {}),
   };
 }
 

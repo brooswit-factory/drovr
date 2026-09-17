@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentStartParams, checkManagedAgentArgv, mergeDevelopmentChannels, type ManagedAgentLaunch, type ManagedAgentProvider } from "../src/index.js";
+import { buildAgentStartParams, buildProviderLaunchArgs, checkManagedAgentArgv, mergeDevelopmentChannels, type ManagedAgentLaunch, type ManagedAgentProvider } from "../src/index.js";
 import type { DrovrClient } from "../src/drovr-client.js";
 import { ManagedHerdrLifecycle, type ManagedHerdrStartRequest } from "../src/managed-herdr-lifecycle.js";
 import { ProviderAvailabilityRegistry } from "../src/provider-fallback.js";
@@ -168,5 +168,70 @@ describe("configured channels reach provider startup", () => {
       ok: false,
       reason: "argv lacks --dangerously-load-development-channels server:yappr",
     });
+  });
+});
+
+describe("a direct CLI launch outside Herdr", () => {
+  test("Claude gets the session config and one channel per notifying MCP server", () => {
+    expect(buildProviderLaunchArgs("claude", {
+      mcpConfigPath: "/home/brooswit/code/brooswit/.mcp.json",
+      mcpNotificationServers: ["yappr"],
+    })).toEqual([
+      "--mcp-config", "/home/brooswit/code/brooswit/.mcp.json",
+      "--dangerously-load-development-channels", "server:yappr",
+    ]);
+  });
+
+  test("named channels and notifying servers combine without repeating one", () => {
+    expect(buildProviderLaunchArgs("claude", {
+      developmentChannels: ["server:yappr", "server:butchr"],
+      mcpNotificationServers: ["yappr", "atlassian"],
+    })).toEqual([
+      "--dangerously-load-development-channels", "server:yappr", "server:butchr", "server:atlassian",
+    ]);
+  });
+
+  test("a caller that configures nothing gets no flags at all", () => {
+    expect(buildProviderLaunchArgs("claude", {})).toEqual([]);
+    expect(buildProviderLaunchArgs("claude", { mcpNotificationServers: [] })).toEqual([]);
+  });
+
+  test.each(["codex", "agy"] as const)("%s takes the same inputs and spells no Claude flag", (provider) => {
+    expect(buildProviderLaunchArgs(provider, {
+      mcpConfigPath: "/home/brooswit/code/brooswit/.mcp.json",
+      mcpNotificationServers: ["yappr"],
+    })).toEqual([]);
+  });
+
+  test("a malformed MCP server name is refused rather than passed on", () => {
+    for (const name of ["yappr extra", "yappr.dev", "", "yappr;rm"]) {
+      expect(() => buildProviderLaunchArgs("claude", { mcpNotificationServers: [name] }))
+        .toThrow("Unsupported MCP server name");
+    }
+  });
+
+  test("a dash-led server name reaches argv as a channel, never as a flag of its own", () => {
+    // The name passes the identifier check (letters and dashes); what keeps it
+    // out of flag position is the channel prefix, so pin that rather than a throw.
+    expect(buildProviderLaunchArgs("claude", { mcpNotificationServers: ["--dangerously-skip-permissions"] }))
+      .toEqual(["--dangerously-load-development-channels", "server:--dangerously-skip-permissions"]);
+  });
+
+  test("a managed Herdr launch spells its channels the same way", () => {
+    const args = buildAgentStartParams({
+      provider: "claude", name: "coordinator", paneId: "w1:p1", cwd: "/home/brooswit/code/brooswit",
+      prompt: "coordinate", effort: "high", mcpConfigPath: "/home/brooswit/code/brooswit/.mcp.json",
+      mcpNotificationServers: ["yappr"],
+    }).args!;
+    expect(args.slice(args.indexOf("--mcp-config"))).toEqual([
+      "--mcp-config", "/home/brooswit/code/brooswit/.mcp.json",
+      "--dangerously-load-development-channels", "server:yappr",
+    ]);
+  });
+
+  test("a request naming a notifying server reaches startup through the lifecycle", async () => {
+    const f = fixture("claude", { mcpConfigPath: "/home/brooswit/code/brooswit/.mcp.json" });
+    expect((await f.lifecycle.start(f.request({ mcpNotificationServers: ["yappr"] }))).status).toBe("success");
+    expect(flagValues(f.started[0]!.args, "--dangerously-load-development-channels")).toEqual(["server:yappr"]);
   });
 });

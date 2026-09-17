@@ -127,6 +127,68 @@ export function inventoryCodexMcpServers(
   }
 }
 
+function safeName(name: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+    throw new Error(`Unsupported MCP server name ${JSON.stringify(name)}`);
+  }
+  return name;
+}
+
+/**
+ * What a caller configures for a session, in its own vocabulary: which MCP
+ * configuration the session reads, and which MCP servers it must receive
+ * notifications from. No field here names a provider or a CLI flag, so a
+ * caller that only knows "this session talks to yappr" never learns Claude's
+ * spelling for it.
+ */
+export interface ProviderLaunchInputs {
+  /** MCP configuration file the session launches against. */
+  mcpConfigPath?: string;
+  /** MCP servers whose notifications must reach the session. */
+  mcpNotificationServers?: readonly string[];
+  /** Channel names a caller already holds spelled out; merged with the above. */
+  developmentChannels?: readonly string[];
+}
+
+/**
+ * Claude subscribes a session to an MCP server's notifications through a
+ * development channel named after the server. That spelling is Claude's, so it
+ * lives here rather than in any caller. The name must be a plain identifier:
+ * the channel prefix already keeps it out of flag position, but a name carrying
+ * whitespace or punctuation would not round-trip as one channel token.
+ */
+const claudeDevelopmentChannel = (server: string): string => `server:${safeName(server)}`;
+
+/**
+ * Every channel a launch asks for: the ones named outright plus one per MCP
+ * server whose notifications were requested, de-duplicated in caller order.
+ */
+export function developmentChannelsOf(inputs: ProviderLaunchInputs): readonly string[] {
+  return mergeDevelopmentChannels(
+    inputs.developmentChannels,
+    inputs.mcpNotificationServers?.map(claudeDevelopmentChannel),
+  );
+}
+
+/**
+ * Translate neutral launch inputs into one provider's CLI arguments. This is
+ * the whole of Drovr's provider-flag knowledge for MCP and channels: a caller
+ * that spawns a provider CLI itself appends these and spells nothing of its
+ * own. Providers with no development-channel concept return no such flag
+ * rather than refusing the caller.
+ */
+export function buildProviderLaunchArgs(
+  provider: ManagedAgentProvider,
+  inputs: ProviderLaunchInputs,
+): string[] {
+  if (provider !== "claude") return [];
+  const channels = developmentChannelsOf(inputs);
+  return [
+    ...(inputs.mcpConfigPath === undefined ? [] : ["--mcp-config", inputs.mcpConfigPath]),
+    ...(channels.length ? [CLAUDE_DEVELOPMENT_CHANNELS_FLAG, ...channels] : []),
+  ];
+}
+
 interface AgentLaunchBase {
   provider: ManagedAgentProvider;
   name: string;
@@ -145,6 +207,8 @@ interface AgentLaunchBase {
    * channel concept accept and ignore them rather than rejecting the caller.
    */
   developmentChannels?: readonly string[];
+  /** MCP servers whose notifications must reach this agent; see ProviderLaunchInputs. */
+  mcpNotificationServers?: readonly string[];
 }
 
 export interface ClaudeAgentLaunch extends AgentLaunchBase {
@@ -170,13 +234,6 @@ export interface AgyAgentLaunch extends AgentLaunchBase {
 }
 
 export type ManagedAgentLaunch = ClaudeAgentLaunch | CodexAgentLaunch | AgyAgentLaunch;
-
-function safeName(name: string): string {
-  if (!/^[A-Za-z0-9_-]+$/.test(name)) {
-    throw new Error(`Unsupported MCP server name ${JSON.stringify(name)}`);
-  }
-  return name;
-}
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
@@ -213,7 +270,6 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
   };
 
   if (launch.provider === "claude") {
-    const channels = mergeDevelopmentChannels(launch.developmentChannels);
     return {
       ...common,
       kind: "claude",
@@ -222,8 +278,7 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
         ...(launch.model ? ["--model", launch.model] : []),
         "--effort", launch.effort,
         "--permission-mode", launch.permissionMode ?? "bypassPermissions",
-        "--mcp-config", launch.mcpConfigPath,
-        ...(channels.length ? [CLAUDE_DEVELOPMENT_CHANNELS_FLAG, ...channels] : []),
+        ...buildProviderLaunchArgs("claude", launch),
       ],
     };
   }
