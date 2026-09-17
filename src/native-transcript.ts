@@ -172,7 +172,14 @@ export async function readClaudeTranscriptTail(
   const home = options.home ?? homedir();
   if (!isAbsolute(home) || home.includes("\0") || home.split("/").includes("..")) fail("home must be absolute without parent traversal");
   const project = resolve(options.cwd).replace(/[^a-zA-Z0-9]/g, "-");
-  const file = await openSafe(join(home, ".claude", "projects", project, `${options.sessionId}.jsonl`));
+  let file: FileHandle;
+  try {
+    file = await openSafe(join(home, ".claude", "projects", project, `${options.sessionId}.jsonl`));
+  } catch (error) {
+    // A running session that has never been prompted has not written its transcript yet.
+    if (offset === 0 && error instanceof NativeTranscriptUnavailableError) return { offset: 0, text: "" };
+    throw error;
+  }
   try {
     const stat = await file.stat();
     if (!stat.isFile()) fail("expected a regular file");

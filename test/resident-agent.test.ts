@@ -134,4 +134,12 @@ describe("Claude transcript tail reader", () => {
     expect(await readClaudeTranscriptTail({ sessionId, cwd, home }, first.offset)).toEqual({ offset: first.offset + 8, text: '{"c":3}\n' });
     await expect(readClaudeTranscriptTail({ sessionId, cwd, home }, 1_000)).rejects.toThrow("shrank");
   });
+
+  test("an unprompted session's absent transcript reads as empty only from the start", async () => {
+    const home = await mkdtemp(join(tmpdir(), "drovr-tail-absent-"));
+    const target = { sessionId: "never-prompted", cwd: "/work/fresh", home };
+    expect(await readClaudeTranscriptTail(target, 0)).toEqual({ offset: 0, text: "" });
+    await expect(readClaudeTranscriptTail(target, 5)).rejects.toThrow("saved history is unavailable");
+    await rm(home, { recursive: true, force: true });
+  });
 });

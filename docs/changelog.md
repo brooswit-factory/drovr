@@ -1,14 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 - Add provider-neutral `createResidentAgentMessenger` for sending one message to a
   running resident and reading its reply. Claude sends through `claude attach` in a
   PTY and proves delivery and reply from that session's own transcript. It never
   resumes or forks. Codex and AGY refuse with `unsupported-provider`.
 - Add `readClaudeTranscriptTail` for incremental reads of live Claude transcripts.
+  A session that has never been prompted has no transcript yet; reading it from
+  offset 0 returns empty text, so a freshly created resident can take its first
+  message.
 
 See [resident agent messaging](resident-agent.md).
+Release asset: `brooswit-drovr-0.7.0.tgz`.
 
 ## 0.4.0
 

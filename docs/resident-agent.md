@@ -55,7 +55,10 @@ The only path into the same process is the documented interactive
    `system` / `turn_duration` marks the end of the turn.
 
 Live check: a running background session (same pid before and after, no new
-transcript file) replied `13` in about 5.5 s.
+transcript file) replied `13` in about 5.5 s. A freshly created, never-prompted
+session has no transcript file until its first turn; delivery is then proven
+from the file that turn creates (live via Bakr on Claude Code 2.1.274, same pid
+before and after).
 
 Limits: this is terminal automation over an interactive command. The transcript
 check makes delivery claims honest, but prompt layout, paste handling, and the
