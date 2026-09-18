@@ -102,6 +102,20 @@ describe("resident agent messaging", () => {
     expect(claudeResidentActivity(undefined, "")).toBe("idle");
   });
 
+  test("a blocked or unrecognised status never becomes sendable, even after a closed turn", () => {
+    // Found by bakr in review: a resume held at a startup dialog lists blocked, and its transcript ends on the old turn's close.
+    const closed = user("a") + assistant("b") + turnEnd;
+    expect(claudeResidentActivity("blocked", closed)).toBe("blocked");
+    expect(claudeResidentActivity("working", closed)).toBe("turn");
+    expect(claudeResidentActivity("something-new", closed)).toBe("turn");
+  });
+
+  test("a blocked session with a closed last turn is refused as blocked and never attached", async () => {
+    const { messenger, events } = harness({ listing: [{ ...idle, status: "blocked" }] });
+    await expect(messenger.message(target, "hello")).rejects.toMatchObject({ reason: "blocked" });
+    expect(events).toEqual([]);
+  });
+
   test("a long paste Claude records inside a pasted_content block is delivered", async () => {
     // The record shape measured on rocketr's resident, session 517fd13a.
     const message = Array.from({ length: 12 }, (_, i) => `${i + 1}. Relayed via bakr: line ${i + 1} of a long operator message.`).join("\n");

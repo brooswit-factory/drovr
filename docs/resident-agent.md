@@ -49,7 +49,9 @@ The only path into the same process is the documented interactive
    Attaching an absent job wakes it, so absence is refused before any attach.
    `status: "idle"` is sendable. No status at all (measured on a
    never-prompted session) is sendable unless `claude logs` shows a blocking
-   prompt. Any other status is read with the transcript
+   prompt. `blocked` is refused as `blocked`: its transcript also ends on the
+   previous turn's close, and typed input could answer the dialog. Any status
+   not named here is refused as `busy`. Only `busy` is read with the transcript
    (`claudeResidentActivity`): Claude lists a session `busy` for as long as a
    Monitor or background shell runs, even while it waits at its prompt. If the
    last main-thread conversation record is the `turn_duration` that closed a

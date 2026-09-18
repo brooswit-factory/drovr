@@ -158,10 +158,19 @@ function deliveredText(record: any): string | undefined {
  * when the last main-thread conversation record is `turn_duration`, so a turn
  * cut off without one reads as `turn`, the safe side.
  */
-export type ClaudeResidentActivity = "idle" | "background" | "turn";
+export type ClaudeResidentActivity = "idle" | "background" | "turn" | "blocked";
 
+/**
+ * Only Claude's own `busy` can become `background`. A session stopped on a
+ * dialog (listed `blocked`, e.g. a resume held at folder trust) also has a
+ * transcript that ends on its previous turn's close, and typing into it could
+ * answer the dialog (found by bakr in review). Any status not named here is
+ * read as mid-turn: an unknown state is never sendable.
+ */
 export function claudeResidentActivity(status: string | undefined, transcript: string): ClaudeResidentActivity {
   if (status === undefined || status === "idle") return "idle";
+  if (status === "blocked") return "blocked";
+  if (status !== "busy") return "turn";
   const conversation = records(transcript).filter(record => !record?.isSidechain
     && (record?.type === "user" || record?.type === "assistant" || (record?.type === "system" && record.subtype === "turn_duration")));
   const last = conversation[conversation.length - 1];
@@ -225,7 +234,11 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
       offset = tail.offset;
       history += tail.text;
     }
-    if (claudeResidentActivity(live.status, history) === "turn") {
+    const activity = claudeResidentActivity(live.status, history);
+    if (activity === "blocked") {
+      throw new ResidentMessageRefusal("blocked", "The resident is stopped on a dialog; typed input could answer it");
+    }
+    if (activity === "turn") {
       throw new ResidentMessageRefusal("busy", "The resident is mid-turn; typed input would queue behind unknown work");
     }
 
