@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.1
+
+- Answer Claude Code's "Teach auto mode about your environment?" menu the way
+  Brooswit chose: "Yes", then on the setup screen tick both "Also scan shell
+  history" and "Also scan your other repos" (usage left as shown), then
+  Continue. One step per screen read, so Continue is pressed only once the
+  screen shows both boxes ticked. Space as the toggle key is not yet observed
+  live; if it does not tick a box, Continue is never pressed and the launch
+  ends `not-ready` with the excerpt. Measured on lead-factory-dashboard's and
+  nexus-admin's panes, 2026-09-18. Claude shows this menu only while
+  `autoMode.environment` in `~/.claude/settings.json` is empty, so once the
+  setup has run for an account it does not appear again.
+- Read a menu's own cursor: the `❯` nearest above its "Enter to confirm"
+  footer. A live or resumed pane also shows transcript prompts above a menu
+  and its input box below it, and taking the first `❯` on screen would have
+  closed a resumed trust dialog as `unknown-blocking`.
+
+Release asset: `brooswit-drovr-0.10.1.tgz`.
+
 ## 0.10.0
 
 - Host residents in herdr panes: `hostResident`, `listResidents` and

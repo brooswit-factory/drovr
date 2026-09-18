@@ -141,6 +141,38 @@ export function keysToChoose(screen: string, wanted: RegExp): string[] | undefin
   return [...Array.from({ length: Math.abs(target - cursor) }, () => step), "enter"];
 }
 
+type SetupRow = { kind: "box"; ticked: boolean } | { kind: "continue" } | { kind: "other" };
+
+/**
+ * The next keys on the auto-mode setup screen: move to the first unticked
+ * "Also scan …" box and toggle it with Space, or, once every box reads
+ * ticked, move to Continue and press Enter. Space as the toggle is not yet
+ * observed live; if it does not tick a box the screen never shows every box
+ * ticked, Continue is never pressed, and the launch ends `not-ready` with the
+ * excerpt. Undefined when the screen lacks a visible cursor or Continue.
+ */
+function keysForOnboardingSetup(screen: string): string[] | undefined {
+  const lines = screen.split(/\r?\n/);
+  const footer = lines.findIndex((line) => /Enter to continue/.test(line));
+  const title = lines.findIndex((line) => /Teach auto mode about your environment\?/.test(line));
+  if (footer < 0 || title < 0 || title > footer) return undefined;
+  const rows: (SetupRow & { selected: boolean })[] = [];
+  for (const line of lines.slice(title + 1, footer)) {
+    const selected = CURSOR.test(line);
+    const text = line.replace(CURSOR, "").trim();
+    const box = /^Also scan .+\[(.)\]$/.exec(text);
+    if (box) rows.push({ kind: "box", ticked: box[1] !== " ", selected });
+    else if (text === "Continue") rows.push({ kind: "continue", selected });
+    else if (/◀.*▶/.test(text)) rows.push({ kind: "other", selected });
+  }
+  const cursor = rows.findIndex((row) => row.selected);
+  const target = rows.findIndex((row) => row.kind === "box" && !row.ticked);
+  const goal = target >= 0 ? target : rows.findIndex((row) => row.kind === "continue");
+  if (cursor < 0 || goal < 0) return undefined;
+  const step = goal > cursor ? "down" : "up";
+  return [...Array.from({ length: Math.abs(goal - cursor) }, () => step), target >= 0 ? "space" : "enter"];
+}
+
 export type StartupPrompt =
   | { kind: "trust"; keys: string[] }
   | { kind: "development-channels"; keys: string[] }
@@ -167,11 +199,18 @@ export function classifyStartupPrompt(raw: string): StartupPrompt | undefined {
     const keys = keysToChoose(screen, /^I am using this for local development/);
     return keys ? { kind: "development-channels", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
   }
+  if (/Teach auto mode about your environment\?/.test(screen) && /Enter to continue · Esc to cancel/.test(screen) && !/Enter to confirm/.test(screen)) {
+    // The setup's second screen (measured on nexus-admin's pane wF:p1,
+    // 2026-09-18). Brooswit's choice: both "Also scan …" boxes ticked, usage
+    // left as shown, then Continue. One step per read, so every box is seen
+    // ticked on screen before Enter is ever pressed.
+    const keys = keysForOnboardingSetup(screen);
+    return keys ? { kind: "auto-mode-onboarding", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
+  }
   if (/Teach auto mode about your environment\?/.test(screen)) {
-    // A one-time onboarding offer, measured on lead-factory-dashboard's pane
-    // 2026-09-18; Brooswit okayed dismissing it for good. Only "Don't show
-    // again" is ever chosen, never "Yes", which starts an interactive setup.
-    const keys = keysToChoose(screen, /^Don't show again$/);
+    // A one-time offer, measured on lead-factory-dashboard's pane 2026-09-18.
+    // Brooswit's choice is "Yes", which leads to the setup screen above.
+    const keys = keysToChoose(screen, /^Yes$/);
     return keys ? { kind: "auto-mode-onboarding", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
   }
   if (classifyBlockingText("claude", screen)?.kind === "mcp-approval-prompt") return { kind: "mcp-approval", excerpt: excerptOf(screen) };
