@@ -181,3 +181,15 @@ export {
   type StartupPrompt,
   type StopResidentResult,
 } from "./resident-host.js";
+export {
+  classifyPermissionPrompt,
+  listPendingPermissions,
+  approvePermission,
+  type PermissionPrompt,
+  type PermissionScope,
+  type PendingPermission,
+  type ApprovePermissionRequest,
+  type ApprovePermissionResult,
+  type ApprovePermissionRefusalReason,
+  type PermissionApprovalDeps,
+} from "./permission-approval.js";

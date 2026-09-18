@@ -15,6 +15,12 @@
   had landed (measured on rocketr's resident, session 517fd13a). The messenger
   now also accepts exactly one such block wrapping the sent text, and nothing
   else in the record.
+- Approve a pending tool-permission prompt without a terminal:
+  `listPendingPermissions` and `approvePermission` (see
+  `docs/permission-approval.md`). The prompt is re-read and refused if it
+  changed since the operator saw it, an audit record is written before any
+  key is sent, the auto-mode option is never chosen, and success means the
+  prompt left the screen. Proven live on a real Bash prompt.
 - Reach a resident that is busy only with background workers. Claude lists a
   session `busy` for as long as a Monitor runs, so every agent with a watcher
   refused every send. `claudeResidentActivity` reads the transcript: a session
