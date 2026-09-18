@@ -132,3 +132,34 @@ export {
 // and the SDK's own generated/typed-escape-hatch types.
 export * from "@brooswit/herdr-sdk";
 export { prepareAgyHome, type AgyStdioServer } from "./agy-home.js";
+export {
+  launchBackgroundSession,
+  buildBackgroundLaunchArgv,
+  parseBackgroundLaunchId,
+  type BackgroundLaunchRequest,
+  type BackgroundLaunchResult,
+  type BackgroundLaunchRefusal,
+  type BackgroundLaunchDeps,
+} from "./background-launch.js";
+export {
+  classifyBlockingText,
+  classifyClaudeTranscriptRecord,
+  probeClaudeDaemon,
+  daemonBlockingCondition,
+  claudeLoggedIn,
+  plainOutputEnv,
+  stripTerminalEscapes,
+  type BlockingCondition,
+  type BlockingConditionKind,
+  type ClaudeDaemonState,
+  type ClaudeDaemonProbeDeps,
+} from "./blocking-conditions.js";
+export {
+  startClaudeLogin,
+  parseClaudeLoginUrl,
+  type ClaudeLoginSession,
+  type ClaudeLoginResult,
+  type ClaudeLoginTerminal,
+  type ClaudeLoginDeps,
+  type StartClaudeLoginOptions,
+} from "./claude-login.js";

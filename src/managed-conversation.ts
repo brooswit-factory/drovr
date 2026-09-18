@@ -1,6 +1,7 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
 import type { ProviderQuotaRefusal } from "./provider-fallback.js";
 import { detectSessionLimitRefusal } from "./session-limit.js";
+import { plainOutputEnv } from "./blocking-conditions.js";
 
 /** Confirmed native CLI quota refusal, never inferred from arbitrary failures. */
 export class ManagedConversationQuotaError extends Error {
@@ -57,10 +58,10 @@ export type RunProcess = (argv: readonly string[], cwd: string) => Promise<{
   stderr: string;
 }>;
 
-/** Direct CLI transport; stdin is closed and both output streams are drained. */
+/** Direct CLI transport; stdin is closed, both output streams are drained, and output is never coloured for parsing. */
 export const runConversationProcess: RunProcess = async (argv, cwd) => {
   try {
-    const child = Bun.spawn([...argv], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const child = Bun.spawn([...argv], { cwd, env: plainOutputEnv(), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),

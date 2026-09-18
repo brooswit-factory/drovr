@@ -148,6 +148,14 @@ export interface ProviderLaunchInputs {
   mcpNotificationServers?: readonly string[];
   /** Channel names a caller already holds spelled out; merged with the above. */
   developmentChannels?: readonly string[];
+  /**
+   * Servers from the workspace's own MCP file the session may start without
+   * asking. Measured on claude 2.1.276: in an untrusted directory Claude
+   * ignores the workspace's own approval file, and a background session sits
+   * blocked on "New MCP server found in this project" until a human answers.
+   * An approval given at launch holds regardless of trust.
+   */
+  mcpServersApproved?: readonly string[];
 }
 
 /**
@@ -183,8 +191,10 @@ export function buildProviderLaunchArgs(
 ): string[] {
   if (provider !== "claude") return [];
   const channels = developmentChannelsOf(inputs);
+  const approved = [...new Set(inputs.mcpServersApproved?.map(safeName) ?? [])];
   return [
     ...(inputs.mcpConfigPath === undefined ? [] : ["--mcp-config", inputs.mcpConfigPath]),
+    ...(approved.length ? ["--settings", JSON.stringify({ enabledMcpjsonServers: approved })] : []),
     ...(channels.length ? [CLAUDE_DEVELOPMENT_CHANNELS_FLAG, ...channels] : []),
   ];
 }

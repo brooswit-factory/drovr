@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Add `launchBackgroundSession`, so a host starts a Claude background session
+  through Drovr and gets back a clean `shortId` and the listed `sessionId`
+  instead of parsing `claude --bg` output itself. Options always precede
+  `--bg`, output is read without `FORCE_COLOR` and with escapes stripped, and
+  the id is confirmed against `claude agents --json`. See
+  [background launch](background-launch.md).
+- Add `BlockingCondition` for host-wide provider conditions, each measured:
+  `login-expired`, `daemon-binary-replaced`, and `mcp-approval-prompt`.
+  `launchBackgroundSession` refuses before launching when the daemon runs a
+  deleted executable. It reports a session stuck on a prompt as `blocked`
+  and returns the session's id so the caller can clean it up.
+- Add `startClaudeLogin` for headless re-authentication. The authorize URL
+  is relayed out and the pasted code relayed back into the same PTY, and the
+  result is proven by `claude auth status`.
+- Add `mcpServersApproved` to `ProviderLaunchInputs`. For Claude it becomes
+  `--settings {"enabledMcpjsonServers": …}`, which holds in an untrusted
+  directory where a workspace `settings.local.json` approval is ignored.
+- `runConversationProcess` no longer passes `FORCE_COLOR` to the CLI it parses.
+
 - Drovr owns MCP access across vendors: one `McpAccessDeclaration` renders into
   Claude's `enabledMcpjsonServers`, AGY's `permissions.allow: ["mcp(<server>/*)"]`
   and Codex's start arguments. `setMcpAccess` provisions then restarts, because
