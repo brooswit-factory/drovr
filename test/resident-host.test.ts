@@ -98,6 +98,33 @@ describe("startup prompts", () => {
     expect(classifyStartupPrompt(TRUST_NUMBERED)).toEqual({ kind: "trust", keys: ["enter"] });
   });
 
+  test("the auto-mode onboarding offer is dismissed for good, read from the measured live screen", () => {
+    // Measured on lead-factory-dashboard's pane wP:p1, 2026-09-18: transcript above, input box below.
+    const screen = [
+      "● I've saved the routing rule to my chat memory note.",
+      "",
+      "────────────────────────────────────────",
+      "  Teach auto mode about your environment?",
+      "",
+      "  Auto mode works better when it knows your environment. Takes about a minute.",
+      "",
+      "  ❯ 1. Yes",
+      "    2. Not now",
+      "    3. Don't show again",
+      "",
+      "  Enter to confirm · Esc to cancel",
+      "──────────────────────── factory-dashboard daemon implementation ─",
+      "❯ yes, post the intro in #general",
+      "────────────────────────────────────────",
+    ].join("\n");
+    expect(classifyStartupPrompt(screen)).toEqual({ kind: "auto-mode-onboarding", keys: ["down", "down", "enter"] });
+  });
+
+  test("the menu's cursor is the one above its footer, not an earlier prompt line in the transcript", () => {
+    const resumed = "❯ an earlier prompt from the transcript\n\n● reply\n\n" + TRUST;
+    expect(classifyStartupPrompt(resumed)).toEqual({ kind: "trust", keys: ["down", "enter"] });
+  });
+
   test("the development-channels warning is accepted; an MCP approval is only reported", () => {
     expect(classifyStartupPrompt(CHANNELS)).toEqual({ kind: "development-channels", keys: ["enter"] });
     expect(classifyStartupPrompt(MCP)?.kind).toBe("mcp-approval");
