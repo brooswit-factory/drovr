@@ -199,3 +199,17 @@ export {
   type BlockingPrompt,
   type BlockingPromptKind,
 } from "./blocking-prompts.js";
+export {
+  InboxRelay,
+  connectChannelSource,
+  usrrDeliver,
+  renderInboxTurn,
+  inboxMessageFromNotification,
+  CHANNEL_NOTIFICATION,
+  type InboxMessage,
+  type DeliveryOutcome,
+  type Deliver,
+  type InboxRelayOptions,
+  type InboxRelayEvent,
+  type ChannelSourceOptions,
+} from "./inbox-relay.js";
