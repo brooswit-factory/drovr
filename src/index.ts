@@ -163,3 +163,19 @@ export {
   type ClaudeLoginDeps,
   type StartClaudeLoginOptions,
 } from "./claude-login.js";
+export {
+  hostResident,
+  listResidents,
+  stopResident,
+  classifyStartupPrompt,
+  keysToChoose,
+  buildResidentClaudeArgs,
+  RESIDENT_WORKSPACE_PREFIX,
+  type HostResidentRequest,
+  type HostResidentResult,
+  type HostResidentRefusalReason,
+  type ResidentHostOptions,
+  type ResidentListing,
+  type StartupPrompt,
+  type StopResidentResult,
+} from "./resident-host.js";

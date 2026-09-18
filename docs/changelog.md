@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Host residents in herdr panes: `hostResident`, `listResidents` and
+  `stopResident` (see `docs/resident-host.md`). The label is the herdr agent
+  name and is checked free before anything is created: on 2026-09-18 bakr
+  started every pane as `claude`, and seven agents lost their panes to the
+  name collision. Startup prompts are answered from the menu drawn on screen,
+  and the first turn is sent once the input box is ready. Proven live against
+  an isolated herdr session, including a resume of the same session.
+
 ## 0.9.2
 
 - Join each Claude channel to its flag. With more than one channel,
