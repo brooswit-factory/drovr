@@ -153,6 +153,30 @@ describe("startup prompts", () => {
     }
   });
 
+  test("existing auto-mode entries are added to, never replaced", () => {
+    // Measured on yappr-3's pane wQ:p1, 2026-09-18, after "Yes" on an account that already has entries.
+    const existing = [
+      "  You already have auto-mode entries — add to them, or start fresh?",
+      "",
+      "  ❯ 1. Add to them (keeps your existing entries)",
+      "    2. Start fresh (replaces the environment section)",
+      "    3. Cancel",
+      "",
+      "  Enter to continue · Esc to cancel",
+    ].join("\n");
+    expect(classifyStartupPrompt(existing)).toEqual({ kind: "auto-mode-onboarding", keys: ["enter"] });
+    const cursorOnFresh = existing.replace("❯ 1. Add", "  1. Add").replace("    2. Start", "  ❯ 2. Start");
+    expect(classifyStartupPrompt(cursorOnFresh)).toEqual({ kind: "auto-mode-onboarding", keys: ["up", "enter"] });
+  });
+
+  test("the setup's review screen is saved, as decided, whichever option the cursor starts on", () => {
+    // Measured on yappr-3's pane wQ:p1, 2026-09-18 (the tail of a long generated review).
+    const review = "  Extra hard blocks\n   none suggested\n\n  ❯ Looks good — save it\n    Discard and exit\n\n  Enter to confirm · Esc to cancel";
+    expect(classifyStartupPrompt(review)).toEqual({ kind: "auto-mode-onboarding", keys: ["enter"] });
+    const onDiscard = review.replace("❯ Looks good", "  Looks good").replace("    Discard", "  ❯ Discard");
+    expect(classifyStartupPrompt(onDiscard)).toEqual({ kind: "auto-mode-onboarding", keys: ["up", "enter"] });
+  });
+
   test("the menu's cursor is the one above its footer, not an earlier prompt line in the transcript", () => {
     const resumed = "❯ an earlier prompt from the transcript\n\n● reply\n\n" + TRUST;
     expect(classifyStartupPrompt(resumed)).toEqual({ kind: "trust", keys: ["down", "enter"] });

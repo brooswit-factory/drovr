@@ -110,7 +110,7 @@ function menuOptions(screen: string): MenuOption[] {
   // The menu's cursor is the one nearest above its "Enter to confirm" footer.
   // Measured 2026-09-18: a live pane shows other `❯` lines too, earlier
   // prompts in the transcript above the menu and the input box below it.
-  const footer = lines.findIndex((line) => /Enter to confirm/.test(line));
+  const footer = lines.findIndex((line) => /Enter to (confirm|continue)/.test(line));
   let cursor = -1;
   if (footer >= 0) {
     for (let i = footer - 1; i >= 0; i--) if (CURSOR.test(lines[i]!)) { cursor = i; break; }
@@ -205,6 +205,20 @@ export function classifyStartupPrompt(raw: string): StartupPrompt | undefined {
     // left as shown, then Continue. One step per read, so every box is seen
     // ticked on screen before Enter is ever pressed.
     const keys = keysForOnboardingSetup(screen);
+    return keys ? { kind: "auto-mode-onboarding", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
+  }
+  if (/Looks good — save it/.test(screen) && /Discard and exit/.test(screen) && /Enter to confirm/.test(screen)) {
+    // The setup's review of the environment it generated (measured on
+    // yappr-3's pane wQ:p1, 2026-09-18). Decision relayed by the manager: save,
+    // so each agent's view adds to the account-wide auto-mode environment.
+    const keys = keysToChoose(screen, /^Looks good — save it$/);
+    return keys ? { kind: "auto-mode-onboarding", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
+  }
+  if (/You already have auto-mode entries/.test(screen) && /Enter to continue/.test(screen)) {
+    // Shown after "Yes" once the account has auto-mode entries (measured on
+    // yappr-3's pane wQ:p1, 2026-09-18). "Add to them" keeps Brooswit's
+    // setup; "Start fresh" would replace it and is never chosen.
+    const keys = keysToChoose(screen, /^Add to them\b/);
     return keys ? { kind: "auto-mode-onboarding", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
   }
   if (/Teach auto mode about your environment\?/.test(screen)) {

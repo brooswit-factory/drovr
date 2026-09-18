@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.2
+
+- `listBlockingPrompts` and `classifyBlockingScreen`: every dialog a Claude
+  pane is waiting on, read from its screen whatever herdr reports, tagged
+  `startup`, `permission` or `unknown` with pane, label, session and excerpt,
+  so a host can answer what Drovr knows and alert a person on the rest. A
+  dialog counts only when its waiting footer is on screen. Its first live
+  read-only run found three panes on the auto-mode menu that herdr reported
+  idle or done.
+- Finish the auto-mode setup on an account that already has entries: "You
+  already have auto-mode entries" gets "Add to them" (never "Start fresh",
+  which would replace them), and the review of the generated environment gets
+  "Looks good — save it", so each agent's view adds to the account's. Both
+  measured on yappr-3's pane, 2026-09-18; the save was the manager's decision
+  under Brooswit's "always Yes".
+
+Release asset: `brooswit-drovr-0.10.2.tgz`.
+
 ## 0.10.1
 
 - Answer Claude Code's "Teach auto mode about your environment?" menu the way
