@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
 - Add `launchBackgroundSession`, so a host starts a Claude background session
   through Drovr and gets back a clean `shortId` and the listed `sessionId`
@@ -52,7 +52,12 @@
   appears, the resident is woken through the proven attach transport. Fixes
   reports acknowledged as delivered that an idle session never received.
 
-## 0.8.0
+Release asset: `brooswit-drovr-0.9.0.tgz`.
+
+## 0.8.0 (never published)
+
+Built and shipped by hand to servyboi; everything below first shipped in a
+published release as 0.9.0.
 
 - Own configurable MCP servers and development channels at the Drovr boundary.
   `mcpConfigPath` and `developmentChannels` are provider-neutral launch inputs
@@ -73,8 +78,6 @@
   and AGY. `ManagedAgentLaunch` and `ManagedHerdrStartRequest` accept
   `mcpNotificationServers` on the same terms, and the Herdr adapter now builds
   its Claude arguments through the same function.
-
-Release asset: `brooswit-drovr-0.8.0.tgz`.
 
 ## 0.7.0
 
