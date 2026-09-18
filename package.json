@@ -1,6 +1,6 @@
 {
   "name": "@brooswit/drovr",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Provider-neutral managed-agent runtime and correction layer over the Herdr SDK",
   "license": "MIT",
   "repository": {
@@ -24,7 +24,9 @@
     "dist",
     "docs"
   ],
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun --sourcemap=external && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
