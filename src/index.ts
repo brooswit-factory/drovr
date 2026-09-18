@@ -8,6 +8,8 @@ export {
   ResidentMessageRefusal,
   listClaudeBackgroundSessions,
   openClaudeAttach,
+  claudeResidentActivity,
+  type ClaudeResidentActivity,
   RESIDENT_MESSAGE_MAX_CHARS,
   type ResidentAgentTarget,
   type ResidentAgentMessenger,

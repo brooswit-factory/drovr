@@ -143,6 +143,32 @@ function deliveredText(record: any): string | undefined {
 }
 
 /**
+ * What a listed Claude session is doing, read from its listing and transcript:
+ * - `idle`: listed idle, or listed with no status (never prompted; the caller
+ *   checks its screen for a blocking prompt).
+ * - `background`: listed busy only because background workers (a Monitor, a
+ *   background shell) keep running while the session waits at its prompt.
+ * - `turn`: mid-turn; typed input would queue behind unknown work.
+ *
+ * Measured 2026-09-18: `claude agents --json` lists a session `busy` for as
+ * long as any Monitor runs. lead-dynamic-atmosphere listed busy/working while
+ * its last conversation record was the `turn_duration` that closed its turn
+ * sixteen minutes earlier. herdr's screen detection already calls such a pane
+ * `done`; this is the same judgement for the listing. A turn is ended only
+ * when the last main-thread conversation record is `turn_duration`, so a turn
+ * cut off without one reads as `turn`, the safe side.
+ */
+export type ClaudeResidentActivity = "idle" | "background" | "turn";
+
+export function claudeResidentActivity(status: string | undefined, transcript: string): ClaudeResidentActivity {
+  if (status === undefined || status === "idle") return "idle";
+  const conversation = records(transcript).filter(record => !record?.isSidechain
+    && (record?.type === "user" || record?.type === "assistant" || (record?.type === "system" && record.subtype === "turn_duration")));
+  const last = conversation[conversation.length - 1];
+  return last?.type === "system" ? "background" : "turn";
+}
+
+/**
  * Claude Code has no machine API for a running background session: `claude -p --resume <id>`
  * refuses while it runs and `--fork-session` is a different session. Its documented
  * `claude attach` terminal is the only path to the same process, so delivery is typed there
@@ -189,13 +215,19 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
       // Only the screen tells them apart.
       const blocking = classifyBlockingText("claude", await deps.readScreen(live.id));
       if (blocking) throw new ResidentMessageRefusal("blocked", `The resident is stopped on a prompt, not idle: ${blocking.detail}`);
-    } else if (live.status !== "idle") {
-      throw new ResidentMessageRefusal("busy", "The resident is mid-turn; typed input would queue behind unknown work");
     }
     target = { ...target, cwd: live.cwd };
 
-    let offset = (await deps.readTail(target, 0)).offset;
-    for (let tail = await deps.readTail(target, offset); tail.offset !== offset; tail = await deps.readTail(target, offset)) offset = tail.offset;
+    const first = await deps.readTail(target, 0);
+    let offset = first.offset;
+    let history = first.text;
+    for (let tail = await deps.readTail(target, offset); tail.offset !== offset; tail = await deps.readTail(target, offset)) {
+      offset = tail.offset;
+      history += tail.text;
+    }
+    if (claudeResidentActivity(live.status, history) === "turn") {
+      throw new ResidentMessageRefusal("busy", "The resident is mid-turn; typed input would queue behind unknown work");
+    }
 
     // The session can change directory mid-turn (entering a git worktree is
     // the observed case), and Claude Code then carries its transcript to the

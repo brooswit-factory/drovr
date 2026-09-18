@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NativeTranscriptUnavailableError, readClaudeTranscriptTail } from "../src/native-transcript.js";
 import {
-  ClaudeResidentMessenger, createResidentAgentMessenger, ResidentMessageRefusal,
+  ClaudeResidentMessenger, claudeResidentActivity, createResidentAgentMessenger, ResidentMessageRefusal,
   type ClaudeBackgroundListing, type ClaudeResidentDeps, type ResidentAgentTarget,
 } from "../src/resident-agent.js";
 
@@ -16,9 +16,9 @@ const user = (content: unknown, extra: object = {}) => line({ type: "user", mess
 const assistant = (text: string, extra: object = {}) => line({ type: "assistant", message: { role: "assistant", content: [{ type: "thinking", thinking: "" }, { type: "text", text }] }, ...extra });
 const turnEnd = line({ type: "system", subtype: "turn_duration" });
 
-function harness(options: { listing?: ClaudeBackgroundListing[]; onEnter?: (typed: string) => string[]; attachExits?: boolean; screen?: string } = {}) {
+function harness(options: { listing?: ClaudeBackgroundListing[]; onEnter?: (typed: string) => string[]; attachExits?: boolean; screen?: string; history?: string } = {}) {
   let clock = 0;
-  let transcript = user("earlier") + assistant("earlier reply") + turnEnd;
+  let transcript = user("earlier") + assistant("earlier reply") + turnEnd + (options.history ?? "");
   const pendingWrites: string[] = [];
   const events: string[] = [];
   const typed: string[] = [];
@@ -76,6 +76,32 @@ describe("resident agent messaging", () => {
     expect(await messenger.message(target, "hello", { replyTimeoutMs: 1_000 })).toEqual({ status: "reply-pending", reply: "started" });
   });
 
+  test("a session busy only with background workers after its turn ended takes the message", async () => {
+    // Measured: listed busy while only its watcher Monitor ran, last record the turn's turn_duration.
+    const { messenger, events } = harness({
+      listing: [{ ...idle, status: "busy" }],
+      onEnter: () => [user("hello"), assistant("hi"), turnEnd],
+    });
+    expect(await messenger.message(target, "hello")).toEqual({ status: "replied", reply: "hi" });
+    expect(events).toEqual(["attach 6954cbf3", "detach"]);
+  });
+
+  test("a busy session whose turn is still open is refused, even with records after its last turn", async () => {
+    const { messenger, events } = harness({ listing: [{ ...idle, status: "busy" }], history: user("next task") + assistant("working on it") });
+    await expect(messenger.message(target, "hello")).rejects.toMatchObject({ reason: "busy" });
+    expect(events).toEqual([]);
+  });
+
+  test("activity: only a closed turn is background; sidechains and bookkeeping records don't count", () => {
+    const closed = user("a") + assistant("b") + turnEnd + line({ type: "attachment" }) + line({ type: "ai-title" });
+    expect(claudeResidentActivity("busy", closed)).toBe("background");
+    expect(claudeResidentActivity("busy", closed + assistant("sub", { isSidechain: true }))).toBe("background");
+    expect(claudeResidentActivity("busy", closed + user("monitor event"))).toBe("turn");
+    expect(claudeResidentActivity("busy", "")).toBe("turn");
+    expect(claudeResidentActivity("idle", user("a"))).toBe("idle");
+    expect(claudeResidentActivity(undefined, "")).toBe("idle");
+  });
+
   test("a long paste Claude records inside a pasted_content block is delivered", async () => {
     // The record shape measured on rocketr's resident, session 517fd13a.
     const message = Array.from({ length: 12 }, (_, i) => `${i + 1}. Relayed via bakr: line ${i + 1} of a long operator message.`).join("\n");
@@ -108,7 +134,8 @@ describe("resident agent messaging", () => {
     ["other session in the same directory", [{ ...idle, sessionId: "0baa367f-11a3-4684-8161-36c781aa99f1" }], "not-running"],
     ["busy session", [{ ...idle, status: "busy" }], "busy"],
   ] as const)("never attaches to an %s", async (_label, listing, reason) => {
-    const { messenger, events } = harness({ listing: [...listing] });
+    // An open turn: the last conversation record is the task, not its turn_duration.
+    const { messenger, events } = harness({ listing: [...listing], history: user("a task in progress") });
     await expect(messenger.message(target, "hello")).rejects.toMatchObject({ reason });
     expect(events).toEqual([]);
   });

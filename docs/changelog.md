@@ -15,6 +15,11 @@
   had landed (measured on rocketr's resident, session 517fd13a). The messenger
   now also accepts exactly one such block wrapping the sent text, and nothing
   else in the record.
+- Reach a resident that is busy only with background workers. Claude lists a
+  session `busy` for as long as a Monitor runs, so every agent with a watcher
+  refused every send. `claudeResidentActivity` reads the transcript: a session
+  whose last conversation record closed its turn is `background` and takes the
+  message; one still mid-turn is refused as `busy`, as before.
 
 ## 0.9.2
 
