@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.3
+
+- `hostResident` reports a resident ready only when herdr names its session,
+  or, for a session herdr never names, after three clean ready reads in a row.
+  Found by bakr on lead-dynamic-atmosphere's move: herdr called the pane
+  `interactive_ready` and idle before claude drew the development-channels
+  warning, so a single clean read returned too early and left the warning up.
+  The same rule as bakr #36.
+
+Release asset: `brooswit-drovr-0.10.3.tgz`.
+
 ## 0.10.2
 
 - `listBlockingPrompts` and `classifyBlockingScreen`: every dialog a Claude
