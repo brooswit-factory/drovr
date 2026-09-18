@@ -98,7 +98,7 @@ describe("startup prompts", () => {
     expect(classifyStartupPrompt(TRUST_NUMBERED)).toEqual({ kind: "trust", keys: ["enter"] });
   });
 
-  test("the auto-mode onboarding offer is dismissed for good, read from the measured live screen", () => {
+  test("the auto-mode onboarding offer gets Yes, read from the measured live screen", () => {
     // Measured on lead-factory-dashboard's pane wP:p1, 2026-09-18: transcript above, input box below.
     const screen = [
       "● I've saved the routing rule to my chat memory note.",
@@ -117,28 +117,40 @@ describe("startup prompts", () => {
       "❯ yes, post the intro in #general",
       "────────────────────────────────────────",
     ].join("\n");
-    expect(classifyStartupPrompt(screen)).toEqual({ kind: "auto-mode-onboarding", keys: ["down", "down", "enter"] });
+    expect(classifyStartupPrompt(screen)).toEqual({ kind: "auto-mode-onboarding", keys: ["enter"] });
   });
 
-  test("the setup's second screen is backed out of with Esc, never continued", () => {
-    // Measured on nexus-admin's pane wF:p1, 2026-09-18, after "Yes" was picked on the first menu.
-    const second = [
-      "✻ Worked for 39s · done 12:22 PM · 1 monitor still running",
-      "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
-      "   Teach auto mode about your environment?",
-      "",
-      "   Claude Code reads this project, your recent Claude sessions, and optionally your shell history and other repositories. Claude analyzes this data and customizes auto mode to make better",
-      "   decisions.",
-      "",
-      "     How you use Claude here    ◀ Mixed ▶",
-      "   ❯ Also scan shell history    [ ]",
-      "     Also scan your other repos [ ]",
-      "",
-      "     Continue",
-      "",
-      "   ←/→ to change usage · Enter to continue · Esc to cancel",
-    ].join("\n");
-    expect(classifyStartupPrompt(second)).toEqual({ kind: "auto-mode-onboarding", keys: ["esc"] });
+  // The setup's second screen: nexus-admin's pane wF:p1, 2026-09-18, as read by lead-drovr and by lead-bakr.
+  const setup = (shell: string, repos: string, cursorOn: "shell" | "repos" | "continue") => [
+    "✻ Worked for 39s · done 12:22 PM · 1 monitor still running",
+    "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
+    "   Teach auto mode about your environment?",
+    "",
+    "   Claude Code reads this project, your recent Claude sessions, and optionally your shell history and other repositories. Claude analyzes this data and customizes auto mode to make better",
+    "   decisions.",
+    "",
+    "     How you use Claude here    ◀ Mixed ▶",
+    `   ${cursorOn === "shell" ? "❯" : " "} Also scan shell history    [${shell}]`,
+    `   ${cursorOn === "repos" ? "❯" : " "} Also scan your other repos [${repos}]`,
+    "",
+    `   ${cursorOn === "continue" ? "❯" : " "} Continue`,
+    "",
+    "   ←/→ to change usage · Enter to continue · Esc to cancel",
+  ].join("\n");
+
+  test("the setup screen ticks each unticked box, one per read, before anything else", () => {
+    expect(classifyStartupPrompt(setup(" ", " ", "shell"))).toEqual({ kind: "auto-mode-onboarding", keys: ["space"] });
+    expect(classifyStartupPrompt(setup("✔", " ", "shell"))).toEqual({ kind: "auto-mode-onboarding", keys: ["down", "space"] });
+  });
+
+  test("Continue is pressed only once the screen shows both boxes ticked", () => {
+    expect(classifyStartupPrompt(setup("✔", "✔", "repos"))).toEqual({ kind: "auto-mode-onboarding", keys: ["down", "enter"] });
+    for (const [shell, repos] of [[" ", " "], ["✔", " "], [" ", "✔"]] as const) {
+      for (const cursorOn of ["shell", "repos", "continue"] as const) {
+        const prompt = classifyStartupPrompt(setup(shell, repos, cursorOn));
+        expect(prompt && "keys" in prompt ? prompt.keys.at(-1) : undefined).toBe("space");
+      }
+    }
   });
 
   test("the menu's cursor is the one above its footer, not an earlier prompt line in the transcript", () => {

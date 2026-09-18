@@ -2,14 +2,16 @@
 
 ## 0.10.1
 
-- Dismiss Claude Code's one-time "Teach auto mode about your environment?"
-  menu with "Don't show again" (never "Yes", which starts an interactive
-  setup), so a hosted resident's launch or resume is not stopped by it.
-  Measured on lead-factory-dashboard's pane, 2026-09-18. A pane already on
-  the setup's second screen (reached only after "Yes"; measured on
-  nexus-admin's pane) gets Esc, never Continue, and the first menu then gets
-  "Don't show again". What Esc leads to has not been observed live; any
-  screen not recognised afterwards is reported as `blocked-prompt`.
+- Answer Claude Code's "Teach auto mode about your environment?" menu the way
+  Brooswit chose: "Yes", then on the setup screen tick both "Also scan shell
+  history" and "Also scan your other repos" (usage left as shown), then
+  Continue. One step per screen read, so Continue is pressed only once the
+  screen shows both boxes ticked. Space as the toggle key is not yet observed
+  live; if it does not tick a box, Continue is never pressed and the launch
+  ends `not-ready` with the excerpt. Measured on lead-factory-dashboard's and
+  nexus-admin's panes, 2026-09-18. Claude shows this menu only while
+  `autoMode.environment` in `~/.claude/settings.json` is empty, so once the
+  setup has run for an account it does not appear again.
 - Read a menu's own cursor: the `❯` nearest above its "Enter to confirm"
   footer. A live or resumed pane also shows transcript prompts above a menu
   and its input box below it, and taking the first `❯` on screen would have
