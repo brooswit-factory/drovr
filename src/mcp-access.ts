@@ -49,8 +49,11 @@ const stringRecord = (value: unknown, what: string): Record<string, string> | un
 
 /**
  * The servers a `.mcp.json` defines, in the neutral shape above. An entry with
- * a `url` is http (also when it says `"type": "http"` or `"sse"`); one with a
- * `command` is stdio. Anything else is refused rather than guessed at.
+ * a `url` is http (it may say `"type": "http"` or nothing); one with a
+ * `command` is stdio. Anything else is refused rather than guessed at,
+ * including `"type": "sse"`: agy 1.2.6 offers only stdio and http, and
+ * serving an SSE server to it as streamable http would fail at connect time
+ * instead of here (found by bakr in review).
  */
 export function mcpServersFromMcpJson(json: unknown): Record<string, McpServerDefinition> {
   const servers = (json as { mcpServers?: unknown } | undefined)?.mcpServers;
@@ -58,7 +61,10 @@ export function mcpServersFromMcpJson(json: unknown): Record<string, McpServerDe
   const out: Record<string, McpServerDefinition> = {};
   for (const [name, raw] of Object.entries(servers as Record<string, unknown>)) {
     safeName(name);
-    const entry = raw as { url?: unknown; command?: unknown; args?: unknown; headers?: unknown; env?: unknown };
+    const entry = raw as { type?: unknown; url?: unknown; command?: unknown; args?: unknown; headers?: unknown; env?: unknown };
+    if (entry?.type !== undefined && entry.type !== "http" && entry.type !== "stdio") {
+      throw new Error(`MCP server ${name} has type ${JSON.stringify(entry.type)}; only http and stdio are supported`);
+    }
     if (typeof entry?.url === "string") {
       const headers = stringRecord(entry.headers, `${name}.headers`);
       out[name] = headers === undefined ? { type: "http", url: entry.url } : { type: "http", url: entry.url, headers };
@@ -253,7 +259,10 @@ export function mcpAccessProvisioning(
     const definitions: McpSettingsEdit[] = defined.length === 0 ? [] : [{
       // AGY keeps its server definitions in its home, not in the workspace, so
       // a declaration that carries them writes them there. Servers it does not
-      // name, and every other key, are left as they are.
+      // name, and every other key, are left as they are. A server it does name
+      // is replaced WHOLE: the declaration is authoritative for that server, so
+      // an earlier `disabled: true` or extra key on it is not kept. A server
+      // dropped from the declaration is not removed; that is a follow-up.
       path: join(home, ".gemini", "config", "mcp_config.json"),
       describes: `agy reaches ${defined.map((server) => server.name).join(", ")} as defined`,
       apply: (config) => {
