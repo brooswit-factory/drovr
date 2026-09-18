@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
 - Host residents in herdr panes: `hostResident`, `listResidents` and
   `stopResident` (see `docs/resident-host.md`). The label is the herdr agent
@@ -25,7 +25,14 @@
   session `busy` for as long as a Monitor runs, so every agent with a watcher
   refused every send. `claudeResidentActivity` reads the transcript: a session
   whose last conversation record closed its turn is `background` and takes the
-  message; one still mid-turn is refused as `busy`, as before.
+  message; one still mid-turn is refused as `busy`, as before. Only Claude's own
+  `busy` can become `background`: a session listed `blocked` (stopped on a
+  dialog) is refused as `blocked`, and any other status as `busy`.
+- `listResidents` reports each resident's provider `pid` (the pane's foreground
+  process named after the provider, never the shell), for a host's own
+  liveness check.
+
+Release asset: `brooswit-drovr-0.10.0.tgz`.
 
 ## 0.9.2
 
