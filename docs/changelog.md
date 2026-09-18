@@ -21,6 +21,11 @@
   changed since the operator saw it, an audit record is written before any
   key is sent, the auto-mode option is never chosen, and success means the
   prompt left the screen. Proven live on a real Bash prompt.
+- Reach a resident that is busy only with background workers. Claude lists a
+  session `busy` for as long as a Monitor runs, so every agent with a watcher
+  refused every send. `claudeResidentActivity` reads the transcript: a session
+  whose last conversation record closed its turn is `background` and takes the
+  message; one still mid-turn is refused as `busy`, as before.
 
 ## 0.9.2
 

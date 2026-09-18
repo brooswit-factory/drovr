@@ -72,7 +72,10 @@ function fixture(opts: { screens?: string[]; agents?: Agent[]; workspaces?: { wo
       },
     },
     pane: {
-      processInfo: async () => { throw new Error("unused"); },
+      processInfo: async (p: { pane_id: string }) => {
+        if (p.pane_id !== "w1:p1") throw new Error("no process info");
+        return { type: "pane_process_info", process_info: { shell_pid: 10, foreground_processes: [{ pid: 10, name: "bash" }, { pid: 4242, name: "claude" }] } } as never;
+      },
       read: async (p: unknown) => { calls.push({ method: "pane.read", args: p }); return { type: "pane_read", read: { text: "" } } as never; },
     },
     workspace: {
@@ -230,8 +233,16 @@ describe("listResidents and stopResident", () => {
   test("lists only panes in workspaces Drovr hosts", async () => {
     const f = fixture({ agents, workspaces });
     expect(await listResidents(f.client)).toEqual([
-      { paneId: "w1:p1", workspaceId: "w1", label: "lead-drovr", provider: "claude", sessionId: "s1", cwd: "/a", status: "working" },
+      { paneId: "w1:p1", workspaceId: "w1", label: "lead-drovr", provider: "claude", sessionId: "s1", cwd: "/a", status: "working", pid: 4242 },
     ]);
+  });
+
+  test("the pid is the provider's process, never the shell's, and absent when herdr cannot say", async () => {
+    const f = fixture({
+      agents: [...agents, { pane_id: "w3:p1", workspace_id: "w3", name: "quiet", agent: "claude", agent_status: "idle" }],
+      workspaces: [...workspaces, { workspace_id: "w3", label: "drovr quiet" }],
+    });
+    expect((await listResidents(f.client)).map((r) => [r.paneId, r.pid])).toEqual([["w1:p1", 4242], ["w3:p1", undefined]]);
   });
 
   test("stops a hosted resident by closing its workspace, and refuses anyone else's pane", async () => {
