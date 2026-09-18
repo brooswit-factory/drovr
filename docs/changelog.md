@@ -20,6 +20,15 @@
   `--settings {"enabledMcpjsonServers": …}`, which holds in an untrusted
   directory where a workspace `settings.local.json` approval is ignored.
 - `runConversationProcess` no longer passes `FORCE_COLOR` to the CLI it parses.
+- Accept AGY 1.2.5's own full transcripts, which 0.6.0 rejected as "incomplete
+  or has an unsupported record" and so broke USRR history and provider
+  handoff. Measured on this host's transcripts, AGY writes records in
+  completion order, reuses an interrupted turn's step index, never writes
+  some steps, and omits `content` on tool-only planner steps. 14 of 21 were
+  rejected before this change and all 21 are accepted after it. Completeness
+  now rests on AGY's own signals: a partial final record, or
+  `truncated_fields`. `nativeTranscriptReply` takes AGY's reply from the
+  highest step instead of the last line.
 
 - Drovr owns MCP access across vendors: one `McpAccessDeclaration` renders into
   Claude's `enabledMcpjsonServers`, AGY's `permissions.allow: ["mcp(<server>/*)"]`

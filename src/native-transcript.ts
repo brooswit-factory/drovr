@@ -22,11 +22,19 @@ export class NativeTranscriptUnavailableError extends Error {
 /** Extract model output only: a user prompt containing an ACK token is not an ACK. */
 export function nativeTranscriptReply(provider: NativeTranscriptOptions["provider"], text: string): string | undefined {
   let reply: string | undefined;
+  // AGY writes in completion order, so its latest reply is the highest step, not the last line.
+  let replyStep = -1;
   for (const line of text.split("\n").filter(Boolean)) {
     let record: any;
     try { record = JSON.parse(line); } catch { fail("invalid transcript JSON record"); }
     if (provider === "agy") {
-      if (record?.type === "PLANNER_RESPONSE" && record.source === "MODEL" && record.status === "DONE" && typeof record.content === "string") reply = record.content;
+      // A record without an index keeps the last-line order it always had.
+      const step = typeof record?.step_index === "number" ? record.step_index : replyStep;
+      if (record?.type === "PLANNER_RESPONSE" && record.source === "MODEL" && record.status === "DONE" && typeof record.content === "string"
+        && step >= replyStep) {
+        reply = record.content;
+        replyStep = step;
+      }
       continue;
     }
     const message = provider === "claude"
@@ -140,18 +148,31 @@ async function findCodex(root: string, id: string, cwd: string): Promise<string>
   return found;
 }
 
+/**
+ * AGY 1.2.5 writes its full transcript in completion order, not step order,
+ * measured across this host's own transcripts: a tool result is written
+ * before the planner step that called it (steps 0, 2, 1, 3), an interrupted
+ * turn's index is reused by the next user input (52, 52), some steps are
+ * never written at all (94 and 106 absent before a user input, in a
+ * conversation that carried on normally; another begins at step 1), and a
+ * planner step that only calls tools carries `tool_calls` and no `content`.
+ * So step indices prove nothing about completeness. What does is AGY's own
+ * signal: a partial final record, or `truncated_fields` on any record.
+ */
 function validateAgy(text: string): string {
   if (!text.endsWith("\n")) fail("AGY transcript has a partial final record");
-  let index = 0;
+  let records = 0;
   for (const line of text.split("\n").filter(Boolean)) {
     let record: Record<string, unknown>;
     try { record = JSON.parse(line); } catch { fail("invalid AGY transcript JSON"); }
-    if (!record || typeof record !== "object" || record.step_index !== index++
+    const step = record?.step_index;
+    if (!record || typeof record !== "object" || typeof step !== "number" || !Number.isSafeInteger(step) || step < 0
       || typeof record.type !== "string" || typeof record.source !== "string"
-      || typeof record.content !== "string") fail("AGY transcript is incomplete or has an unsupported record");
+      || (record.content !== undefined && typeof record.content !== "string")) fail("AGY transcript has an unsupported record");
     if (Array.isArray(record.truncated_fields) && record.truncated_fields.length) fail("AGY transcript has truncated fields; full history is required");
+    records++;
   }
-  if (!index) fail("AGY transcript is empty");
+  if (!records) fail("AGY transcript is empty");
   return text;
 }
 

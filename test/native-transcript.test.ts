@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readNativeTranscript } from "../src/native-transcript.js";
+import { nativeTranscriptReply, readNativeTranscript } from "../src/native-transcript.js";
 
 const id = "01a097e9-8423-76f2-9e3d-b3c7918b9380";
 const cwd = "/factory/work dir/project_name";
@@ -118,9 +118,34 @@ describe("native transcript disk reader", () => {
     const path = await put(`.gemini/antigravity-cli/brain/${id}/.system_generated/logs/transcript_full.jsonl`, text);
     expect(await readNativeTranscript({provider:"agy",session:{kind:"id",value:id},cwd,home})).toBe(text);
     expect(await readNativeTranscript({provider:"agy",session:{kind:"path",value:path},cwd,home})).toBe(text);
-    for (const invalid of [text.trimEnd(), text.split("\n")[1]+"\n", JSON.stringify({step_index:0,type:"USER_INPUT",source:"USER_EXPLICIT",content:"partial",truncated_fields:["content"]})+"\n"]) {
+    for (const invalid of [text.trimEnd(), "\n", JSON.stringify({step_index:0,type:"USER_INPUT",source:"USER_EXPLICIT",content:"partial",truncated_fields:["content"]})+"\n"]) {
       await writeFile(path, invalid);
       await expect(readNativeTranscript({provider:"agy",session:{kind:"id",value:id},cwd,home})).rejects.toThrow();
     }
+  });
+
+  test("AGY accepts its own completion-order transcript with unwritten steps, measured on agy 1.2.5", async () => {
+    // Shape of a real yolo-mode transcript: a tool result written before the
+    // planner step that called it, tool-only planner steps with no content,
+    // an errored step, and an interrupted turn whose index the next input reuses.
+    const records = [
+      { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", content: "look around" },
+      { step_index: 2, source: "MODEL", type: "GENERIC", status: "DONE", content: "listing" },
+      { step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", thinking: "t", tool_calls: [{ name: "list_dir" }] },
+      { step_index: 3, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", tool_calls: [{ name: "run_command" }] },
+      { step_index: 4, source: "MODEL", type: "GENERIC", status: "ERROR", error: "denied", content: "failed" },
+      { step_index: 4, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", content: "never mind" },
+      { step_index: 5, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", content: "ok" },
+    ];
+    const text = records.map((record) => JSON.stringify(record)).join("\n") + "\n";
+    const path = await put(`.gemini/antigravity-cli/brain/${id}/.system_generated/logs/transcript_full.jsonl`, text);
+    expect(await readNativeTranscript({provider:"agy",session:{kind:"path",value:path},cwd,home})).toBe(text);
+    expect(nativeTranscriptReply("agy", text)).toBe("ok");
+    // AGY never writes some steps; a real conversation carried on past absent 94 and 106.
+    const unwritten = records.filter((record) => record.step_index !== 0 && record.step_index !== 3).map((record) => JSON.stringify(record)).join("\n") + "\n";
+    await writeFile(path, unwritten);
+    expect(await readNativeTranscript({provider:"agy",session:{kind:"path",value:path},cwd,home})).toBe(unwritten);
+    await writeFile(path, JSON.stringify({ ...records[0], content: 7 }) + "\n");
+    await expect(readNativeTranscript({provider:"agy",session:{kind:"path",value:path},cwd,home})).rejects.toThrow("unsupported record");
   });
 });
