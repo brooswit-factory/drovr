@@ -202,6 +202,9 @@ export {
 export {
   InboxRelay,
   connectChannelSource,
+  keepChannelSource,
+  type ChannelSourceStatus,
+  type KeepChannelSourceOptions,
   usrrDeliver,
   renderInboxTurn,
   inboxMessageFromNotification,
