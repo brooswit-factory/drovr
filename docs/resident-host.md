@@ -45,7 +45,16 @@ What Drovr owns so the host does not:
   `promptError` on a successful result; the resident is not closed for it.
 - **A resume with nothing to resume.** A session that never took a turn has no
   transcript; `claude --resume` prints "No conversation found" and exits.
-  That is `no-such-session` at once, not a timeout.
+  That is `no-such-session` at once, not a timeout. A resume Claude refuses
+  because the conversation belongs to another directory ("This conversation
+  is from a different directory", reported by bakr for a session that moved
+  into a worktree) is `wrong-directory`; resume from the transcript's last
+  recorded cwd. Claude 2.1.277 resumed a proof session from an unrelated
+  sibling directory without refusing, so this refusal is matched on the
+  reported text and has not been reproduced here.
+- **Two hosts racing for one label.** Both can pass the free-name check; herdr
+  then refuses the second `agent.start` (`agent_name_taken`), and that host
+  closes its own workspace. Proven live: exactly one pane holds the name.
 - **Cleanup.** Every failure after the workspace exists closes it, so no
   half-started pane keeps an MCP identity or the agent name.
 
@@ -59,7 +68,8 @@ Only Claude residents are hosted so far (`unsupported-provider` otherwise).
 
 `scripts/verify-host-resident.ts` runs the whole cycle (host with both startup
 prompts, refuse the duplicate label, list, first turn, stop, resume the same
-session, stop) against an explicitly named `drovr-proof-*` herdr session. Start
+session, stop, then two labels hosted in parallel and two hosts racing for
+one label) against an explicitly named `drovr-proof-*` herdr session. Start
 that server without the calling Claude session's `CLAUDE*` environment: a pane
 that inherits `CLAUDE_CODE_CHILD_SESSION` does not save its transcript, so
 nothing can be resumed from it.

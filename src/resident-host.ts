@@ -73,6 +73,8 @@ export type HostResidentRefusalReason =
   | "blocked-prompt"
   /** `resume` named a session with no transcript here; the workspace was closed. */
   | "no-such-session"
+  /** `resume` named a session whose conversation belongs to another directory. */
+  | "wrong-directory"
   | "not-ready";
 
 export type HostResidentResult =
@@ -257,6 +259,11 @@ export async function hostResident(
     const missing = /No conversation found with session ID: (\S+)/.exec(screen);
     if (request.resume !== undefined && missing) {
       return abandon("no-such-session", `claude has no transcript for session ${missing[1]} in ${request.cwd}`, excerptOf(screen));
+    }
+    // Reported by bakr, 2026-09-18: claude refuses a resume from any directory
+    // but the conversation's own (a session that moved into a worktree, say).
+    if (request.resume !== undefined && /This conversation is from a different directory/.test(screen)) {
+      return abandon("wrong-directory", `session ${request.resume} belongs to another directory than ${request.cwd}; resume from the transcript's last recorded cwd`, excerptOf(screen));
     }
     if (prompt?.kind === "mcp-approval") {
       return abandon("blocked-prompt", `claude in pane ${paneId} asks to approve an MCP server; pass it in inputs.mcpServersApproved`, prompt.excerpt);

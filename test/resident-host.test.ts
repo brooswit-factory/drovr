@@ -206,6 +206,13 @@ describe("hostResident", () => {
     expect(f.called("workspace.close")).toEqual([{ workspace_id: "w9" }]);
   });
 
+  test("a resume from a directory other than the conversation's is its own refusal", async () => {
+    const f = fixture({ screens: ["$ claude --resume s1\nThis conversation is from a different directory.\n\nTo resume, run:\n  cd /elsewhere && claude --resume s1\n$"] });
+    const result = await hostResident(f.client, { ...request, resume: "s1" }, f.options);
+    expect(result).toMatchObject({ ok: false, reason: "wrong-directory" });
+    expect(f.called("workspace.close")).toEqual([{ workspace_id: "w9" }]);
+  });
+
   test("a pane that never becomes ready is closed at the deadline", async () => {
     const f = fixture({ ready: false });
     expect(await hostResident(f.client, request, f.options)).toMatchObject({ ok: false, reason: "not-ready" });
