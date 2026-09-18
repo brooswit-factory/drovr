@@ -286,27 +286,40 @@ export interface ResidentListing {
   sessionId: string | undefined;
   cwd: string | undefined;
   status: AgentInfo["agent_status"];
+  /** The provider process's pid, for a host's own liveness check; undefined when herdr cannot say. */
+  pid: number | undefined;
 }
 
 /** Every resident Drovr hosts: agent panes in a workspace carrying Drovr's label prefix. */
-export async function listResidents(client: Pick<HostClient, "agent" | "workspace">): Promise<ResidentListing[]> {
+export async function listResidents(client: Pick<HostClient, "agent" | "workspace" | "pane">): Promise<ResidentListing[]> {
   const [{ agents }, { workspaces }] = await Promise.all([client.agent.list(), client.workspace.list()]);
   const hosted = new Map(workspaces
     .filter((workspace) => workspace.label.startsWith(RESIDENT_WORKSPACE_PREFIX))
     .map((workspace) => [workspace.workspace_id, workspace.label.slice(RESIDENT_WORKSPACE_PREFIX.length)]));
-  return agents.flatMap((agent) => {
-    const label = hosted.get(agent.workspace_id);
-    if (label === undefined) return [];
-    return [{
-      paneId: agent.pane_id,
-      workspaceId: agent.workspace_id,
-      label: agent.name ?? label,
-      provider: agent.agent ?? undefined,
-      sessionId: agent.agent_session?.kind === "id" ? agent.agent_session.value : undefined,
-      cwd: agent.cwd ?? undefined,
-      status: agent.agent_status,
-    }];
-  });
+  const residents = agents.filter((agent) => hosted.has(agent.workspace_id));
+  const pids = await Promise.all(residents.map((agent) => providerPid(client, agent.pane_id, agent.agent ?? undefined)));
+  return residents.map((agent, index) => ({
+    paneId: agent.pane_id,
+    workspaceId: agent.workspace_id,
+    label: agent.name ?? hosted.get(agent.workspace_id)!,
+    provider: agent.agent ?? undefined,
+    sessionId: agent.agent_session?.kind === "id" ? agent.agent_session.value : undefined,
+    cwd: agent.cwd ?? undefined,
+    status: agent.agent_status,
+    pid: pids[index],
+  }));
+}
+
+/**
+ * The pane's foreground process named after its provider, as `pane.process_info`
+ * reports it. Undefined when herdr cannot say; never the shell's pid instead.
+ */
+async function providerPid(client: Pick<HostClient, "pane">, paneId: string, provider: string | undefined): Promise<number | undefined> {
+  if (provider === undefined) return undefined;
+  const result = await client.pane.processInfo({ pane_id: paneId }).catch(() => undefined);
+  const processes = result?.type === "pane_process_info" ? result.process_info.foreground_processes : undefined;
+  const pid = processes?.find((process) => process.name === provider)?.pid;
+  return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
 }
 
 export type StopResidentResult =
@@ -318,7 +331,7 @@ export type StopResidentResult =
  * its transcript stays for a later `resume`. Refuses a pane Drovr did not
  * host, so a stale id can never close someone else's workspace.
  */
-export async function stopResident(client: Pick<HostClient, "agent" | "workspace">, paneId: string): Promise<StopResidentResult> {
+export async function stopResident(client: Pick<HostClient, "agent" | "workspace" | "pane">, paneId: string): Promise<StopResidentResult> {
   const resident = (await listResidents(client)).find((listing) => listing.paneId === paneId);
   if (!resident) {
     const exists = await client.agent.get(paneId).then(() => true, () => false);
