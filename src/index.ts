@@ -64,6 +64,9 @@ export {
 export { prepareManagedAgentWorkspace, type ManagedAgentWorkspace } from "./managed-workspace.js";
 export {
   mcpAccessProvisioning,
+  mcpServersFromMcpJson,
+  agyMcpServerEntry,
+  type McpServerDefinition,
   notificationSupport,
   applyMcpAccess,
   setMcpAccess,
