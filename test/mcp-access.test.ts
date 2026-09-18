@@ -77,9 +77,21 @@ describe("one declaration, each vendor's own dialect", () => {
   });
 
   test("a .mcp.json entry with neither a url nor a command is refused, not guessed at", () => {
-    expect(() => mcpServersFromMcpJson({ mcpServers: { odd: { type: "ws" } } })).toThrow("neither a url nor a command");
+    expect(() => mcpServersFromMcpJson({ mcpServers: { odd: { command: "x", url: undefined } as never, none: {} } })).toThrow("neither a url nor a command");
+    // agy offers only stdio and http, so an SSE server is refused here, not at connect time.
+    expect(() => mcpServersFromMcpJson({ mcpServers: { old: { type: "sse", url: "http://h/sse" } } })).toThrow('type "sse"');
     expect(() => mcpServersFromMcpJson({})).toThrow("no mcpServers");
     expect(() => mcpServersFromMcpJson({ mcpServers: { x: { url: "http://h", headers: { a: 1 } } } })).toThrow("x.headers");
+  });
+
+  test("a declared server replaces its whole entry: the declaration is authoritative for it", async () => {
+    const config = "/home/brooswit/.gemini/config/mcp_config.json";
+    const f = files({ [config]: JSON.stringify({ mcpServers: { rocketr: { serverUrl: "http://old", disabled: true, note: "x" } } }) });
+    await applyMcpAccess("agy", {
+      cwd: "/home/brooswit/code/brooswit-factory/usrr", home: "/home/brooswit",
+      servers: [{ name: "rocketr", definition: { type: "http", url: "http://127.0.0.1:8790/mcp" } }],
+    }, f.io);
+    expect(f.json(config).mcpServers.rocketr).toEqual({ disabled: false, serverUrl: "http://127.0.0.1:8790/mcp" });
   });
 
   test("a declaration without definitions leaves agy's server file alone", async () => {
