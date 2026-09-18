@@ -92,7 +92,7 @@ which may contain credentials. See
 
 To message an already-running resident agent's same session, use
 `createResidentAgentMessenger`. Only Claude has a proven transport; see
-[`docs/resident-agent.md`](docs/resident-agent.md). Background launch and host-wide blocking conditions: [`docs/background-launch.md`](docs/background-launch.md).
+[`docs/resident-agent.md`](docs/resident-agent.md). Background launch and host-wide blocking conditions: [`docs/background-launch.md`](docs/background-launch.md). Hosting residents in herdr panes (`hostResident`): [`docs/resident-host.md`](docs/resident-host.md).
 
 Both kinds use the same `agent.prompt`, `agent.get`, `agent.read`, and
 `agent.wait` methods. Herdr owns terminal interaction and base status detection;
