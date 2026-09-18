@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.1
+
+- Dismiss Claude Code's one-time "Teach auto mode about your environment?"
+  menu with "Don't show again" (never "Yes", which starts an interactive
+  setup), so a hosted resident's launch or resume is not stopped by it.
+  Measured on lead-factory-dashboard's pane, 2026-09-18. A pane already on
+  the setup's second screen (reached only after "Yes"; measured on
+  nexus-admin's pane) gets Esc, never Continue, and the first menu then gets
+  "Don't show again". What Esc leads to has not been observed live; any
+  screen not recognised afterwards is reported as `blocked-prompt`.
+- Read a menu's own cursor: the `❯` nearest above its "Enter to confirm"
+  footer. A live or resumed pane also shows transcript prompts above a menu
+  and its input box below it, and taking the first `❯` on screen would have
+  closed a resumed trust dialog as `unknown-blocking`.
+
+Release asset: `brooswit-drovr-0.10.1.tgz`.
+
 ## 0.10.0
 
 - Host residents in herdr panes: `hostResident`, `listResidents` and

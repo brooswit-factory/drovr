@@ -120,6 +120,27 @@ describe("startup prompts", () => {
     expect(classifyStartupPrompt(screen)).toEqual({ kind: "auto-mode-onboarding", keys: ["down", "down", "enter"] });
   });
 
+  test("the setup's second screen is backed out of with Esc, never continued", () => {
+    // Measured on nexus-admin's pane wF:p1, 2026-09-18, after "Yes" was picked on the first menu.
+    const second = [
+      "✻ Worked for 39s · done 12:22 PM · 1 monitor still running",
+      "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
+      "   Teach auto mode about your environment?",
+      "",
+      "   Claude Code reads this project, your recent Claude sessions, and optionally your shell history and other repositories. Claude analyzes this data and customizes auto mode to make better",
+      "   decisions.",
+      "",
+      "     How you use Claude here    ◀ Mixed ▶",
+      "   ❯ Also scan shell history    [ ]",
+      "     Also scan your other repos [ ]",
+      "",
+      "     Continue",
+      "",
+      "   ←/→ to change usage · Enter to continue · Esc to cancel",
+    ].join("\n");
+    expect(classifyStartupPrompt(second)).toEqual({ kind: "auto-mode-onboarding", keys: ["esc"] });
+  });
+
   test("the menu's cursor is the one above its footer, not an earlier prompt line in the transcript", () => {
     const resumed = "❯ an earlier prompt from the transcript\n\n● reply\n\n" + TRUST;
     expect(classifyStartupPrompt(resumed)).toEqual({ kind: "trust", keys: ["down", "enter"] });

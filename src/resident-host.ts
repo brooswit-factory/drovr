@@ -167,6 +167,13 @@ export function classifyStartupPrompt(raw: string): StartupPrompt | undefined {
     const keys = keysToChoose(screen, /^I am using this for local development/);
     return keys ? { kind: "development-channels", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
   }
+  if (/Teach auto mode about your environment\?/.test(screen) && /Enter to continue · Esc to cancel/.test(screen) && !/Enter to confirm/.test(screen)) {
+    // The setup's second screen, reached only after "Yes" (measured on
+    // nexus-admin's pane wF:p1, 2026-09-18). Esc backs out, never Continue:
+    // continuing would have Claude scan the project and past sessions. The
+    // first menu then gets "Don't show again" on the next read.
+    return { kind: "auto-mode-onboarding", keys: ["esc"] };
+  }
   if (/Teach auto mode about your environment\?/.test(screen)) {
     // A one-time onboarding offer, measured on lead-factory-dashboard's pane
     // 2026-09-18; Brooswit okayed dismissing it for good. Only "Don't show
