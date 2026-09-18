@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.2
+
+- Join each Claude channel to its flag. With more than one channel,
+  `--dangerously-load-development-channels server:yappr server:rocketr` let
+  `claude --bg` take the second value as the session's first prompt, even
+  before `--bg`. Measured on claude 2.1.276: the session began with the
+  literal turn "server:rocketr", never registered the channel, and
+  Rocket.Chat DMs pushed to it were dropped. `buildProviderLaunchArgs` now
+  emits one `--dangerously-load-development-channels=server:x` per channel.
+  `checkManagedAgentArgv` reads both spellings, so a process launched by an
+  older build is not reported as drifted.
+
+Release asset: `brooswit-drovr-0.9.2.tgz`.
+
 ## 0.9.1
 
 - Send to a never-prompted resident. A fresh background session lists with no
