@@ -45,7 +45,7 @@ describe("background launch argv", () => {
       "claude", "--model", "opus",
       "--mcp-config", "/w/.mcp.json",
       "--settings", '{"enabledMcpjsonServers":["yappr"]}',
-      "--dangerously-load-development-channels", "server:yappr",
+      "--dangerously-load-development-channels=server:yappr",
       "--bg", "--", "-starts with a dash",
     ]);
   });

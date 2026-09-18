@@ -45,7 +45,16 @@ function fixture(provider: ManagedAgentProvider, prepared: Record<string, unknow
   return { lifecycle, request, started };
 }
 
+const CHANNELS = "--dangerously-load-development-channels";
+/** Whether any argv entry is the channel flag, in either spelling. */
+const hasChannelFlag = (args: readonly string[]): boolean => args.some(value => value === CHANNELS || value.startsWith(`${CHANNELS}=`));
 const flagValues = (args: readonly string[], flag: string): string[] => {
+  if (flag === CHANNELS) {
+    // Each channel must be joined to its flag: the bare variadic form lets
+    // `claude --bg` take the value as the session's first prompt.
+    expect(args).not.toContain(CHANNELS);
+    return args.flatMap(value => value.startsWith(`${CHANNELS}=`) ? [value.slice(CHANNELS.length + 1)] : []);
+  }
   const index = args.indexOf(flag);
   if (index < 0) return [];
   const rest = args.slice(index + 1);
@@ -71,13 +80,13 @@ describe("provider-neutral MCP configuration and development channels", () => {
     const f = fixture("claude");
     expect((await f.lifecycle.start(f.request({}))).status).toBe("success");
     expect(flagValues(f.started[0]!.args, "--mcp-config")).toEqual(["/prepared/mcp.json"]);
-    expect(f.started[0]!.args).not.toContain("--dangerously-load-development-channels");
+    expect(hasChannelFlag(f.started[0]!.args)).toBe(false);
   });
 
   test("an empty channel list loads no development channels", async () => {
     const f = fixture("claude");
     expect((await f.lifecycle.start(f.request({ developmentChannels: [] }))).status).toBe("success");
-    expect(f.started[0]!.args).not.toContain("--dangerously-load-development-channels");
+    expect(hasChannelFlag(f.started[0]!.args)).toBe(false);
     expect(flagValues(f.started[0]!.args, "--mcp-config")).toEqual(["/prepared/mcp.json"]);
   });
 
@@ -88,9 +97,10 @@ describe("provider-neutral MCP configuration and development channels", () => {
       developmentChannels: ["server:butchr"],
     }))).status).toBe("success");
     expect(f.started[0]!.kind).toBe(provider);
-    for (const flag of ["--mcp-config", "--dangerously-load-development-channels", "--permission-mode", "--effort"]) {
+    for (const flag of ["--mcp-config", "--permission-mode", "--effort"]) {
       expect(f.started[0]!.args).not.toContain(flag);
     }
+    expect(hasChannelFlag(f.started[0]!.args)).toBe(false);
     expect(f.started[0]!.args.join(" ")).not.toContain("/requested/mcp.json");
     expect(f.started[0]!.args.join(" ")).not.toContain("server:butchr");
   });
@@ -103,7 +113,7 @@ describe("provider-neutral MCP configuration and development channels", () => {
       "--effort", "high",
       "--permission-mode", "bypassPermissions",
       "--mcp-config", "/work/mcp.json",
-      "--dangerously-load-development-channels", "server:butchr",
+      "--dangerously-load-development-channels=server:butchr",
     ]);
     expect(buildAgentStartParams({ ...base, ...neutral, provider: "agy" }).args).toEqual([
       "--prompt-interactive", "go",
@@ -147,7 +157,7 @@ describe("configured channels reach provider startup", () => {
     const f = fixture(provider, { developmentChannels: ["server:butchr"] });
     expect((await f.lifecycle.start(f.request({ developmentChannels: ["server:yappr"] }))).status).toBe("success");
     expect(f.started[0]!.args.join(" ")).not.toContain("server:yappr");
-    expect(f.started[0]!.args).not.toContain("--dangerously-load-development-channels");
+    expect(hasChannelFlag(f.started[0]!.args)).toBe(false);
   });
 
   test("merging channels keeps first-mention order and drops duplicates", () => {
@@ -163,11 +173,30 @@ describe("configured channels reach provider startup", () => {
       developmentChannels: ["server:butchr", "server:yappr"],
     }).args!;
     expect(checkManagedAgentArgv(expected, expected)).toEqual({ ok: true });
-    const drifted = expected.filter(value => value !== "server:yappr");
+    const drifted = expected.filter(value => value !== `${CHANNELS}=server:yappr`);
     expect(checkManagedAgentArgv(expected, drifted)).toEqual({
       ok: false,
       reason: "argv lacks --dangerously-load-development-channels server:yappr",
     });
+  });
+
+  test("a live process launched with the older spaced form still reads as carrying its channels", () => {
+    const expected = buildProviderLaunchArgs("claude", { mcpConfigPath: "/w/mcp.json", mcpNotificationServers: ["butchr", "yappr"] });
+    const olderLaunch = ["--mcp-config", "/w/mcp.json", CHANNELS, "server:butchr", "server:yappr"];
+    expect(checkManagedAgentArgv(expected, olderLaunch)).toEqual({ ok: true });
+    expect(checkManagedAgentArgv(expected, ["--mcp-config", "/w/mcp.json", CHANNELS, "server:butchr"])).toEqual({
+      ok: false,
+      reason: "argv lacks --dangerously-load-development-channels server:yappr",
+    });
+  });
+
+  test("no channel value stands alone in argv, where `claude --bg` would take it as the prompt", () => {
+    const args = buildProviderLaunchArgs("claude", { mcpConfigPath: "/w/mcp.json", mcpNotificationServers: ["yappr", "rocketr"] });
+    expect(args).toEqual([
+      "--mcp-config", "/w/mcp.json",
+      `${CHANNELS}=server:yappr`, `${CHANNELS}=server:rocketr`,
+    ]);
+    expect(args.filter(value => value.startsWith("server:"))).toEqual([]);
   });
 });
 
@@ -178,7 +207,7 @@ describe("a direct CLI launch outside Herdr", () => {
       mcpNotificationServers: ["yappr"],
     })).toEqual([
       "--mcp-config", "/home/brooswit/code/brooswit/.mcp.json",
-      "--dangerously-load-development-channels", "server:yappr",
+      "--dangerously-load-development-channels=server:yappr",
     ]);
   });
 
@@ -187,7 +216,7 @@ describe("a direct CLI launch outside Herdr", () => {
       developmentChannels: ["server:yappr", "server:butchr"],
       mcpNotificationServers: ["yappr", "atlassian"],
     })).toEqual([
-      "--dangerously-load-development-channels", "server:yappr", "server:butchr", "server:atlassian",
+      "--dangerously-load-development-channels=server:yappr", "--dangerously-load-development-channels=server:butchr", "--dangerously-load-development-channels=server:atlassian",
     ]);
   });
 
@@ -214,7 +243,7 @@ describe("a direct CLI launch outside Herdr", () => {
     // The name passes the identifier check (letters and dashes); what keeps it
     // out of flag position is the channel prefix, so pin that rather than a throw.
     expect(buildProviderLaunchArgs("claude", { mcpNotificationServers: ["--dangerously-skip-permissions"] }))
-      .toEqual(["--dangerously-load-development-channels", "server:--dangerously-skip-permissions"]);
+      .toEqual(["--dangerously-load-development-channels=server:--dangerously-skip-permissions"]);
   });
 
   test("a managed Herdr launch spells its channels the same way", () => {
@@ -225,7 +254,7 @@ describe("a direct CLI launch outside Herdr", () => {
     }).args!;
     expect(args.slice(args.indexOf("--mcp-config"))).toEqual([
       "--mcp-config", "/home/brooswit/code/brooswit/.mcp.json",
-      "--dangerously-load-development-channels", "server:yappr",
+      "--dangerously-load-development-channels=server:yappr",
     ]);
   });
 
