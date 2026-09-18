@@ -38,6 +38,18 @@ function flagValues(argv: readonly string[], flag: string): readonly string[] | 
 }
 
 /**
+ * Every development channel a Claude argv names, in either spelling: the
+ * `--flag=server:a` form Drovr emits, and the variadic `--flag server:a
+ * server:b` form a process launched by an older build still carries.
+ */
+function developmentChannelValues(argv: readonly string[]): readonly string[] | undefined {
+  const joined = argv.flatMap((value) => value.startsWith(`${CLAUDE_DEVELOPMENT_CHANNELS_FLAG}=`) ? [value.slice(CLAUDE_DEVELOPMENT_CHANNELS_FLAG.length + 1)] : []);
+  const spaced = flagValues(argv, CLAUDE_DEVELOPMENT_CHANNELS_FLAG) ?? [];
+  const all = [...joined, ...spaced];
+  return all.length || argv.includes(CLAUDE_DEVELOPMENT_CHANNELS_FLAG) ? all : undefined;
+}
+
+/**
  * Union development channel names in caller order, keeping the first mention of
  * each. Merging rather than replacing is what lets a request add a channel to a
  * launch that already configures others, without either side knowing the other.
@@ -61,9 +73,9 @@ export function checkManagedAgentArgv(expected: readonly string[], observed: rea
   for (const flag of REQUIRED_CLAUDE_FLAGS) {
     if (flag === CLAUDE_DEVELOPMENT_CHANNELS_FLAG) {
       // Variadic: a live process missing any one configured channel has drifted.
-      const wanted = flagValues(expected, flag);
+      const wanted = developmentChannelValues(expected);
       if (!wanted?.length) continue;
-      const seen = new Set(flagValues(observed, flag) ?? []);
+      const seen = new Set(developmentChannelValues(observed) ?? []);
       const absent = wanted.filter((channel) => !seen.has(channel));
       if (absent.length) missing.push(`${flag} ${absent.join(" ")}`);
       continue;
@@ -184,6 +196,13 @@ export function developmentChannelsOf(inputs: ProviderLaunchInputs): readonly st
  * that spawns a provider CLI itself appends these and spells nothing of its
  * own. Providers with no development-channel concept return no such flag
  * rather than refusing the caller.
+ *
+ * Each channel is its own `--dangerously-load-development-channels=server:x`.
+ * The variadic space-separated form is not safe: measured on claude 2.1.276,
+ * `claude --bg` reads the flag's value as the session's first prompt (its job
+ * `intent`), so a launch with `... server:rocketr --bg` began its life with
+ * the user turn "server:rocketr" and never registered the channel. Joined with
+ * `=`, no argv splitter can take the value for a positional.
  */
 export function buildProviderLaunchArgs(
   provider: ManagedAgentProvider,
@@ -195,7 +214,7 @@ export function buildProviderLaunchArgs(
   return [
     ...(inputs.mcpConfigPath === undefined ? [] : ["--mcp-config", inputs.mcpConfigPath]),
     ...(approved.length ? ["--settings", JSON.stringify({ enabledMcpjsonServers: approved })] : []),
-    ...(channels.length ? [CLAUDE_DEVELOPMENT_CHANNELS_FLAG, ...channels] : []),
+    ...channels.map((channel) => `${CLAUDE_DEVELOPMENT_CHANNELS_FLAG}=${channel}`),
   ];
 }
 

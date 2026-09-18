@@ -11,7 +11,7 @@ describe("provider-owned agent launch plans", () => {
   });
 
   test("checks provider-owned persistent launch arguments", () => {
-    const expected = ["--permission-mode", "bypassPermissions", "--mcp-config", "/w/mcp.json", "--dangerously-load-development-channels", "server:butchr"];
+    const expected = ["--permission-mode", "bypassPermissions", "--mcp-config", "/w/mcp.json", "--dangerously-load-development-channels=server:butchr"];
     expect(checkManagedAgentArgv(expected, expected)).toEqual({ ok: true });
     expect(checkManagedAgentArgv(expected, ["--permission-mode", "bypassPermissions"])).toEqual({
       ok: false,
@@ -57,7 +57,7 @@ describe("provider-owned agent launch plans", () => {
         "--effort", "high",
         "--permission-mode", "bypassPermissions",
         "--mcp-config", "/work/TEST-1/mcp.json",
-        "--dangerously-load-development-channels", "server:butchr",
+        "--dangerously-load-development-channels=server:butchr",
       ],
     });
   });
