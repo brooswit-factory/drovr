@@ -1,5 +1,5 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
-import { readClaudeTranscriptTail, type ClaudeTranscriptTail } from "./native-transcript.js";
+import { NativeTranscriptUnavailableError, readClaudeTranscriptTail, type ClaudeTranscriptTail } from "./native-transcript.js";
 
 /** A long-lived agent session that is already running; the host never names provider mechanics. */
 export interface ResidentAgentTarget {
@@ -167,6 +167,16 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
     let offset = (await deps.readTail(target, 0)).offset;
     for (let tail = await deps.readTail(target, offset); tail.offset !== offset; tail = await deps.readTail(target, offset)) offset = tail.offset;
 
+    // The session can change directory mid-turn (entering a git worktree is
+    // the observed case), and Claude Code then carries its transcript to the
+    // new directory's project folder. Reads follow it: see `readFollowing`.
+    let current = target;
+    const read = async (at: number): Promise<ClaudeTranscriptTail> => {
+      const followed = await this.readFollowing(current, at);
+      current = followed.target;
+      return followed.tail;
+    };
+
     const terminal = deps.openAttach(live.id, target.cwd);
     let exited = false;
     void terminal.exited.then(() => { exited = true; });
@@ -187,7 +197,7 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
       const deliveredBy = deps.now() + deps.deliveryTimeoutMs;
       const seen: any[] = [];
       while (after === undefined) {
-        const tail = await deps.readTail(target, offset);
+        const tail = await read(offset);
         offset = tail.offset;
         seen.push(...records(tail.text));
         const index = seen.findIndex(record => record?.sessionId === target.sessionId && userText(record) === message);
@@ -211,9 +221,31 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
       if (turnEnd >= 0) return { status: "replied", reply };
       if (deps.now() > replyBy) return { status: "reply-pending", reply };
       await deps.sleep(deps.pollMs);
-      const tail = await deps.readTail(target, offset);
+      const tail = await read(offset);
       offset = tail.offset;
       after.push(...records(tail.text));
+    }
+  }
+
+  /**
+   * Reads the transcript where the session keeps it now. A missing transcript
+   * is re-checked against the listing: if the exact same session is listed
+   * under another cwd, it moved, and its transcript moved with it (Claude Code
+   * carries the file, history intact, to the new directory's project folder),
+   * so reading continues there from the same offset. Anything else — the
+   * session gone, or no move — is the original failure, never a guess at
+   * another session.
+   */
+  private async readFollowing(target: ResidentAgentTarget, offset: number): Promise<{ target: ResidentAgentTarget; tail: ClaudeTranscriptTail }> {
+    try {
+      return { target, tail: await this.deps.readTail(target, offset) };
+    } catch (error) {
+      if (!(error instanceof NativeTranscriptUnavailableError)) throw error;
+      const moved = (await this.deps.listBackground())
+        .find(entry => entry.sessionId === target.sessionId && entry.cwd !== target.cwd);
+      if (!moved) throw error;
+      const next = { ...target, cwd: moved.cwd };
+      return { target: next, tail: await this.deps.readTail(next, offset) };
     }
   }
 }

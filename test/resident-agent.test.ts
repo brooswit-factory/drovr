@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readClaudeTranscriptTail } from "../src/native-transcript.js";
+import { NativeTranscriptUnavailableError, readClaudeTranscriptTail } from "../src/native-transcript.js";
 import {
   ClaudeResidentMessenger, createResidentAgentMessenger, ResidentMessageRefusal,
   type ClaudeBackgroundListing, type ClaudeResidentDeps, type ResidentAgentTarget,
@@ -141,5 +141,59 @@ describe("Claude transcript tail reader", () => {
     expect(await readClaudeTranscriptTail(target, 0)).toEqual({ offset: 0, text: "" });
     await expect(readClaudeTranscriptTail(target, 5)).rejects.toThrow("saved history is unavailable");
     await rm(home, { recursive: true, force: true });
+  });
+});
+
+describe("a resident that changes directory mid-turn", () => {
+  const worktree = "/work/repo/.claude/worktrees/feature";
+
+  // The session enters a worktree while answering: Claude Code carries its
+  // transcript to the new directory's project folder, so the old path is gone.
+  function movingHarness(options: { vanishes?: boolean } = {}) {
+    let clock = 0;
+    let transcript = user("earlier") + assistant("earlier reply") + turnEnd;
+    let cwd = target.cwd;
+    let afterEnter = 0;
+    const reads: string[] = [];
+    const deps: Partial<ClaudeResidentDeps> = {
+      listBackground: async () => options.vanishes && cwd !== target.cwd ? [] : [{ ...idle, cwd }],
+      readTail: async (at, offset) => {
+        reads.push(at.cwd);
+        if (afterEnter > 0 && ++afterEnter === 3) {
+          // Mid-reply: the session moves, then keeps writing where it now lives.
+          cwd = worktree;
+          transcript += assistant("the answer is 5") + turnEnd;
+        }
+        if (at.cwd !== cwd) throw new NativeTranscriptUnavailableError();
+        const text = transcript.slice(offset);
+        const complete = text.lastIndexOf("\n") + 1;
+        return { offset: offset + complete, text: text.slice(0, complete) };
+      },
+      openAttach: () => ({
+        write: data => {
+          if (data === "\r") { transcript += user("what is 2+3?"); afterEnter = 1; }
+        },
+        lastOutputAt: () => 0,
+        exited: new Promise<number>(() => {}),
+        close: async () => {},
+      }),
+      now: () => clock,
+      sleep: async ms => { clock += ms; },
+      attachReadyTimeoutMs: 5_000,
+      deliveryTimeoutMs: 2_000,
+      pollMs: 250,
+    };
+    return { messenger: new ClaudeResidentMessenger(deps), reads };
+  }
+
+  test("the reply is read from where the session's transcript moved", async () => {
+    const { messenger, reads } = movingHarness();
+    expect(await messenger.message(target, "what is 2+3?")).toEqual({ status: "replied", reply: "the answer is 5" });
+    expect(reads.at(-1)).toBe(worktree);
+  });
+
+  test("a transcript gone because the session itself is gone is still a failure", async () => {
+    const { messenger } = movingHarness({ vanishes: true });
+    await expect(messenger.message(target, "what is 2+3?")).rejects.toBeInstanceOf(NativeTranscriptUnavailableError);
   });
 });
