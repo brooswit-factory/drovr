@@ -134,7 +134,7 @@ describe("keepChannelSource", () => {
     const statuses: string[] = [];
     const waits: number[] = [];
     let attempt = 0;
-    let hooks: { onClose?: () => void; onError?: (e: Error) => void } = {};
+    let hooks: { onClose?: (() => void) | undefined; onError?: ((e: Error) => void) | undefined } = {};
     let settled!: () => void;
     const done = new Promise<void>((resolve) => { settled = resolve; });
     const keeper = keepChannelSource({
