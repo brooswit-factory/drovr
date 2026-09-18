@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.11.0
+
+The first vendor-agnostic slice: an agy agent (usrr's) gets its MCP servers and
+live Rocket.Chat messages, the way a Claude agent already does.
+
+- **agy gets its MCP servers, not only permission to use them.** An
+  `McpServerAccess` can carry a `definition`, parsed from a `.mcp.json` by
+  `mcpServersFromMcpJson`. For agy, `applyMcpAccess` writes each defined
+  server into `<home>/.gemini/config/mcp_config.json` in agy's own format,
+  measured with `agy mcp add` on 1.2.6: `{serverUrl, headers, disabled}` for
+  http and `{command, args, env, disabled}` for stdio. Servers it doesn't name
+  and other keys are kept. A server it names is replaced whole: the
+  declaration is authoritative for it. A `type` other than http or stdio
+  (e.g. `sse`) is refused at parse time. Servers dropped from a declaration
+  are not removed yet.
+- **Inbox relay for vendors without live channels.**
+  - `connectChannelSource` / `keepChannelSource` connect to a thatch server
+    (rocketr) as an MCP client and receive every `notifications/claude/channel`
+    frame. `keepChannelSource` reconnects with capped backoff on close,
+    transport error or failed connect.
+  - `InboxRelay` delivers one message at a time, in order. A busy answer is
+    retried; a message is dropped, and reported, when the host rejects it,
+    after `maxAttempts` failures, or past `maxQueue`. Delivery is
+    at-least-once, and the queue lives in memory.
+  - `usrrDeliver` posts each message to usrr's `/v1/message` socket API, where
+    `accepted` is the delivery proof.
+  - `renderInboxTurn` neutralises any `<channel` / `</channel` in the body, so a
+    sender can't close the frame early, and puts the external-data notice
+    first.
+  - Proven live: a real rocketr mention was received and rendered as a
+    `<channel>` turn.
+  - New dependency: `@modelcontextprotocol/sdk` ^1.30.0, the same version
+    thatch and rocketr use.
+
+Release asset: `brooswit-drovr-0.11.0.tgz`.
+
 ## 0.10.3
 
 - `hostResident` reports a resident ready only when herdr names its session,
