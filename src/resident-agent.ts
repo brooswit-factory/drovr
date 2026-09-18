@@ -128,6 +128,21 @@ function userText(record: any): string | undefined {
 }
 
 /**
+ * Measured on rocketr's resident (session 517fd13a, 2026-09-18): Claude Code
+ * records a long bracketed paste not as the pasted text but wrapped whole, as
+ * `\n\n<pasted_content id="a3f4">\n…\n</pasted_content id="a3f4">\n`. A
+ * delivered message is the record's text, or exactly one such block around it
+ * and nothing else, so a turn that merely quotes a paste never counts.
+ */
+const PASTED_CONTENT = /^\s*<pasted_content id="([^"]+)">\n([\s\S]*)\n<\/pasted_content(?: id="\1")?>\s*$/;
+
+function deliveredText(record: any): string | undefined {
+  const text = userText(record);
+  if (text === undefined) return undefined;
+  return PASTED_CONTENT.exec(text)?.[2] ?? text;
+}
+
+/**
  * Claude Code has no machine API for a running background session: `claude -p --resume <id>`
  * refuses while it runs and `--fork-session` is a different session. Its documented
  * `claude attach` terminal is the only path to the same process, so delivery is typed there
@@ -215,7 +230,7 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
         const tail = await read(offset);
         offset = tail.offset;
         seen.push(...records(tail.text));
-        const index = seen.findIndex(record => record?.sessionId === target.sessionId && userText(record) === message);
+        const index = seen.findIndex(record => record?.sessionId === target.sessionId && deliveredText(record) === message);
         if (index >= 0) after = seen.slice(index + 1);
         else if (deps.now() > deliveredBy) {
           throw new ResidentMessageRefusal("delivery-unconfirmed",

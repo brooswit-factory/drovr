@@ -76,6 +76,25 @@ describe("resident agent messaging", () => {
     expect(await messenger.message(target, "hello", { replyTimeoutMs: 1_000 })).toEqual({ status: "reply-pending", reply: "started" });
   });
 
+  test("a long paste Claude records inside a pasted_content block is delivered", async () => {
+    // The record shape measured on rocketr's resident, session 517fd13a.
+    const message = Array.from({ length: 12 }, (_, i) => `${i + 1}. Relayed via bakr: line ${i + 1} of a long operator message.`).join("\n");
+    const wrapped = `\n\n<pasted_content id="a3f4">\n${message}\n</pasted_content id="a3f4">\n`;
+    const { messenger } = harness({ onEnter: () => [user(wrapped), assistant("ack") + turnEnd] });
+    expect(await messenger.message(target, message)).toEqual({ status: "replied", reply: "ack" });
+  });
+
+  test("a pasted_content block holding other text, or text around one, is not delivery", async () => {
+    for (const recorded of [
+      `\n\n<pasted_content id="a3f4">\nsomeone else's text\n</pasted_content id="a3f4">\n`,
+      `quoting: <pasted_content id="a3f4">\nhello\n</pasted_content id="a3f4">`,
+      `\n\n<pasted_content id="a3f4">\nhello\n</pasted_content id="b5c6">\n`,
+    ]) {
+      const { messenger } = harness({ onEnter: () => [user(recorded)] });
+      await expect(messenger.message(target, "hello")).rejects.toMatchObject({ reason: "delivery-unconfirmed" });
+    }
+  });
+
   test("refuses unconfirmed delivery instead of claiming it", async () => {
     const { messenger, events } = harness({ onEnter: () => [user("someone else's text")] });
     const error = await messenger.message(target, "hello").catch(e => e);
