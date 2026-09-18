@@ -22,11 +22,19 @@ export class NativeTranscriptUnavailableError extends Error {
 /** Extract model output only: a user prompt containing an ACK token is not an ACK. */
 export function nativeTranscriptReply(provider: NativeTranscriptOptions["provider"], text: string): string | undefined {
   let reply: string | undefined;
+  // AGY writes in completion order, so its latest reply is the highest step, not the last line.
+  let replyStep = -1;
   for (const line of text.split("\n").filter(Boolean)) {
     let record: any;
     try { record = JSON.parse(line); } catch { fail("invalid transcript JSON record"); }
     if (provider === "agy") {
-      if (record?.type === "PLANNER_RESPONSE" && record.source === "MODEL" && record.status === "DONE" && typeof record.content === "string") reply = record.content;
+      // A record without an index keeps the last-line order it always had.
+      const step = typeof record?.step_index === "number" ? record.step_index : replyStep;
+      if (record?.type === "PLANNER_RESPONSE" && record.source === "MODEL" && record.status === "DONE" && typeof record.content === "string"
+        && step >= replyStep) {
+        reply = record.content;
+        replyStep = step;
+      }
       continue;
     }
     const message = provider === "claude"
@@ -140,18 +148,31 @@ async function findCodex(root: string, id: string, cwd: string): Promise<string>
   return found;
 }
 
+/**
+ * AGY 1.2.5 writes its full transcript in completion order, not step order,
+ * measured across this host's own transcripts: a tool result is written
+ * before the planner step that called it (steps 0, 2, 1, 3), an interrupted
+ * turn's index is reused by the next user input (52, 52), some steps are
+ * never written at all (94 and 106 absent before a user input, in a
+ * conversation that carried on normally; another begins at step 1), and a
+ * planner step that only calls tools carries `tool_calls` and no `content`.
+ * So step indices prove nothing about completeness. What does is AGY's own
+ * signal: a partial final record, or `truncated_fields` on any record.
+ */
 function validateAgy(text: string): string {
   if (!text.endsWith("\n")) fail("AGY transcript has a partial final record");
-  let index = 0;
+  let records = 0;
   for (const line of text.split("\n").filter(Boolean)) {
     let record: Record<string, unknown>;
     try { record = JSON.parse(line); } catch { fail("invalid AGY transcript JSON"); }
-    if (!record || typeof record !== "object" || record.step_index !== index++
+    const step = record?.step_index;
+    if (!record || typeof record !== "object" || typeof step !== "number" || !Number.isSafeInteger(step) || step < 0
       || typeof record.type !== "string" || typeof record.source !== "string"
-      || typeof record.content !== "string") fail("AGY transcript is incomplete or has an unsupported record");
+      || (record.content !== undefined && typeof record.content !== "string")) fail("AGY transcript has an unsupported record");
     if (Array.isArray(record.truncated_fields) && record.truncated_fields.length) fail("AGY transcript has truncated fields; full history is required");
+    records++;
   }
-  if (!index) fail("AGY transcript is empty");
+  if (!records) fail("AGY transcript is empty");
   return text;
 }
 
@@ -162,7 +183,52 @@ export interface ClaudeTranscriptTail {
   text: string;
 }
 
-/** Incremental read of a live Claude transcript, which may exceed the whole-file limit. */
+/** Where each moved session's transcript was last found: a hint, re-proven on every read. */
+const movedTranscripts = new Map<string, string>();
+
+/**
+ * Find a session's transcript in whichever project folder holds it. A session
+ * that enters a git worktree has its whole transcript carried to the
+ * worktree's project folder, measured live: nothing is left under the launch
+ * directory's. The file name is the session's UUID, so a match is that
+ * session and no other; two matches are refused, never chosen between.
+ */
+async function findClaudeTranscript(projects: string, name: string): Promise<FileHandle | undefined> {
+  const hinted = movedTranscripts.get(name);
+  if (hinted) {
+    try { return await openSafe(join(projects, hinted, name)); }
+    catch (error) { if (!(error instanceof NativeTranscriptUnavailableError)) throw error; movedTranscripts.delete(name); }
+  }
+  let root: FileHandle;
+  try { root = await openSafe(projects, true); }
+  catch (error) { if (error instanceof NativeTranscriptUnavailableError) return undefined; throw error; }
+  const found: string[] = [];
+  let entries = 0;
+  try {
+    for await (const entry of await opendir(`/proc/self/fd/${root.fd}`)) {
+      if (++entries > MAX_ENTRIES) fail("Claude project search entry limit exceeded");
+      if (!entry.isDirectory()) continue;
+      try {
+        await (await openSafe(join(projects, entry.name, name))).close();
+        found.push(entry.name);
+      } catch {
+        // Absent here, or a folder this user cannot read: either way not this session's.
+      }
+    }
+  } finally {
+    await root.close();
+  }
+  if (found.length > 1) fail("multiple Claude project folders hold this session's transcript");
+  if (!found[0]) return undefined;
+  movedTranscripts.set(name, found[0]);
+  return openSafe(join(projects, found[0], name));
+}
+
+/**
+ * Incremental read of a live Claude transcript, which may exceed the
+ * whole-file limit. `cwd` is where to look first; a session that has since
+ * moved is found by its session ID wherever its transcript now lives.
+ */
 export async function readClaudeTranscriptTail(
   options: { sessionId: string; cwd: string; home?: string }, offset: number,
 ): Promise<ClaudeTranscriptTail> {
@@ -171,14 +237,21 @@ export async function readClaudeTranscriptTail(
   if (!Number.isSafeInteger(offset) || offset < 0) fail("invalid transcript offset");
   const home = options.home ?? homedir();
   if (!isAbsolute(home) || home.includes("\0") || home.split("/").includes("..")) fail("home must be absolute without parent traversal");
+  const projects = join(home, ".claude", "projects");
+  const name = `${options.sessionId}.jsonl`;
   const project = resolve(options.cwd).replace(/[^a-zA-Z0-9]/g, "-");
   let file: FileHandle;
   try {
-    file = await openSafe(join(home, ".claude", "projects", project, `${options.sessionId}.jsonl`));
+    file = await openSafe(join(projects, project, name));
   } catch (error) {
+    if (!(error instanceof NativeTranscriptUnavailableError)) throw error;
+    const moved = await findClaudeTranscript(projects, name);
     // A running session that has never been prompted has not written its transcript yet.
-    if (offset === 0 && error instanceof NativeTranscriptUnavailableError) return { offset: 0, text: "" };
-    throw error;
+    if (!moved) {
+      if (offset === 0) return { offset: 0, text: "" };
+      throw error;
+    }
+    file = moved;
   }
   try {
     const stat = await file.stat();

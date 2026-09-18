@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { results } from "@brooswit/herdr-sdk";
-import { buildAgentStartParams, type ManagedAgentLaunch, type ManagedAgentProvider } from "./agent-runtime.js";
+import { buildAgentStartParams, mergeDevelopmentChannels, type ManagedAgentLaunch, type ManagedAgentProvider } from "./agent-runtime.js";
 import { startManagedAgent, type AgentStartOptions } from "./agent-start.js";
 import { HANDOFF_ACK, ManagedConversationSession } from "./conversation-session.js";
 import type { DrovrClient } from "./drovr-client.js";
@@ -41,6 +41,22 @@ export interface ManagedHerdrStartRequest {
     home?: string;
   }>;
   kickoff: (provider: ManagedAgentProvider) => string;
+  /**
+   * Provider-neutral MCP configuration file path. Supplied once per request and
+   * applied to whichever provider wins selection; overrides the prepared launch.
+   */
+  mcpConfigPath?: string;
+  /**
+   * Provider-neutral development channel names. These are merged with whatever
+   * the prepared launch already configures, so a request adds its channels
+   * without dropping the launch's own. An empty list adds nothing.
+   */
+  developmentChannels?: readonly string[];
+  /**
+   * MCP servers whose notifications must reach the worker. Merged the same way;
+   * Drovr, not the caller, knows how a provider names the resulting channel.
+   */
+  mcpNotificationServers?: readonly string[];
 }
 
 export type ManagedHerdrResult = ProviderFallbackResult<string> | {
@@ -50,6 +66,24 @@ export type ManagedHerdrResult = ProviderFallbackResult<string> | {
 };
 
 class HandoffBlocked extends Error {}
+
+/**
+ * Apply the request's provider-neutral launch inputs to whatever the caller
+ * prepared. Drovr owns the translation to provider flags, so callers never
+ * spell a provider's CLI. One MCP configuration path replaces another because
+ * a launch reads exactly one file; development channels merge, because a
+ * request naming one channel must not silently drop a launch's others.
+ */
+function applyNeutralLaunchInputs(launch: ManagedAgentLaunch, request: ManagedHerdrStartRequest): ManagedAgentLaunch {
+  const developmentChannels = mergeDevelopmentChannels(launch.developmentChannels, request.developmentChannels);
+  const mcpNotificationServers = mergeDevelopmentChannels(launch.mcpNotificationServers, request.mcpNotificationServers);
+  return {
+    ...launch,
+    ...(request.mcpConfigPath === undefined ? {} : { mcpConfigPath: request.mcpConfigPath }),
+    ...(developmentChannels.length ? { developmentChannels } : {}),
+    ...(mcpNotificationServers.length ? { mcpNotificationServers } : {}),
+  };
+}
 
 const clientQueues = new WeakMap<DrovrClient, Map<string, Promise<unknown>>>();
 
@@ -137,6 +171,7 @@ export class ManagedHerdrLifecycle {
             }
             const prepared = await request.prepare(account.provider);
             if (prepared.launch.provider !== account.provider || prepared.launch.cwd !== this.options.cwd) throw new Error("Launch does not match selected provider and workspace");
+            const launch = applyNeutralLaunchInputs(prepared.launch, request);
             const created = await this.options.client.workspace.create({ label: request.label, cwd: this.options.cwd, ...(prepared.env ? { env: prepared.env } : {}) });
             const root = created.root_pane;
             const paneId = typeof root === "string" ? root : root?.pane_id;
@@ -158,7 +193,7 @@ export class ManagedHerdrLifecycle {
                       // Herdr 0.8.2 rejects literal newlines in launch argv.
                       // Transcript data is already JSON-escaped by the session;
                       // only the surrounding instruction separators change.
-                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...prepared.launch, paneId, prompt: importPrompt.replaceAll("\n", " ") }), this.options.startOptions);
+                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...launch, paneId, prompt: importPrompt.replaceAll("\n", " ") }), this.options.startOptions);
                     }
                     const response = await this.awaitAcknowledgement(target, token);
                     return { conversationId: paneId, response: response.replace(token, HANDOFF_ACK) };
@@ -176,7 +211,7 @@ export class ManagedHerdrLifecycle {
                 await this.options.client.pane.close(old.paneId);
                 await this.options.client.agent.prompt({ target: paneId, text: request.kickoff(account.provider) });
               } else {
-                await startManagedAgent(this.options.client, buildAgentStartParams({ ...prepared.launch, paneId, prompt: request.kickoff(account.provider) }), this.options.startOptions);
+                await startManagedAgent(this.options.client, buildAgentStartParams({ ...launch, paneId, prompt: request.kickoff(account.provider) }), this.options.startOptions);
                 this.active = target;
                 committed = true;
               }

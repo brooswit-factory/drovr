@@ -1,5 +1,6 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
-import { readClaudeTranscriptTail, type ClaudeTranscriptTail } from "./native-transcript.js";
+import { classifyBlockingText, runPlainClaude } from "./blocking-conditions.js";
+import { NativeTranscriptUnavailableError, readClaudeTranscriptTail, type ClaudeTranscriptTail } from "./native-transcript.js";
 
 /** A long-lived agent session that is already running; the host never names provider mechanics. */
 export interface ResidentAgentTarget {
@@ -21,7 +22,7 @@ export type ResidentMessageResult =
   | { status: "reply-pending"; reply: string };
 
 export type ResidentMessageRefusalReason =
-  | "unsupported-provider" | "invalid-message" | "not-running" | "busy" | "delivery-unconfirmed";
+  | "unsupported-provider" | "invalid-message" | "not-running" | "busy" | "blocked" | "delivery-unconfirmed";
 
 /** Nothing here ever falls back to a new, resumed, or forked session. */
 export class ResidentMessageRefusal extends Error {
@@ -52,6 +53,8 @@ export interface ResidentTerminal {
 export interface ClaudeResidentDeps {
   listBackground(): Promise<ClaudeBackgroundListing[]>;
   openAttach(shortId: string, cwd: string): ResidentTerminal;
+  /** The session's current screen (`claude logs`), read only when its listing reports no status. */
+  readScreen(shortId: string): Promise<string>;
   readTail(target: ResidentAgentTarget, offset: number): Promise<ClaudeTranscriptTail>;
   now(): number;
   sleep(ms: number): Promise<void>;
@@ -138,6 +141,7 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
     this.deps = {
       listBackground: listClaudeBackgroundSessions,
       openAttach: openClaudeAttach,
+      readScreen: async shortId => (await runPlainClaude(["logs", shortId])).stdout,
       readTail: (target, offset) => readClaudeTranscriptTail({ sessionId: target.sessionId, cwd: target.cwd }, offset),
       now: Date.now,
       sleep: ms => Bun.sleep(ms),
@@ -158,14 +162,35 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
     if (target.provider !== "claude") throw new ResidentMessageRefusal("unsupported-provider", "This messenger only serves Claude residents");
     const message = validMessage(text);
     const { deps } = this;
-    const listed = (await deps.listBackground()).filter(entry => entry.sessionId === target.sessionId);
-    const live = listed.find(entry => entry.cwd === target.cwd);
+    // The session ID is a UUID, so it alone names the session. The listing's
+    // cwd is where the session is now: a resident that entered a worktree is
+    // listed there, and the host's launch directory is no longer its own.
+    const live = (await deps.listBackground()).find(entry => entry.sessionId === target.sessionId);
     // Attaching an absent job wakes it, so absence is refused rather than attached.
-    if (!live) throw new ResidentMessageRefusal("not-running", "The resident's exact session is not a running background session in its directory");
-    if (live.status !== "idle") throw new ResidentMessageRefusal("busy", "The resident is mid-turn; typed input would queue behind unknown work");
+    if (!live) throw new ResidentMessageRefusal("not-running", "The resident's exact session is not a running background session");
+    if (live.status === undefined) {
+      // Measured: a never-prompted session lists with no status at all, and so
+      // does one stuck on a startup prompt, where a typed Enter would answer it.
+      // Only the screen tells them apart.
+      const blocking = classifyBlockingText("claude", await deps.readScreen(live.id));
+      if (blocking) throw new ResidentMessageRefusal("blocked", `The resident is stopped on a prompt, not idle: ${blocking.detail}`);
+    } else if (live.status !== "idle") {
+      throw new ResidentMessageRefusal("busy", "The resident is mid-turn; typed input would queue behind unknown work");
+    }
+    target = { ...target, cwd: live.cwd };
 
     let offset = (await deps.readTail(target, 0)).offset;
     for (let tail = await deps.readTail(target, offset); tail.offset !== offset; tail = await deps.readTail(target, offset)) offset = tail.offset;
+
+    // The session can change directory mid-turn (entering a git worktree is
+    // the observed case), and Claude Code then carries its transcript to the
+    // new directory's project folder. Reads follow it: see `readFollowing`.
+    let current = target;
+    const read = async (at: number): Promise<ClaudeTranscriptTail> => {
+      const followed = await this.readFollowing(current, at);
+      current = followed.target;
+      return followed.tail;
+    };
 
     const terminal = deps.openAttach(live.id, target.cwd);
     let exited = false;
@@ -187,7 +212,7 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
       const deliveredBy = deps.now() + deps.deliveryTimeoutMs;
       const seen: any[] = [];
       while (after === undefined) {
-        const tail = await deps.readTail(target, offset);
+        const tail = await read(offset);
         offset = tail.offset;
         seen.push(...records(tail.text));
         const index = seen.findIndex(record => record?.sessionId === target.sessionId && userText(record) === message);
@@ -211,9 +236,31 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
       if (turnEnd >= 0) return { status: "replied", reply };
       if (deps.now() > replyBy) return { status: "reply-pending", reply };
       await deps.sleep(deps.pollMs);
-      const tail = await deps.readTail(target, offset);
+      const tail = await read(offset);
       offset = tail.offset;
       after.push(...records(tail.text));
+    }
+  }
+
+  /**
+   * Reads the transcript where the session keeps it now. A missing transcript
+   * is re-checked against the listing: if the exact same session is listed
+   * under another cwd, it moved, and its transcript moved with it (Claude Code
+   * carries the file, history intact, to the new directory's project folder),
+   * so reading continues there from the same offset. Anything else — the
+   * session gone, or no move — is the original failure, never a guess at
+   * another session.
+   */
+  private async readFollowing(target: ResidentAgentTarget, offset: number): Promise<{ target: ResidentAgentTarget; tail: ClaudeTranscriptTail }> {
+    try {
+      return { target, tail: await this.deps.readTail(target, offset) };
+    } catch (error) {
+      if (!(error instanceof NativeTranscriptUnavailableError)) throw error;
+      const moved = (await this.deps.listBackground())
+        .find(entry => entry.sessionId === target.sessionId && entry.cwd !== target.cwd);
+      if (!moved) throw error;
+      const next = { ...target, cwd: moved.cwd };
+      return { target: next, tail: await this.deps.readTail(next, offset) };
     }
   }
 }

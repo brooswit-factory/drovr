@@ -1,6 +1,7 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
 import type { ProviderQuotaRefusal } from "./provider-fallback.js";
 import { detectSessionLimitRefusal } from "./session-limit.js";
+import { plainOutputEnv } from "./blocking-conditions.js";
 
 /** Confirmed native CLI quota refusal, never inferred from arbitrary failures. */
 export class ManagedConversationQuotaError extends Error {
@@ -19,16 +20,48 @@ export interface ManagedConversationResult {
   response: string;
 }
 
+/**
+ * AGY headless answers a turn whose tool calls were all denied with
+ * `status: "SUCCESS"`, an EMPTY `response`, and the denials listed in
+ * `denied_actions` — measured shape `{action: "mcp", display_name:
+ * "CallMcpTool"}`. Parsed as a plain result, that is an assistant turn that
+ * said nothing, and a host persists it as one; the actual cause (no
+ * `permissions.allow` entry for the server) is invisible and every symptom
+ * points at MCP configuration instead. Refusing it here turns that whole
+ * class into one line of diagnosis.
+ */
+export class AgyDeniedActionsError extends Error {
+  readonly provider = "agy" as const;
+  /** The vendor's own display names, in the order AGY reported them. */
+  readonly deniedActions: readonly string[];
+
+  constructor(deniedActions: readonly string[]) {
+    super(`AGY denied every action in this turn and returned an empty response: ${deniedActions.join(", ")}`);
+    this.name = "AgyDeniedActionsError";
+    this.deniedActions = [...deniedActions];
+  }
+}
+
+/** The display names AGY reported as denied, or [] when it reported none. */
+function deniedActions(value: Record<string, unknown>): string[] {
+  const denied = value.denied_actions;
+  if (!Array.isArray(denied)) return [];
+  return denied.map((entry, index) => {
+    const name = record(entry) ? entry.display_name ?? entry.action : undefined;
+    return typeof name === "string" && name.length > 0 ? name : `denied action ${index + 1}`;
+  });
+}
+
 export type RunProcess = (argv: readonly string[], cwd: string) => Promise<{
   exitCode: number;
   stdout: string;
   stderr: string;
 }>;
 
-/** Direct CLI transport; stdin is closed and both output streams are drained. */
+/** Direct CLI transport; stdin is closed, both output streams are drained, and output is never coloured for parsing. */
 export const runConversationProcess: RunProcess = async (argv, cwd) => {
   try {
-    const child = Bun.spawn([...argv], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const child = Bun.spawn([...argv], { cwd, env: plainOutputEnv(), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
@@ -66,6 +99,10 @@ function parseAgy(stdout: string): ManagedConversationResult {
   if (!record(value) || value.status !== "SUCCESS" || !validId(value.conversation_id) || typeof value.response !== "string") {
     throw new Error("AGY returned an unsuccessful or incomplete conversation result");
   }
+  // A SUCCESS that both said nothing and denied something is the denial, not a
+  // turn. A denial alongside real output is left to the caller's own reading.
+  const denied = deniedActions(value);
+  if (denied.length > 0 && value.response.trim().length === 0) throw new AgyDeniedActionsError(denied);
   return { conversationId: value.conversation_id, response: value.response };
 }
 

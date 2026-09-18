@@ -18,6 +18,14 @@ export {
   type ClaudeBackgroundListing,
   type ClaudeResidentDeps,
 } from "./resident-agent.js";
+export {
+  deliverToResident,
+  type ChannelAck,
+  type ChannelProof,
+  type ResidentDelivery,
+  type ResidentDeliveryDeps,
+  type ResidentDeliveryOptions,
+} from "./resident-delivery.js";
 export { ManagedConversationSession, HANDOFF_ACK, HANDOFF_CHUNK_CHARS, type ConversationIdentity, type ConversationSessionOptions } from "./conversation-session.js";
 export { providerSetupSeed, applyProviderSetupSeed, type ProviderSetupFile } from "./provider-setup.js";
 
@@ -45,6 +53,7 @@ export { startManagedAgent, AgentShellReadinessError, type AgentStartOptions, ty
 export {
   ManagedConversationRunner,
   ManagedConversationQuotaError,
+  AgyDeniedActionsError,
   runConversationProcess,
   type ManagedConversationRunnerOptions,
   type ManagedConversationResult,
@@ -52,12 +61,39 @@ export {
 } from "./managed-conversation.js";
 export { prepareManagedAgentWorkspace, type ManagedAgentWorkspace } from "./managed-workspace.js";
 export {
+  mcpAccessProvisioning,
+  notificationSupport,
+  applyMcpAccess,
+  setMcpAccess,
+  switchProviderMcpAccess,
+  awaitIdentityRelease,
+  IdentityStillHeldError,
+  realMcpSettingsIo,
+  type McpServerAccess,
+  type McpAccessDeclaration,
+  type McpRuntime,
+  type McpRestartKind,
+  type NotificationSupport,
+  type RunningMcpAccess,
+  type McpAccessProvisioning,
+  type McpAccessApplied,
+  type McpAccessChange,
+  type McpSettingsEdit,
+  type McpSettingsIo,
+  type McpRestartDeps,
+  type IdentityReleaseOptions,
+} from "./mcp-access.js";
+export {
   buildAgentStartParams,
+  buildProviderLaunchArgs,
+  developmentChannelsOf,
+  mergeDevelopmentChannels,
   managedAgentProviderOfProcess,
   checkManagedAgentArgv,
   parseCodexMcpInventory,
   inventoryCodexMcpServers,
   type ManagedAgentProvider,
+  type ProviderLaunchInputs,
   type ManagedAgentProcess,
   type ManagedAgentArgvCheck,
   type ManagedAgentLaunch,
@@ -96,3 +132,34 @@ export {
 // and the SDK's own generated/typed-escape-hatch types.
 export * from "@brooswit/herdr-sdk";
 export { prepareAgyHome, type AgyStdioServer } from "./agy-home.js";
+export {
+  launchBackgroundSession,
+  buildBackgroundLaunchArgv,
+  parseBackgroundLaunchId,
+  type BackgroundLaunchRequest,
+  type BackgroundLaunchResult,
+  type BackgroundLaunchRefusal,
+  type BackgroundLaunchDeps,
+} from "./background-launch.js";
+export {
+  classifyBlockingText,
+  classifyClaudeTranscriptRecord,
+  probeClaudeDaemon,
+  daemonBlockingCondition,
+  claudeLoggedIn,
+  plainOutputEnv,
+  stripTerminalEscapes,
+  type BlockingCondition,
+  type BlockingConditionKind,
+  type ClaudeDaemonState,
+  type ClaudeDaemonProbeDeps,
+} from "./blocking-conditions.js";
+export {
+  startClaudeLogin,
+  parseClaudeLoginUrl,
+  type ClaudeLoginSession,
+  type ClaudeLoginResult,
+  type ClaudeLoginTerminal,
+  type ClaudeLoginDeps,
+  type StartClaudeLoginOptions,
+} from "./claude-login.js";

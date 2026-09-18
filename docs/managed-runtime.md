@@ -22,6 +22,46 @@ and close operations act only on an unambiguous resolution.
 Herdr's `agent.start` parameters. It does not select a provider or model and
 does not fall back after failure.
 
+MCP configuration and development channels are provider-neutral launch inputs.
+`mcpConfigPath` and `developmentChannels` are accepted for every provider;
+Drovr owns the translation. Claude receives `--mcp-config <path>` and, when at
+least one channel is named, `--dangerously-load-development-channels` followed
+by the requested channels; an empty list loads no channels and emits no flag.
+Codex and AGY accept the same inputs and spell neither flag, so no caller has
+to branch on Claude to configure a managed worker.
+
+`ManagedHerdrStartRequest` carries the same two fields, so a caller can state
+them once per request instead of inside a provider-specific `prepare` result.
+The two combine differently, because their shapes differ: a request's
+`mcpConfigPath` replaces the prepared one, since a launch reads exactly one
+file, while `developmentChannels` merge. A request naming `server:yappr` adds
+it to a launch that already configures `server:butchr` rather than dropping it;
+duplicates collapse and first-mention order is kept. An empty request list adds
+nothing and preserves what the launch configures. `mergeDevelopmentChannels`
+applies the same rule for callers combining channel lists of their own.
+
+`checkManagedAgentArgv` compares every configured channel against the live
+process, not just the first, so a worker that lost one channel reads as drifted.
+
+## Launching a provider CLI directly
+
+Not every caller goes through Herdr. A daemon that spawns `claude` itself still
+must not spell Claude's flags, so `buildProviderLaunchArgs(provider, inputs)`
+returns the arguments for one provider from the same neutral inputs and is the
+only place those flags are written. `ProviderLaunchInputs` takes an
+`mcpConfigPath`, `mcpNotificationServers` — the MCP servers whose notifications
+the session must receive — and `developmentChannels` for a caller that already
+holds spelled-out names. Drovr turns each notifying server into the channel
+Claude names it by (`server:<name>`) and merges it with the named channels, so a
+caller that knows only "this session talks to yappr" never learns that spelling.
+Codex and AGY take the same inputs and return no arguments.
+
+`ManagedAgentLaunch` and `ManagedHerdrStartRequest` carry
+`mcpNotificationServers` too, and the Herdr adapter builds its Claude arguments
+through the same function, so a managed launch and a direct one cannot drift
+apart. A server name must be a plain identifier (`[A-Za-z0-9_-]+`) or Drovr
+refuses it rather than emitting a token that will not round-trip.
+
 AGY launches inherit the pane's working directory and use external MCP
 configuration, which can connect a stdio-to-HTTP bridge. Drovr supplies no cwd
 or MCP CLI override. `AgyAgentLaunch.skipPermissions` defaults to false; only

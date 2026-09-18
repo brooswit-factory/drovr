@@ -21,8 +21,9 @@ The message always reaches the same running session or is refused with a
 | --- | --- |
 | `unsupported-provider` | No proven same-session transport exists for this provider |
 | `invalid-message` | Empty, over 16,000 characters, or contains controls other than newline/tab |
-| `not-running` | The exact session is not a running background session in `cwd` |
+| `not-running` | No running background session has this `sessionId`. `cwd` only says where to look first: a resident that moved into a worktree is reached, and its transcript read, wherever it now is |
 | `busy` | The session is mid-turn |
+| `blocked` | The session lists no status and its screen shows a startup prompt (such as MCP approval) that a typed Enter would answer |
 | `delivery-unconfirmed` | Typed, but the session's transcript never recorded it |
 
 `reply-pending` means delivery was proven but the turn had not ended before the
@@ -44,13 +45,18 @@ The only path into the same process is the documented interactive
 `claude attach <shortId>`. `ClaudeResidentMessenger`:
 
 1. Requires the exact `sessionId` in `claude agents --json` as a `background`
-   entry with the same `cwd` and `status: "idle"`. Attaching an absent job
-   wakes it, so absence is refused before any attach.
+   entry, and uses that entry's `cwd`, which is where the session is now.
+   Attaching an absent job wakes it, so absence is refused before any attach.
+   `status: "idle"` is sendable. No status at all (measured on a
+   never-prompted session) is sendable unless `claude logs` shows a blocking
+   prompt. Any other status is `busy`.
 2. Records the transcript end, opens `claude attach` in a PTY, waits for output
    to settle, sends the message as a bracketed paste, then Enter.
 3. Counts delivery only when a user record with exactly that text appears in
    `~/.claude/projects/<cwd>/<sessionId>.jsonl`, then detaches by stopping the
-   attach client. The background session keeps running.
+   attach client. The background session keeps running. A session that entered
+   a worktree has its transcript moved to that worktree's project folder, so
+   the file is found by `sessionId` in whichever project folder holds it.
 4. Reads assistant text blocks after that record, skipping sidechains, until
    `system` / `turn_duration` marks the end of the turn.
 
@@ -71,3 +77,38 @@ session's composer; attach to inspect it.
 Codex and AGY refuse with `unsupported-provider` until a same-session transport
 is proven for them. Their `ManagedConversationRunner` resume starts a separate
 CLI turn and is not a resident transport.
+
+## A channel acknowledgement is not delivery
+
+A notification channel that hands a frame to a live stream knows only that the
+stream took it. It does not know that the far side's bridge kept it, that the
+resident's session ever read it, or that any model was scheduled to look. An
+idle Claude session drains its bridge only when it chooses to call the tool,
+which an idle session never does — so a channel can answer `delivered: true`
+at the same moment the message is going nowhere. This was measured, not
+assumed: a report acknowledged as delivered never reached the idle session it
+was addressed to, and had to be re-sent through the attach transport.
+
+`deliverToResident` keeps that distinction. It sends over the caller's channel
+first, because a channel does not interrupt a session that is already
+listening, and then treats the acknowledgement as evidence rather than as an
+outcome:
+
+- `proves: "session"` — the channel proved the resident's own session recorded
+  it. That is delivery, and nothing is woken.
+- `proves: "stream"`, or no proof named at all — Drovr watches the resident's
+  own transcript for the message and, if it never appears within
+  `observationTimeoutMs`, wakes the resident through the proven attach
+  transport. An absent `proves` is read as the weaker claim; the stronger one
+  is never assumed.
+- `delivered: false` — straight to the wakeup path, with no waiting.
+
+The result says which path delivered (`channel-delivered`, `channel-observed`,
+`woken`), or `undelivered` with the transport's own refusal when neither did.
+A resident is never reported as having received something on the strength of a
+transport acknowledgement alone.
+
+The bias is deliberate: an unobserved message is re-delivered by waking, which
+can duplicate a message that was received but not witnessed in time. A human
+reading something twice is recoverable; a report silently dropped on the floor
+of an idle coordinator is not.
