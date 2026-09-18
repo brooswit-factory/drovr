@@ -260,8 +260,9 @@ export async function hostResident(
     if (request.resume !== undefined && missing) {
       return abandon("no-such-session", `claude has no transcript for session ${missing[1]} in ${request.cwd}`, excerptOf(screen));
     }
-    // Reported by bakr, 2026-09-18: claude refuses a resume from any directory
-    // but the conversation's own (a session that moved into a worktree, say).
+    // This text is in Claude's binary but has never been observed on a screen:
+    // claude 2.1.277 resumed from other directories without it. Named, not
+    // left to the unknown-prompt path, in case another version shows it.
     if (request.resume !== undefined && /This conversation is from a different directory/.test(screen)) {
       return abandon("wrong-directory", `session ${request.resume} belongs to another directory than ${request.cwd}; resume from the transcript's last recorded cwd`, excerptOf(screen));
     }

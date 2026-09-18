@@ -45,13 +45,13 @@ What Drovr owns so the host does not:
   `promptError` on a successful result; the resident is not closed for it.
 - **A resume with nothing to resume.** A session that never took a turn has no
   transcript; `claude --resume` prints "No conversation found" and exits.
-  That is `no-such-session` at once, not a timeout. A resume Claude refuses
-  because the conversation belongs to another directory ("This conversation
-  is from a different directory", reported by bakr for a session that moved
-  into a worktree) is `wrong-directory`; resume from the transcript's last
-  recorded cwd. Claude 2.1.277 resumed a proof session from an unrelated
-  sibling directory without refusing, so this refusal is matched on the
-  reported text and has not been reproduced here.
+  That is `no-such-session` at once, not a timeout. The text "This
+  conversation is from a different directory" is in Claude's binary, and a
+  screen showing it is `wrong-directory` rather than an unknown prompt. It
+  has never been observed on a screen: bakr inferred it for a session that
+  moved into a worktree, then withdrew the claim, and claude 2.1.277 resumed
+  a proof session from both a child and an unrelated sibling directory
+  without refusing.
 - **Two hosts racing for one label.** Both can pass the free-name check; herdr
   then refuses the second `agent.start` (`agent_name_taken`), and that host
   closes its own workspace. Proven live: exactly one pane holds the name.
