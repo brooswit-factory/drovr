@@ -307,6 +307,54 @@ describe("hostResident", () => {
   });
 });
 
+describe("readiness", () => {
+  // A scripted herdr: each read returns the next step of the sequence.
+  function scripted(steps: { ready: boolean; session?: string; screen: string }[]) {
+    let i = 0;
+    const keys: string[][] = [];
+    const current = () => steps[Math.min(i, steps.length - 1)]!;
+    const client = {
+      agent: {
+        list: async () => ({ type: "agent_list", agents: [] }) as never,
+        get: async () => ({ type: "agent_info", agent: {
+          pane_id: "w9:p1", workspace_id: "w9", agent_status: "idle", interactive_ready: current().ready,
+          ...(current().session ? { agent_session: { kind: "id", value: current().session } } : {}),
+        } }) as never,
+        read: async () => { const screen = current().screen; i++; return { type: "pane_read", read: { text: screen } } as never; },
+        sendKeys: async (p: { keys: string[] }) => { keys.push(p.keys); return { type: "ok" } as never; },
+        start: async () => ({ type: "agent_started" }) as never,
+        prompt: async () => ({ type: "agent_prompted" }) as never,
+      },
+      pane: { processInfo: async () => { throw new Error("unused"); }, read: async () => ({ type: "pane_read", read: { text: "" } }) as never },
+      workspace: {
+        create: async () => ({ type: "workspace_created", root_pane: { pane_id: "w9:p1" }, workspace: { workspace_id: "w9" } }) as never,
+        close: async () => ({ type: "ok" }) as never,
+        list: async () => ({ type: "workspace_list", workspaces: [] }) as never,
+      },
+    };
+    let time = 0;
+    const options = { now: () => time, wait: async (ms: number) => { time += ms; }, mintSessionId: () => "minted", readyTimeoutMs: 30_000, pollIntervalMs: 1_000, startOptions: { now: () => time, wait: async (ms: number) => { time += ms; } } };
+    return { client, keys, options, reads: () => i };
+  }
+
+  test("ready with no session is not ready: the dev-channels warning drawn next is still answered", async () => {
+    // Measured by bakr on lead-dynamic-atmosphere's move (pane wR:p1).
+    const f = scripted([
+      { ready: true, screen: IDLE_SCREEN },
+      { ready: false, screen: CHANNELS },
+      { ready: true, session: "sess-1", screen: IDLE_SCREEN },
+    ]);
+    expect(await hostResident(f.client, request, f.options)).toMatchObject({ ok: true, sessionId: "sess-1" });
+    expect(f.keys).toEqual([["enter"]]);
+  });
+
+  test("a session herdr never names is accepted after three clean ready reads", async () => {
+    const f = scripted([{ ready: true, screen: IDLE_SCREEN }]);
+    expect(await hostResident(f.client, request, f.options)).toMatchObject({ ok: true, sessionId: "minted" });
+    expect(f.reads()).toBe(3);
+  });
+});
+
 describe("listResidents and stopResident", () => {
   const agents: Agent[] = [
     { pane_id: "w1:p1", workspace_id: "w1", name: "lead-drovr", agent: "claude", agent_status: "working", cwd: "/a", agent_session: { kind: "id", value: "s1" } },

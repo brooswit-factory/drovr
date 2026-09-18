@@ -85,6 +85,8 @@ export type HostResidentResult =
 export interface ResidentHostOptions {
   readyTimeoutMs?: number;
   pollIntervalMs?: number;
+  /** Clean, ready reads in a row that count as ready when herdr never names the session. Default 3. */
+  cleanReadsWithoutSession?: number;
   /** Passed to herdr's agent.start; herdr requires 3000 < value <= 300000. */
   startTimeoutMs?: number;
   /** Bounds the wait for a new pane's shell; defaults to 10s. */
@@ -308,6 +310,12 @@ export async function hostResident(
   }
 
   const readyBy = now() + (options.readyTimeoutMs ?? 90_000);
+  // Found by bakr on lead-dynamic-atmosphere's move, 2026-09-18: herdr called
+  // the pane interactive_ready and idle before claude drew the
+  // development-channels warning, and before herdr knew the session. Ready
+  // therefore needs herdr to name the session, or, for a session herdr never
+  // names, a clean ready screen on several reads in a row.
+  let cleanReads = 0;
   for (;;) {
     const agent: AgentInfo | undefined = await client.agent.get(paneId).then((got) => got.agent, () => undefined);
     // Once the provider exits (a resume of a session with no transcript, for
@@ -316,8 +324,10 @@ export async function hostResident(
       .catch(() => client.pane.read({ pane_id: paneId, source: "recent", strip_ansi: true }))
       .then((read) => read.read.text, () => "");
     const prompt = classifyStartupPrompt(screen);
-    if (prompt === undefined && agent?.interactive_ready && agent.agent_status !== "blocked" && agent.agent_status !== "unknown") {
-      const listed = agent.agent_session?.kind === "id" ? agent.agent_session.value : undefined;
+    const clean = prompt === undefined && agent?.interactive_ready === true && agent.agent_status !== "blocked" && agent.agent_status !== "unknown";
+    cleanReads = clean ? cleanReads + 1 : 0;
+    const listed = agent?.agent_session?.kind === "id" ? agent.agent_session.value : undefined;
+    if (clean && (listed !== undefined || cleanReads >= (options.cleanReadsWithoutSession ?? 3))) {
       const hosted = { ok: true as const, paneId, workspaceId, sessionId: listed ?? minted };
       if (request.prompt === undefined) return hosted;
       // The resident is up either way; a refused first turn is reported, never a reason to close it.
