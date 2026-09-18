@@ -6,6 +6,7 @@ import {
   applyMcpAccess,
   awaitIdentityRelease,
   mcpAccessProvisioning,
+  mcpServersFromMcpJson,
   notificationSupport,
   setMcpAccess,
   switchProviderMcpAccess,
@@ -47,6 +48,44 @@ describe("one declaration, each vendor's own dialect", () => {
     await applyMcpAccess("agy", YAPPR, f.io);
     expect(f.json("/home/brooswit/.gemini/antigravity-cli/settings.json"))
       .toEqual({ permissions: { allow: ["mcp(yappr/*)"] } });
+  });
+
+  test("agy gets the servers themselves too, in the format agy 1.2.6 writes, keeping the servers it already has", async () => {
+    // usrr's own .mcp.json shape: rocketr over http with account headers, yappr over stdio with env.
+    const definitions = mcpServersFromMcpJson({ mcpServers: {
+      rocketr: { type: "http", url: "http://127.0.0.1:8790/mcp", headers: { "x-rocketr-account": "usrr-kchb-thinkpad", "x-rocketr-channel": "on" } },
+      yappr: { type: "stdio", command: "/home/brooswit/.bun/bin/bun", args: ["run", "/x/yappr.ts"], env: { YAPPR_AGENT: "usrr-kchb-thinkpad" } },
+    } });
+    const config = "/home/brooswit/.gemini/config/mcp_config.json";
+    const f = files({ [config]: JSON.stringify({ mcpServers: { other: { command: "keep-me" } }, extra: 1 }) });
+    const applied = await applyMcpAccess("agy", {
+      cwd: "/home/brooswit/code/brooswit-factory/usrr",
+      home: "/home/brooswit",
+      servers: [{ name: "rocketr", definition: definitions.rocketr! }, { name: "yappr", definition: definitions.yappr! }],
+    }, f.io);
+    expect(applied.written).toEqual([config, "/home/brooswit/.gemini/antigravity-cli/settings.json"]);
+    // Exactly what `agy mcp add` wrote for the same two servers (measured 2026-09-18).
+    expect(f.json(config)).toEqual({
+      extra: 1,
+      mcpServers: {
+        other: { command: "keep-me" },
+        rocketr: { disabled: false, headers: { "x-rocketr-account": "usrr-kchb-thinkpad", "x-rocketr-channel": "on" }, serverUrl: "http://127.0.0.1:8790/mcp" },
+        yappr: { args: ["run", "/x/yappr.ts"], command: "/home/brooswit/.bun/bin/bun", disabled: false, env: { YAPPR_AGENT: "usrr-kchb-thinkpad" } },
+      },
+    });
+    expect(f.json("/home/brooswit/.gemini/antigravity-cli/settings.json")).toEqual({ permissions: { allow: ["mcp(rocketr/*)", "mcp(yappr/*)"] } });
+  });
+
+  test("a .mcp.json entry with neither a url nor a command is refused, not guessed at", () => {
+    expect(() => mcpServersFromMcpJson({ mcpServers: { odd: { type: "ws" } } })).toThrow("neither a url nor a command");
+    expect(() => mcpServersFromMcpJson({})).toThrow("no mcpServers");
+    expect(() => mcpServersFromMcpJson({ mcpServers: { x: { url: "http://h", headers: { a: 1 } } } })).toThrow("x.headers");
+  });
+
+  test("a declaration without definitions leaves agy's server file alone", async () => {
+    const f = files();
+    const applied = await applyMcpAccess("agy", YAPPR, f.io);
+    expect(applied.written).toEqual(["/home/brooswit/.gemini/antigravity-cli/settings.json"]);
   });
 
   test("naming tools narrows agy's permission to exactly those tools", async () => {

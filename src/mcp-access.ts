@@ -26,6 +26,74 @@ export interface McpServerAccess {
   tools?: readonly string[];
   /** Whether the agent should receive this server's notifications. */
   notifications?: boolean;
+  /**
+   * How to reach the server, for vendors that keep server definitions in a
+   * file of their own (AGY). Omitted, only access is provisioned and the
+   * vendor's existing definition is left as it is.
+   */
+  definition?: McpServerDefinition;
+}
+
+/** A server definition as `.mcp.json` states it, in no vendor's dialect. */
+export type McpServerDefinition =
+  | { type: "http"; url: string; headers?: Readonly<Record<string, string>> }
+  | { type: "stdio"; command: string; args?: readonly string[]; env?: Readonly<Record<string, string>> };
+
+const stringRecord = (value: unknown, what: string): Record<string, string> | undefined => {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.values(value).some((v) => typeof v !== "string")) {
+    throw new Error(`${what} must map names to strings`);
+  }
+  return value as Record<string, string>;
+};
+
+/**
+ * The servers a `.mcp.json` defines, in the neutral shape above. An entry with
+ * a `url` is http (also when it says `"type": "http"` or `"sse"`); one with a
+ * `command` is stdio. Anything else is refused rather than guessed at.
+ */
+export function mcpServersFromMcpJson(json: unknown): Record<string, McpServerDefinition> {
+  const servers = (json as { mcpServers?: unknown } | undefined)?.mcpServers;
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) throw new Error(".mcp.json has no mcpServers object");
+  const out: Record<string, McpServerDefinition> = {};
+  for (const [name, raw] of Object.entries(servers as Record<string, unknown>)) {
+    safeName(name);
+    const entry = raw as { url?: unknown; command?: unknown; args?: unknown; headers?: unknown; env?: unknown };
+    if (typeof entry?.url === "string") {
+      const headers = stringRecord(entry.headers, `${name}.headers`);
+      out[name] = headers === undefined ? { type: "http", url: entry.url } : { type: "http", url: entry.url, headers };
+    } else if (typeof entry?.command === "string") {
+      if (entry.args !== undefined && (!Array.isArray(entry.args) || entry.args.some((arg) => typeof arg !== "string"))) {
+        throw new Error(`${name}.args must be a list of strings`);
+      }
+      const stdio: { type: "stdio"; command: string; args?: readonly string[]; env?: Readonly<Record<string, string>> } = { type: "stdio", command: entry.command };
+      if (entry.args !== undefined) stdio.args = entry.args as string[];
+      const env = stringRecord(entry.env, `${name}.env`);
+      if (env !== undefined) stdio.env = env;
+      out[name] = stdio;
+    } else {
+      throw new Error(`MCP server ${name} has neither a url nor a command`);
+    }
+  }
+  return out;
+}
+
+/**
+ * One server in AGY's own `mcp_config.json` dialect. Measured with
+ * `agy mcp add` on agy 1.2.6 (2026-09-18): an http server is
+ * `{serverUrl, headers, disabled}`, not `url`; a stdio server is
+ * `{command, args, env, disabled}`.
+ */
+export function agyMcpServerEntry(definition: McpServerDefinition): Record<string, unknown> {
+  if (definition.type === "http") {
+    return { disabled: false, ...(definition.headers ? { headers: { ...definition.headers } } : {}), serverUrl: definition.url };
+  }
+  return {
+    ...(definition.args ? { args: [...definition.args] } : {}),
+    command: definition.command,
+    disabled: false,
+    ...(definition.env ? { env: { ...definition.env } } : {}),
+  };
 }
 
 export interface McpAccessDeclaration {
@@ -180,11 +248,27 @@ export function mcpAccessProvisioning(
     // Measured: without this, headless AGY auto-denies every MCP call and still
     // answers SUCCESS with an empty response (see AgyDeniedActionsError).
     const allow = declaration.servers.flatMap(agyPermissions);
+    const home = declaration.home ?? homedir();
+    const defined = declaration.servers.filter((server) => server.definition !== undefined);
+    const definitions: McpSettingsEdit[] = defined.length === 0 ? [] : [{
+      // AGY keeps its server definitions in its home, not in the workspace, so
+      // a declaration that carries them writes them there. Servers it does not
+      // name, and every other key, are left as they are.
+      path: join(home, ".gemini", "config", "mcp_config.json"),
+      describes: `agy reaches ${defined.map((server) => server.name).join(", ")} as defined`,
+      apply: (config) => {
+        const existing = config.mcpServers && typeof config.mcpServers === "object" && !Array.isArray(config.mcpServers)
+          ? config.mcpServers as Record<string, unknown>
+          : {};
+        const rendered = Object.fromEntries(defined.map((server) => [safeName(server.name), agyMcpServerEntry(server.definition!)]));
+        return { ...config, mcpServers: { ...existing, ...rendered } };
+      },
+    }];
     return {
       notificationServers,
       notifications,
-      edits: [{
-        path: join(declaration.home ?? homedir(), ".gemini", "antigravity-cli", "settings.json"),
+      edits: [...definitions, {
+        path: join(home, ".gemini", "antigravity-cli", "settings.json"),
         describes: `agy may call ${allow.join(", ")}`,
         apply: (settings) => {
           const permissions = settings.permissions && typeof settings.permissions === "object" && !Array.isArray(settings.permissions)
