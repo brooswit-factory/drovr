@@ -183,7 +183,52 @@ export interface ClaudeTranscriptTail {
   text: string;
 }
 
-/** Incremental read of a live Claude transcript, which may exceed the whole-file limit. */
+/** Where each moved session's transcript was last found: a hint, re-proven on every read. */
+const movedTranscripts = new Map<string, string>();
+
+/**
+ * Find a session's transcript in whichever project folder holds it. A session
+ * that enters a git worktree has its whole transcript carried to the
+ * worktree's project folder, measured live: nothing is left under the launch
+ * directory's. The file name is the session's UUID, so a match is that
+ * session and no other; two matches are refused, never chosen between.
+ */
+async function findClaudeTranscript(projects: string, name: string): Promise<FileHandle | undefined> {
+  const hinted = movedTranscripts.get(name);
+  if (hinted) {
+    try { return await openSafe(join(projects, hinted, name)); }
+    catch (error) { if (!(error instanceof NativeTranscriptUnavailableError)) throw error; movedTranscripts.delete(name); }
+  }
+  let root: FileHandle;
+  try { root = await openSafe(projects, true); }
+  catch (error) { if (error instanceof NativeTranscriptUnavailableError) return undefined; throw error; }
+  const found: string[] = [];
+  let entries = 0;
+  try {
+    for await (const entry of await opendir(`/proc/self/fd/${root.fd}`)) {
+      if (++entries > MAX_ENTRIES) fail("Claude project search entry limit exceeded");
+      if (!entry.isDirectory()) continue;
+      try {
+        await (await openSafe(join(projects, entry.name, name))).close();
+        found.push(entry.name);
+      } catch {
+        // Absent here, or a folder this user cannot read: either way not this session's.
+      }
+    }
+  } finally {
+    await root.close();
+  }
+  if (found.length > 1) fail("multiple Claude project folders hold this session's transcript");
+  if (!found[0]) return undefined;
+  movedTranscripts.set(name, found[0]);
+  return openSafe(join(projects, found[0], name));
+}
+
+/**
+ * Incremental read of a live Claude transcript, which may exceed the
+ * whole-file limit. `cwd` is where to look first; a session that has since
+ * moved is found by its session ID wherever its transcript now lives.
+ */
 export async function readClaudeTranscriptTail(
   options: { sessionId: string; cwd: string; home?: string }, offset: number,
 ): Promise<ClaudeTranscriptTail> {
@@ -192,14 +237,21 @@ export async function readClaudeTranscriptTail(
   if (!Number.isSafeInteger(offset) || offset < 0) fail("invalid transcript offset");
   const home = options.home ?? homedir();
   if (!isAbsolute(home) || home.includes("\0") || home.split("/").includes("..")) fail("home must be absolute without parent traversal");
+  const projects = join(home, ".claude", "projects");
+  const name = `${options.sessionId}.jsonl`;
   const project = resolve(options.cwd).replace(/[^a-zA-Z0-9]/g, "-");
   let file: FileHandle;
   try {
-    file = await openSafe(join(home, ".claude", "projects", project, `${options.sessionId}.jsonl`));
+    file = await openSafe(join(projects, project, name));
   } catch (error) {
+    if (!(error instanceof NativeTranscriptUnavailableError)) throw error;
+    const moved = await findClaudeTranscript(projects, name);
     // A running session that has never been prompted has not written its transcript yet.
-    if (offset === 0 && error instanceof NativeTranscriptUnavailableError) return { offset: 0, text: "" };
-    throw error;
+    if (!moved) {
+      if (offset === 0) return { offset: 0, text: "" };
+      throw error;
+    }
+    file = moved;
   }
   try {
     const stat = await file.stat();

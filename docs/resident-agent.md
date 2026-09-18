@@ -21,8 +21,9 @@ The message always reaches the same running session or is refused with a
 | --- | --- |
 | `unsupported-provider` | No proven same-session transport exists for this provider |
 | `invalid-message` | Empty, over 16,000 characters, or contains controls other than newline/tab |
-| `not-running` | The exact session is not a running background session in `cwd` |
+| `not-running` | No running background session has this `sessionId`. `cwd` only says where to look first: a resident that moved into a worktree is reached, and its transcript read, wherever it now is |
 | `busy` | The session is mid-turn |
+| `blocked` | The session lists no status and its screen shows a startup prompt (such as MCP approval) that a typed Enter would answer |
 | `delivery-unconfirmed` | Typed, but the session's transcript never recorded it |
 
 `reply-pending` means delivery was proven but the turn had not ended before the
@@ -44,13 +45,18 @@ The only path into the same process is the documented interactive
 `claude attach <shortId>`. `ClaudeResidentMessenger`:
 
 1. Requires the exact `sessionId` in `claude agents --json` as a `background`
-   entry with the same `cwd` and `status: "idle"`. Attaching an absent job
-   wakes it, so absence is refused before any attach.
+   entry, and uses that entry's `cwd`, which is where the session is now.
+   Attaching an absent job wakes it, so absence is refused before any attach.
+   `status: "idle"` is sendable. No status at all (measured on a
+   never-prompted session) is sendable unless `claude logs` shows a blocking
+   prompt. Any other status is `busy`.
 2. Records the transcript end, opens `claude attach` in a PTY, waits for output
    to settle, sends the message as a bracketed paste, then Enter.
 3. Counts delivery only when a user record with exactly that text appears in
    `~/.claude/projects/<cwd>/<sessionId>.jsonl`, then detaches by stopping the
-   attach client. The background session keeps running.
+   attach client. The background session keeps running. A session that entered
+   a worktree has its transcript moved to that worktree's project folder, so
+   the file is found by `sessionId` in whichever project folder holds it.
 4. Reads assistant text blocks after that record, skipping sidechains, until
    `system` / `turn_duration` marks the end of the turn.
 

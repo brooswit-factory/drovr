@@ -1,4 +1,5 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
+import { classifyBlockingText, runPlainClaude } from "./blocking-conditions.js";
 import { NativeTranscriptUnavailableError, readClaudeTranscriptTail, type ClaudeTranscriptTail } from "./native-transcript.js";
 
 /** A long-lived agent session that is already running; the host never names provider mechanics. */
@@ -21,7 +22,7 @@ export type ResidentMessageResult =
   | { status: "reply-pending"; reply: string };
 
 export type ResidentMessageRefusalReason =
-  | "unsupported-provider" | "invalid-message" | "not-running" | "busy" | "delivery-unconfirmed";
+  | "unsupported-provider" | "invalid-message" | "not-running" | "busy" | "blocked" | "delivery-unconfirmed";
 
 /** Nothing here ever falls back to a new, resumed, or forked session. */
 export class ResidentMessageRefusal extends Error {
@@ -52,6 +53,8 @@ export interface ResidentTerminal {
 export interface ClaudeResidentDeps {
   listBackground(): Promise<ClaudeBackgroundListing[]>;
   openAttach(shortId: string, cwd: string): ResidentTerminal;
+  /** The session's current screen (`claude logs`), read only when its listing reports no status. */
+  readScreen(shortId: string): Promise<string>;
   readTail(target: ResidentAgentTarget, offset: number): Promise<ClaudeTranscriptTail>;
   now(): number;
   sleep(ms: number): Promise<void>;
@@ -138,6 +141,7 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
     this.deps = {
       listBackground: listClaudeBackgroundSessions,
       openAttach: openClaudeAttach,
+      readScreen: async shortId => (await runPlainClaude(["logs", shortId])).stdout,
       readTail: (target, offset) => readClaudeTranscriptTail({ sessionId: target.sessionId, cwd: target.cwd }, offset),
       now: Date.now,
       sleep: ms => Bun.sleep(ms),
@@ -158,11 +162,22 @@ export class ClaudeResidentMessenger implements ResidentAgentMessenger {
     if (target.provider !== "claude") throw new ResidentMessageRefusal("unsupported-provider", "This messenger only serves Claude residents");
     const message = validMessage(text);
     const { deps } = this;
-    const listed = (await deps.listBackground()).filter(entry => entry.sessionId === target.sessionId);
-    const live = listed.find(entry => entry.cwd === target.cwd);
+    // The session ID is a UUID, so it alone names the session. The listing's
+    // cwd is where the session is now: a resident that entered a worktree is
+    // listed there, and the host's launch directory is no longer its own.
+    const live = (await deps.listBackground()).find(entry => entry.sessionId === target.sessionId);
     // Attaching an absent job wakes it, so absence is refused rather than attached.
-    if (!live) throw new ResidentMessageRefusal("not-running", "The resident's exact session is not a running background session in its directory");
-    if (live.status !== "idle") throw new ResidentMessageRefusal("busy", "The resident is mid-turn; typed input would queue behind unknown work");
+    if (!live) throw new ResidentMessageRefusal("not-running", "The resident's exact session is not a running background session");
+    if (live.status === undefined) {
+      // Measured: a never-prompted session lists with no status at all, and so
+      // does one stuck on a startup prompt, where a typed Enter would answer it.
+      // Only the screen tells them apart.
+      const blocking = classifyBlockingText("claude", await deps.readScreen(live.id));
+      if (blocking) throw new ResidentMessageRefusal("blocked", `The resident is stopped on a prompt, not idle: ${blocking.detail}`);
+    } else if (live.status !== "idle") {
+      throw new ResidentMessageRefusal("busy", "The resident is mid-turn; typed input would queue behind unknown work");
+    }
+    target = { ...target, cwd: live.cwd };
 
     let offset = (await deps.readTail(target, 0)).offset;
     for (let tail = await deps.readTail(target, offset); tail.offset !== offset; tail = await deps.readTail(target, offset)) offset = tail.offset;

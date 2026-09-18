@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.1
+
+- Send to a never-prompted resident. A fresh background session lists with no
+  `status` at all. The messenger read that as busy and refused every send
+  (measured on factory-dashboard's resident for 6+ minutes). An absent status
+  is now checked against the session's screen: the session counts as idle
+  unless the screen shows a blocking prompt. A blocking prompt is refused with
+  the new `blocked` reason, rather than answered by a typed Enter.
+- Find a resident's transcript by session ID. When a session enters a git
+  worktree, Claude moves its whole transcript to the worktree's project
+  folder. Reads by launch directory then failed with "saved history is
+  unavailable" after a delivery that had succeeded, and `deliverToResident`
+  saw nothing. `readClaudeTranscriptTail` now finds the file wherever it is,
+  and the messenger finds the session by its UUID at its current listed cwd.
+
+Release asset: `brooswit-drovr-0.9.1.tgz`.
+
 ## 0.9.0
 
 - Add `launchBackgroundSession`, so a host starts a Claude background session
