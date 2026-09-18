@@ -193,3 +193,9 @@ export {
   type ApprovePermissionRefusalReason,
   type PermissionApprovalDeps,
 } from "./permission-approval.js";
+export {
+  listBlockingPrompts,
+  classifyBlockingScreen,
+  type BlockingPrompt,
+  type BlockingPromptKind,
+} from "./blocking-prompts.js";
