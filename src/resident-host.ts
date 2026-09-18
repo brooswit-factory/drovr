@@ -107,7 +107,16 @@ const CURSOR = /^\s*❯\s*/;
  */
 function menuOptions(screen: string): MenuOption[] {
   const lines = screen.split(/\r?\n/);
-  const cursor = lines.findIndex((line) => CURSOR.test(line));
+  // The menu's cursor is the one nearest above its "Enter to confirm" footer.
+  // Measured 2026-09-18: a live pane shows other `❯` lines too, earlier
+  // prompts in the transcript above the menu and the input box below it.
+  const footer = lines.findIndex((line) => /Enter to confirm/.test(line));
+  let cursor = -1;
+  if (footer >= 0) {
+    for (let i = footer - 1; i >= 0; i--) if (CURSOR.test(lines[i]!)) { cursor = i; break; }
+  } else {
+    cursor = lines.findIndex((line) => CURSOR.test(line));
+  }
   if (cursor < 0) return [];
   let first = cursor, last = cursor;
   while (first > 0 && lines[first - 1]!.trim() !== "") first--;
@@ -135,6 +144,7 @@ export function keysToChoose(screen: string, wanted: RegExp): string[] | undefin
 export type StartupPrompt =
   | { kind: "trust"; keys: string[] }
   | { kind: "development-channels"; keys: string[] }
+  | { kind: "auto-mode-onboarding"; keys: string[] }
   | { kind: "mcp-approval"; excerpt: string }
   | { kind: "unknown-blocking"; excerpt: string };
 
@@ -156,6 +166,13 @@ export function classifyStartupPrompt(raw: string): StartupPrompt | undefined {
   if (/WARNING: Loading development channels/.test(screen)) {
     const keys = keysToChoose(screen, /^I am using this for local development/);
     return keys ? { kind: "development-channels", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
+  }
+  if (/Teach auto mode about your environment\?/.test(screen)) {
+    // A one-time onboarding offer, measured on lead-factory-dashboard's pane
+    // 2026-09-18; Brooswit okayed dismissing it for good. Only "Don't show
+    // again" is ever chosen, never "Yes", which starts an interactive setup.
+    const keys = keysToChoose(screen, /^Don't show again$/);
+    return keys ? { kind: "auto-mode-onboarding", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
   }
   if (classifyBlockingText("claude", screen)?.kind === "mcp-approval-prompt") return { kind: "mcp-approval", excerpt: excerptOf(screen) };
   if (/Enter to confirm/.test(screen)) return { kind: "unknown-blocking", excerpt: excerptOf(screen) };
