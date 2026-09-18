@@ -15,7 +15,7 @@ const result = await approvePermission(client, {
   promptId: "20d2c5b2f8308147",   // the prompt the operator saw
   operator: "brooswit",
   scope: "once",                  // default; "always" must be asked for
-  auditPath: "/var/lib/bakr/permission-approvals.jsonl",
+  auditPath: `${homedir()}/.local/state/bakr/permission-approvals.jsonl`,
 });
 // { ok: true, attemptId, tool, request, scope }
 // { ok: false, attemptId, reason, detail }
