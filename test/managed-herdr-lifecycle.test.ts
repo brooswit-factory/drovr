@@ -4,12 +4,19 @@ import { ManagedHerdrLifecycle, type ManagedHerdrStartRequest } from "../src/man
 import { ProviderAvailabilityRegistry } from "../src/provider-fallback.js";
 import type { ManagedAgentProvider } from "../src/agent-runtime.js";
 
-function fixture(options: { readFail?: boolean; startFail?: boolean; ack?: "missing" | "empty" | "prompt"; closeFail?: boolean; kickoffFail?: boolean; provider?: ManagedAgentProvider; large?: boolean; fastDone?: boolean; disappear?: boolean; slowRead?: boolean } = {}) {
+function fixture(options: { readFail?: boolean; startFail?: boolean; ack?: "missing" | "empty" | "prompt"; closeFail?: boolean; kickoffFail?: boolean; provider?: ManagedAgentProvider; large?: boolean; fastDone?: boolean; disappear?: boolean; slowRead?: boolean; oldProvider?: ManagedAgentProvider; priority?: ManagedAgentProvider[]; availability?: ProviderAvailabilityRegistry; kickoffScreen?: (provider: ManagedAgentProvider) => string | undefined } = {}) {
   const events: string[] = [];
+  const kickedOff = new Set<string>();
+  const screens = new Map<string, string>();
+  const kicked = (pane: string, provider: ManagedAgentProvider) => {
+    kickedOff.add(pane);
+    const screen = options.kickoffScreen?.(provider);
+    if (screen !== undefined) screens.set(pane, screen);
+  };
   const source = options.large ? "history".repeat(15_000) : "saved history with pending work";
   const histories = new Map<string, string>([["old", source]]);
   const row = (pane: string, provider: ManagedAgentProvider) => ({ pane_id: pane, cwd: "/work", agent: provider, agent_status: "idle", agent_session: { agent: provider, kind: "id", value: pane, source: "test" } });
-  let rows = [row("old", "claude")];
+  let rows = [row("old", options.oldProvider ?? "claude")];
   let count = 0;
   const prompts: string[] = [];
   let gate: Promise<void> = Promise.resolve();
@@ -43,7 +50,7 @@ function fixture(options: { readFail?: boolean; startFail?: boolean; ack?: "miss
         if (text === "kickoff" && options.kickoffFail) throw new Error("kickoff failed");
         const agent = rows.find(a => a.pane_id === target)!;
         respond(target, text, agent.agent);
-        if (text === "kickoff") agent.agent_status = options.fastDone ? "done" : "working";
+        if (text === "kickoff") { agent.agent_status = options.fastDone ? "done" : "working"; kicked(target, agent.agent); }
         if (text === "kickoff" && options.disappear) rows = rows.filter(a => a.pane_id !== target);
         return { agent };
       },
@@ -55,10 +62,17 @@ function fixture(options: { readFail?: boolean; startFail?: boolean; ack?: "miss
         if (options.closeFail && pane === "old") throw new Error("close failed");
         rows = rows.filter(a => a.pane_id !== pane);
       },
-      read: async () => { throw new Error("Screen must never be read for history or ack"); },
+      // Only kickoff verification may look at a screen; history and
+      // acknowledgement always come from native transcripts.
+      read: async ({ pane_id }: { pane_id: string }) => {
+        if (!kickedOff.has(pane_id)) throw new Error("Screen must never be read for history or ack");
+        events.push(`screen:${pane_id}`);
+        return { read: { text: screens.get(pane_id) ?? "" } };
+      },
     },
   };
-  const lifecycle = new ManagedHerdrLifecycle({ client: client as unknown as DrovrClient, cwd: "/work", availability: new ProviderAvailabilityRegistry(), wait: async () => {}, pollIntervalMs: 1, acknowledgementTimeoutMs: options.slowRead ? 2 : 100,
+  const availability = options.availability ?? new ProviderAvailabilityRegistry();
+  const lifecycle = new ManagedHerdrLifecycle({ client: client as unknown as DrovrClient, cwd: "/work", availability, wait: async () => {}, pollIntervalMs: 1, acknowledgementTimeoutMs: options.slowRead ? 2 : 100,
     readTranscript: async ({ session }) => {
       events.push(`read:${session.value}`);
       if (options.readFail && session.value === "old") throw new Error("missing transcript");
@@ -67,15 +81,67 @@ function fixture(options: { readFail?: boolean; startFail?: boolean; ack?: "miss
     },
   });
   const provider = options.provider ?? "codex";
-  const request: ManagedHerdrStartRequest = { priority: [{ provider, accountId: "default" }], label: "role", replacePaneId: "old", kickoff: () => "kickoff", prepare: async provider => {
+  const request: ManagedHerdrStartRequest = { priority: (options.priority ?? [provider]).map(p => ({ provider: p, accountId: "default" })), label: "role", replacePaneId: "old", kickoff: () => "kickoff", prepare: async provider => {
     events.push("prepare");
     return { launch: provider === "claude"
       ? { provider, cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch", effort: "high", mcpConfigPath: "/work/mcp.json" }
       : provider === "codex" ? { provider, cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch", mcpServers: [] }
       : { provider, cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch" } };
   } };
-  return { lifecycle, client: client as unknown as DrovrClient, request, events, prompts, histories, rows: () => rows, gate: (value: Promise<void>) => { gate = value; } };
+  return { lifecycle, availability, client: client as unknown as DrovrClient, request, events, prompts, histories, rows: () => rows, gate: (value: Promise<void>) => { gate = value; } };
 }
+
+const lunaReserve = "• Automatically switched to Luna Reserve medium due to usage limits.\n\n› Ask Codex to do anything\n";
+const account = (provider: ManagedAgentProvider) => ({ provider, accountId: "default" });
+
+describe("ManagedHerdrLifecycle quota replacement re-walks priority from the top", () => {
+  test("a quota-blocked Codex worker is replaced by Claude when Claude comes first", async () => {
+    const f = fixture({ oldProvider: "codex", priority: ["claude", "codex"] });
+    f.availability.observePane(account("codex"), "idle", lunaReserve);
+    const result = await f.lifecycle.start(f.request);
+    expect(result).toMatchObject({ status: "success", account: account("claude"), value: "new-1", attempted: [account("claude")] });
+    expect(f.lifecycle.current).toMatchObject({ paneId: "new-1", provider: "claude" });
+    expect(f.events).toContain("close:old");
+  });
+
+  test("a quota-blocked Claude worker is replaced by the next provider, Codex", async () => {
+    const f = fixture({ oldProvider: "claude", priority: ["claude", "codex"] });
+    f.availability.markQuotaBlocked(account("claude"), { resetsAt: null, raw: "You've hit your session limit" });
+    const result = await f.lifecycle.start(f.request);
+    expect(result).toMatchObject({ status: "success", account: account("codex"), attempted: [account("codex")] });
+    expect(f.lifecycle.current).toMatchObject({ paneId: "new-1", provider: "codex" });
+  });
+
+  test("a Codex kickoff that lands on the usage-limit notice falls through to the next provider", async () => {
+    const f = fixture({ oldProvider: "claude", priority: ["codex", "claude"], fastDone: true,
+      kickoffScreen: provider => provider === "codex" ? lunaReserve : "" });
+    const result = await f.lifecycle.start(f.request);
+    expect(result).toMatchObject({ status: "success", account: account("claude"), attempted: [account("codex"), account("claude")] });
+    expect(f.availability.get(account("codex"))).toMatchObject({ status: "quota-blocked", resetsAt: null });
+    expect(f.lifecycle.current).toMatchObject({ provider: "claude" });
+    expect(f.events).toContain("screen:new-1");
+  });
+
+  test("a blocked provider is eligible again at its own position once its reset passes", async () => {
+    let now = 100;
+    const availability = new ProviderAvailabilityRegistry(() => now);
+    availability.markQuotaBlocked(account("claude"), { resetsAt: 200, raw: "You've hit your session limit" });
+    const blocked = fixture({ oldProvider: "codex", priority: ["claude", "codex"], availability });
+    expect(await blocked.lifecycle.start(blocked.request)).toMatchObject({ status: "success", account: account("codex") });
+    now = 200;
+    const reset = fixture({ oldProvider: "codex", priority: ["claude", "codex"], availability });
+    expect(await reset.lifecycle.start(reset.request)).toMatchObject({ status: "success", account: account("claude") });
+  });
+
+  test("every provider blocked keeps the current worker and reports exhaustion", async () => {
+    const f = fixture({ oldProvider: "codex", priority: ["claude", "codex"] });
+    f.availability.observePane(account("codex"), "done", lunaReserve);
+    f.availability.markQuotaBlocked(account("claude"), { resetsAt: null, raw: "You've hit your weekly limit" });
+    expect(await f.lifecycle.start(f.request)).toEqual({ status: "exhausted", reason: "no-available-provider", attempted: [] });
+    expect(f.lifecycle.current?.paneId).toBe("old");
+    expect(f.events).not.toContain("create");
+  });
+});
 
 describe("ManagedHerdrLifecycle", () => {
   test("explicit kickoff runs exactly once even when it finishes before verification", async () => {

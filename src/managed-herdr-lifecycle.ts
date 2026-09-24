@@ -224,10 +224,13 @@ export class ManagedHerdrLifecycle {
             const current = await this.resolveCurrent();
             if (!current) throw new HandoffBlocked("Current worker disappeared before kickoff verification");
             if (current && (current.agent_status === "idle" || current.agent_status === "done")) {
-              if (account.provider === "claude") {
+              // Each provider with a measured classifier (Claude, Codex) can
+              // refuse at kickoff; a recognised refusal moves on to the next
+              // provider in priority order.
+              if (account.provider === "claude" || account.provider === "codex") {
                 const screen = await this.options.client.pane.read({ pane_id: paneId, source: "detection", strip_ansi: true });
-                const outcome = this.availability.observeClaudePane(account, current.agent_status, screen.read.text);
-                if (outcome.kind === "recognised") return { status: "quota-blocked", refusal: outcome };
+                const outcome = this.availability.observePane(account, current.agent_status, screen.read.text);
+                if (outcome.kind === "recognised") return { status: "quota-blocked", refusal: { resetsAt: outcome.resetsAt, raw: outcome.raw } };
               }
               // Idle/done can mean the task finished quickly. It is not proof
               // that kickoff was swallowed, so never automatically repeat it.

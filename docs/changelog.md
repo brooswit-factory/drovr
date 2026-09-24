@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.1
+
+Codex usage limits are recognised, so a Codex worker at its limit is replaced
+instead of sitting idle forever. Codex had run out (reset 29 Sep 16:03) and
+switched itself to its Luna Reserve model; Herdr reported the panes idle, and
+nothing in Drovr could say they were refused.
+
+- **`classifyCodexUsageLimitText(text, now)`**: the Codex counterpart of
+  `classifySessionLimitText`. It anchors on Codex's own `• Automatically
+  switched to <model> due to usage limits.` and `■ You’ve hit your usage
+  limit` at column 0, takes only the most recent notice, treats `switched
+  back … ordinary usage is available again` as recovery, and suppresses a
+  notice the agent has carried on past. Tested on the two live pane reads.
+  `parseCodexUsageReset` reads `16:03 on 29 Sep` and `try again at …` in local
+  time, and returns null rather than guess.
+- **`ProviderAvailabilityRegistry.observePane(account, status, text)`**
+  routes to the account's provider classifier (`classifyProviderQuotaText`)
+  behind the same idle/done gate. `observeClaudePane` is kept.
+- **`ManagedHerdrLifecycle`** checks a Codex kickoff for the usage-limit
+  notice, as it already did for Claude, and moves on to the next provider.
+- **`ManagedConversationRunner`**: a Codex `exec --json` turn that failed on
+  the usage-limit message throws `ManagedConversationQuotaError` with
+  `provider: "codex"`, so `ManagedConversationLifecycle` falls through.
+  `codexTurnErrorQuota` gives App Server runners the same check, including
+  `codexErrorInfo: "usageLimitExceeded"`.
+- Replacement already re-walks priority from the top; this is now tested for
+  codex→claude, claude→codex and a reset that passes.
+
+Release asset: `brooswit-drovr-0.11.1.tgz`.
+
 ## 0.11.0
 
 The first vendor-agnostic slice: an agy agent (usrr's) gets its MCP servers and

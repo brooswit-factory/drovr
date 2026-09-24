@@ -73,6 +73,18 @@ Claude pane classifier is not applicable evidence for arbitrary structured CLI
 errors and is not invoked here. A provider's failure must not be converted to a
 quota refusal by matching exception text.
 
+Two measured refusals are typed as `ManagedConversationQuotaError` (with
+`provider` set) so `ManagedConversationLifecycle` falls through to the next
+available provider: Claude's `--print` 429 refusal envelope, and a Codex
+`exec --json` turn that never completed and whose `turn.failed` / `error`
+message BEGINS with Codex's own `You’ve hit your usage limit.` sentence.
+`codexTurnErrorQuota(error, now)` exposes the same check for a Codex App
+Server `turn.error` (`codexErrorInfo: "usageLimitExceeded"` alone also
+qualifies), so an App Server runner can throw
+`new ManagedConversationQuotaError(refusal, "codex")` for it. The lifecycle's
+priority is `[active, ...providers]`: a blocked active provider is skipped, so
+the next message re-walks the configured order from the top.
+
 ## Verification
 
 Installed help inspected on 2026-09-12: AGY `--help`, Codex

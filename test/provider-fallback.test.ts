@@ -58,6 +58,30 @@ describe("account availability", () => {
     expect(state.get(codex).status).toBe("available");
   });
 
+  test("a Codex usage-limit pane blocks only the Codex account, idle/done only, until its reset", () => {
+    let now = new Date(2026, 8, 24, 12, 0).getTime();
+    const state = new ProviderAvailabilityRegistry(() => now);
+    const pane = "• Automatically switched to Luna Reserve medium due to usage limits.\n"
+      + "  Add credits to continue using the most advanced models, or wait for usage to reset after\n"
+      + "  16:03 on 29 Sep.\n› 1. Add Credits\n  2. Continue with Luna Reserve\n";
+    for (const status of ["working", "blocked", "unknown", ""]) {
+      expect(state.observePane(codex, status, pane)).toEqual({ kind: "not-recognised" });
+    }
+    expect(state.observeClaudePane(codex, "idle", pane)).toEqual({ kind: "not-recognised" });
+    expect(state.observePane(claude, "idle", pane)).toEqual({ kind: "not-recognised" });
+    expect(state.observePane({ provider: "agy", accountId: "shared" }, "idle", pane)).toEqual({ kind: "not-recognised" });
+    expect(state.get(codex).status).toBe("available");
+    const resetsAt = new Date(2026, 8, 29, 16, 3).getTime();
+    expect(state.observePane(codex, "idle", pane)).toMatchObject({ kind: "recognised", resetsAt });
+    expect(state.get(codex)).toMatchObject({ status: "quota-blocked", resetsAt });
+    expect(state.get(claude).status).toBe("available");
+    // Priority is re-walked from the top: Claude first while Codex is blocked...
+    expect(selectAvailableProvider([codex, claude], state)).toEqual({ status: "selected", account: claude });
+    // ...and Codex regains its own position once its reset passes.
+    now = resetsAt;
+    expect(selectAvailableProvider([codex, claude], state)).toEqual({ status: "selected", account: codex });
+  });
+
   test("rejects malformed reset metadata and empty identities", () => {
     const state = new ProviderAvailabilityRegistry();
     for (const resetsAt of [NaN, Infinity, -Infinity]) {

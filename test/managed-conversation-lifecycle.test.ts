@@ -227,3 +227,33 @@ test("lookalike and wrong-provider quota errors do not trigger fallback", async 
     expect(f.availability.get({ provider: "agy", accountId: "test" }).status).toBe("available");
   }
 });
+
+test("a Codex usage limit on the active conversation falls back to Claude first when the order is claude,codex", async () => {
+  const codexLimit = () => new ManagedConversationQuotaError({ resetsAt: null, raw: "You’ve hit your usage limit." }, "codex");
+  const order: string[] = [];
+  const f = fixture({ current: { provider: "codex", conversationId: "codex-thread" }, providers: ["claude", "codex"],
+    readNativeTranscript: async () => "codex native history",
+    createRunner: provider => ({ message: async (text, id) => {
+      order.push(`${provider}:${text === "work" ? "work" : "import"}:${id ?? "new"}`);
+      if (provider === "codex") throw codexLimit();
+      return { conversationId: id ?? "claude-thread", response: text === "work" ? "done" : `${HANDOFF_ACK}\nSummary` };
+    } }),
+  });
+  expect(await f.lifecycle.message("work")).toEqual({ conversationId: "claude-thread", response: "done" });
+  // The active provider is tried first, then priority is walked from the top.
+  expect(order).toEqual(["codex:work:codex-thread", "claude:import:new", "claude:work:claude-thread"]);
+  expect(f.availability.get({ provider: "codex", accountId: "test" }).status).toBe("quota-blocked");
+  expect(f.lifecycle.current).toEqual({ provider: "claude", conversationId: "claude-thread" });
+
+  // With Codex still blocked, the next message stays on Claude and never retries Codex.
+  order.length = 0;
+  await f.lifecycle.message("work");
+  expect(order).toEqual(["claude:work:claude-thread"]);
+});
+
+test("a Claude-typed quota error from a Codex runner does not block Codex", async () => {
+  const f = fixture({ current: { provider: "codex", conversationId: "codex-thread" }, providers: ["claude", "codex"],
+    createRunner: () => ({ message: async () => { throw quota(); } }) });
+  await expect(f.lifecycle.message("work")).rejects.toBeInstanceOf(ManagedConversationQuotaError);
+  expect(f.availability.get({ provider: "codex", accountId: "test" }).status).toBe("available");
+});

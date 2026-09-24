@@ -1,16 +1,22 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
 import type { ProviderQuotaRefusal } from "./provider-fallback.js";
 import { detectSessionLimitRefusal } from "./session-limit.js";
+import { codexTurnErrorQuota } from "./codex-usage-limit.js";
 import { plainOutputEnv } from "./blocking-conditions.js";
 
-/** Confirmed native CLI quota refusal, never inferred from arbitrary failures. */
+/**
+ * Confirmed native quota refusal, never inferred from arbitrary failures.
+ * Claude's comes from its measured --print refusal envelope; Codex's from a
+ * failed turn whose error is Codex's own usage-limit message or code.
+ */
 export class ManagedConversationQuotaError extends Error {
-  readonly provider = "claude" as const;
+  readonly provider: "claude" | "codex";
   readonly refusal: ProviderQuotaRefusal;
 
-  constructor(refusal: ProviderQuotaRefusal) {
-    super("Claude native conversation quota blocked");
+  constructor(refusal: ProviderQuotaRefusal, provider: "claude" | "codex" = "claude") {
+    super(`${provider === "codex" ? "Codex" : "Claude"} native conversation quota blocked`);
     this.name = "ManagedConversationQuotaError";
+    this.provider = provider;
     this.refusal = { ...refusal };
   }
 }
@@ -125,6 +131,25 @@ function claudeQuota(stdout: string): ProviderQuotaRefusal | null {
   return detectSessionLimitRefusal(value.result, new Date());
 }
 
+/**
+ * `codex exec --json` reports a refused turn as `turn.failed` (and an
+ * `error` event) carrying Codex's own message. Only a turn that never
+ * completed, whose failure is Codex's usage-limit message, is quota.
+ */
+function codexQuota(stdout: string): ProviderQuotaRefusal | null {
+  let refusal: ProviderQuotaRefusal | null = null;
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event: unknown;
+    try { event = JSON.parse(line); } catch { return null; }
+    if (!record(event)) return null;
+    if (event.type === "turn.completed") return null;
+    const error = event.type === "turn.failed" ? event.error : event.type === "error" ? event : undefined;
+    if (error !== undefined) refusal ??= codexTurnErrorQuota(error, new Date());
+  }
+  return refusal;
+}
+
 function parseCodex(stdout: string): ManagedConversationResult {
   let conversationId: string | undefined;
   let response: string | undefined;
@@ -206,6 +231,10 @@ export class ManagedConversationRunner {
     if (this.provider === "claude" && (processResult.exitCode === 0 || processResult.exitCode === 1)) {
       const refusal = claudeQuota(processResult.stdout);
       if (refusal) throw new ManagedConversationQuotaError(refusal);
+    }
+    if (this.provider === "codex") {
+      const refusal = codexQuota(processResult.stdout);
+      if (refusal) throw new ManagedConversationQuotaError(refusal, "codex");
     }
     if (processResult.exitCode !== 0) throw new Error(`${this.provider} conversation process exited unsuccessfully`);
     const result = this.provider === "agy" ? parseAgy(processResult.stdout)

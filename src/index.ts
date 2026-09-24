@@ -36,6 +36,7 @@ export {
   processProviderAvailability,
   selectAvailableProvider,
   runWithProviderFallback,
+  classifyProviderQuotaText,
   type ProviderAccount,
   type ProviderQuotaRefusal,
   type ProviderAvailability,
@@ -49,6 +50,7 @@ export {
   type SessionLimitOutcome,
   type SessionLimitRefusal,
 } from "./session-limit.js";
+export { classifyCodexUsageLimitText, codexTurnErrorQuota, parseCodexUsageReset } from "./codex-usage-limit.js";
 
 export { DrovrClient, type DrovrClientOptions } from "./drovr-client.js";
 export { startManagedAgent, AgentShellReadinessError, type AgentStartOptions, type ShellReadinessDiagnostics } from "./agent-start.js";

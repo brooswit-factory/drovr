@@ -34,8 +34,9 @@ Do not substitute a terminal screenshot and claim it is a full transcript.
 
 History is limited to 4 Mi characters and delivered in 48,000-character chunks.
 Oversized histories fail explicitly rather than silently omitting older context.
-No new Codex or Antigravity quota detectors are introduced. Unknown provider
-errors remain errors, not permission to switch vendors.
+Only the measured Claude and Codex quota refusals (see `provider-fallback.md`)
+switch vendors; Antigravity has no quota detector. Unknown provider errors
+remain errors, not permission to switch vendors.
 
 `readNativeTranscript` can read a pinned native path, resolve a Claude session ID
 inside its project directory, or locate a Codex rollout by session ID and matching
