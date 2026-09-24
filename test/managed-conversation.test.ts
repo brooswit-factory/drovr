@@ -159,6 +159,42 @@ describe("direct managed conversations", () => {
     }
   });
 
+  test("a Codex exec turn failed on Codex's usage limit is typed Codex quota, initial and resumed", async () => {
+    const message = "You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 29th, 2026 4:03 PM.";
+    const stdout = events(
+      { type: "thread.started", thread_id: id }, { type: "turn.started" },
+      { type: "error", message }, { type: "turn.failed", error: { message } },
+    );
+    for (const exitCode of [0, 1]) {
+      const runner = new ManagedConversationRunner({ provider: "codex", cwd, run: async () => ({ exitCode, stdout, stderr: "" }) });
+      for (const resume of [undefined, id]) {
+        const error = await runner.message("hello", resume).catch(error => error);
+        expect(error).toBeInstanceOf(ManagedConversationQuotaError);
+        expect(error.provider).toBe("codex");
+        expect(error.message).toBe("Codex native conversation quota blocked");
+        expect(error.refusal).toEqual({ raw: message, resetsAt: new Date(2026, 8, 29, 16, 3).getTime() });
+      }
+    }
+  });
+
+  test("other Codex failures, and a completed turn, never produce typed quota", async () => {
+    const quoted = "You’ve hit your usage limit.";
+    const cases = [
+      events({ type: "thread.started", thread_id: id }, { type: "turn.failed", error: { message: "stream disconnected before completion" } }),
+      events({ type: "thread.started", thread_id: id }, { type: "turn.failed", error: { message: `Tool said: ${quoted}` } }),
+      events({ type: "thread.started", thread_id: id }, { type: "error", message: "unexpected status 429 Too Many Requests" }),
+      events({ type: "thread.started", thread_id: id }, { type: "item.completed", item: { type: "agent_message", text: quoted } }, { type: "turn.completed" }),
+      events({ type: "thread.started", thread_id: id }, { type: "error", message: quoted }, { type: "turn.completed" }),
+      `not json\n${JSON.stringify({ type: "turn.failed", error: { message: quoted } })}`,
+    ];
+    for (const stdout of cases) {
+      for (const exitCode of [0, 1]) {
+        const runner = new ManagedConversationRunner({ provider: "codex", cwd, run: async () => ({ exitCode, stdout, stderr: quoted }) });
+        expect(await runner.message("hello").catch(error => error)).not.toBeInstanceOf(ManagedConversationQuotaError);
+      }
+    }
+  });
+
   test("only the measured Claude API refusal envelope produces typed quota", async () => {
     const refusal = { type: "result", subtype: "success", is_error: true, session_id: id,
       terminal_reason: "api_error", api_error_status: 429, result: "You've hit your weekly limit" };

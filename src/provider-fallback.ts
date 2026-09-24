@@ -1,4 +1,5 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
+import { classifyCodexUsageLimitText } from "./codex-usage-limit.js";
 import { classifySessionLimitText, type SessionLimitOutcome } from "./session-limit.js";
 
 /** Stable credential/account identity, shared across panes, workspaces and models. */
@@ -57,15 +58,31 @@ export class ProviderAvailabilityRegistry {
     this.blocked.delete(accountKey(account));
   }
 
-  /** ANSI-stripped live pane text only; active/unknown states cannot establish quota. */
-  observeClaudePane(account: ProviderAccount, status: string, text: string): SessionLimitOutcome {
-    if (account.provider !== "claude" || (status !== "idle" && status !== "done")) {
-      return { kind: "not-recognised" };
-    }
-    const outcome = classifySessionLimitText(text, new Date(this.now()));
+  /**
+   * ANSI-stripped live pane text only; active/unknown states cannot establish
+   * quota. Each provider has its own measured classifier: Claude's session or
+   * weekly limit, Codex's usage-limit notice. AGY has none, so an AGY pane
+   * never establishes quota. Records only a recognised refusal.
+   */
+  observePane(account: ProviderAccount, status: string, text: string): SessionLimitOutcome {
+    if (status !== "idle" && status !== "done") return { kind: "not-recognised" };
+    const outcome = classifyProviderQuotaText(account.provider, text, new Date(this.now()));
     if (outcome.kind === "recognised") this.markQuotaBlocked(account, outcome);
     return outcome;
   }
+
+  /** Claude-only form of observePane, kept for existing callers. */
+  observeClaudePane(account: ProviderAccount, status: string, text: string): SessionLimitOutcome {
+    if (account.provider !== "claude") return { kind: "not-recognised" };
+    return this.observePane(account, status, text);
+  }
+}
+
+/** The measured quota classifier for a provider's pane text; AGY has none. */
+export function classifyProviderQuotaText(provider: ManagedAgentProvider, text: string, now: Date): SessionLimitOutcome {
+  if (provider === "claude") return classifySessionLimitText(text, now);
+  if (provider === "codex") return classifyCodexUsageLimitText(text, now);
+  return { kind: "not-recognised" };
 }
 
 export type ProviderSelection =

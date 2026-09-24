@@ -17,9 +17,46 @@ non-secret credential identity shared across panes, models, and workspaces.
 - A null reset remains blocked indefinitely until `clear(account)` or a known
   reset is reported. Clear only on operator action or independently confirmed
   recovery. Ordinary healthy pane text does not establish account recovery.
-- `observeClaudePane(account, status, text)` accepts ANSI-stripped live pane
-  text, applies the idle/done gate, returns the classifier's full outcome, and
-  records only recognised Claude refusals. There is no Codex or AGY classifier.
+- `observePane(account, status, text)` accepts ANSI-stripped live pane text,
+  applies the idle/done gate, runs the account's provider classifier
+  (`classifyProviderQuotaText`), returns its full outcome, and records only a
+  recognised refusal. Claude and Codex have classifiers; AGY has none and is
+  never recorded from a pane. `observeClaudePane` is the Claude-only form.
+
+`selectAvailableProvider` and `runWithProviderFallback` always walk the
+caller's priority from the top, skipping blocked accounts. So when the current
+worker's provider becomes quota-blocked, its replacement is the first
+available provider in the whole list — a Codex worker at its limit goes back
+to Claude under `claude,codex`, and a Claude worker at its limit goes to
+Codex. A blocked account with a known reset is eligible again, at its own
+position, from `now >= resetsAt`.
+
+### Codex usage limits
+
+`classifyCodexUsageLimitText(text, now)` recognises two notices, both string
+constants in the Codex CLI binary (0.155.0-alpha.16.4), at column 0 only:
+
+- `• Automatically switched to <model> due to usage limits.` Observed live on
+  2026-09-24 on idle panes, either followed by the server's "Add credits …
+  or wait for usage to reset after 16:03 on 29 Sep." dialog or directly by
+  the `›` composer. Codex keeps running on the fallback model, which is why an
+  idle pane looks healthy to Herdr and was never replaced.
+- `■ You’ve hit your usage limit…`, the TUI error cell for a refused turn.
+
+Only the most recent notice counts. `Automatically switched back to <model>
+because ordinary usage is available again.` after it means not refused. Any
+later column-0 history cell (a `•` message, `■` error, `─ Worked for`) means
+the agent carried on, and the notice is `suppressed` with the reason. Only
+blank, indented, and `›` lines may follow a live notice. The reset is parsed
+from the notice's own block, in host local time: `reset after HH:MM on D Mon
+[YYYY]` (the nearest such date; a passed date stays passed), or the error's
+`try again at H:MM AM|PM` (next occurrence) and dated `Mon D[th][, YYYY] [at]
+H:MM AM|PM`. Otherwise `resetsAt` is null and the account stays blocked until
+`clear(account)` or a later observation with a known reset. Like the Claude
+classifier, an agent message whose first line is byte-for-byte the notice is
+indistinguishable from it; the idle/done gate still applies.
+`codexTurnErrorQuota(error, now)` is the equivalent for a failed turn's error
+(exec JSONL or App Server).
 
 `selectAvailableProvider(priority, availability?)` selects the first available
 account or returns `{ status: "exhausted" }`. The array defines the order.
