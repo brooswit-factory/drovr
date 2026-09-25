@@ -64,10 +64,23 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   let cursor = -1;
   let end = q + 1;
   for (; end < lines.length; end++) {
-    const match = OPTION.exec(lines[end]!);
-    if (!match) break;
-    if (match[1]) cursor = options.length;
-    options.push(match[2]!);
+    const line = lines[end]!;
+    const match = OPTION.exec(line);
+    if (match) {
+      if (match[1]) cursor = options.length;
+      options.push(match[2]!);
+      continue;
+    }
+    // A long option can wrap onto a following physical line with no number
+    // of its own. Fold it back into the option it continues rather than
+    // treating it as the end of the list — otherwise the footer check below
+    // looks at the wrong window and the whole dialog reads as "not a
+    // prompt", which is worse than unanswered: it becomes invisible to
+    // listPendingPermissions entirely. A blank line, a fresh separator or
+    // question, or the footer itself still ends the list.
+    const continuation = options.length > 0 && line.trim() !== "" && !SEPARATOR.test(line) && !QUESTION.test(line) && !/Esc to cancel/.test(line);
+    if (!continuation) break;
+    options[options.length - 1] = `${options[options.length - 1]} ${line.trim()}`;
   }
   if (options.length < 2 || cursor < 0 || options[0] !== "Yes" || !options.some((option) => /^No\b/.test(option))) return undefined;
   if (!lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line))) return undefined;
