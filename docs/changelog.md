@@ -17,6 +17,24 @@ BUTCHR-417: `InboxRelay.push()` race fix — a message pushed as the previous
   the loop exits, closing the gap. Found by BUTCHR-413 building the Codex
   channel relay in butchr.
 
+## 0.12.2
+
+DROVR-24: a throw after the `approving` audit line used to escape
+`approvePermission` entirely, stranding that record with no outcome.
+
+- **`approvePermission` no longer lets a post-`approving` throw escape.** A
+  rejecting `sendKeys` now returns `{ ok: false, reason: "keys-failed",
+  detail }`, whose detail says whether a key may have reached the pane is
+  unknown. A throw inside the verify loop (`deps.now`/`deps.wait`) returns
+  the same shape under the distinct `reason: "verify-failed"`, since by then
+  `sendKeys` already resolved. Both make a best-effort outcome `appendAudit`
+  for the same `attemptId` before returning; a failure to write that record
+  is itself swallowed, so it can never mask the result. Keys are never
+  retried. Both new `ApprovePermissionRefusalReason` values map to
+  `autoAnswerPermissions`'s `failed` outcome, alongside `not-cleared` and
+  `audit-failed` — treat them as a failure, not a refusal. See
+  `docs/permission-approval.md`.
+
 ## 0.12.1
 
 DROVR-41: live proof of `autoAnswerPermissions` against a real herdr pane
