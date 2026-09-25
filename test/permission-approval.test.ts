@@ -171,11 +171,12 @@ describe("classifyPermissionPrompt", () => {
   });
 });
 
-function fixture(screens: string[], options: { auditFails?: boolean } = {}) {
+function fixture(screens: string[], options: { auditFails?: boolean | number; throwOnSendKeys?: boolean } = {}) {
   const queue = [...screens];
   const keys: string[][] = [];
   const audit: Record<string, unknown>[] = [];
   let clock = 0;
+  let auditCalls = 0;
   const client = {
     agent: {
       list: async () => ({ type: "agent_list", agents: [
@@ -185,11 +186,21 @@ function fixture(screens: string[], options: { auditFails?: boolean } = {}) {
       ] }) as never,
       get: async (target: string) => ({ type: "agent_info", agent: { pane_id: target, name: "lead-drovr", agent_session: { kind: "id", value: "s1" } } }) as never,
       read: async (p: { target: string }) => ({ type: "pane_read", read: { text: p.target === "w1:p1" ? queue[0] ?? AFTER : AFTER } }) as never,
-      sendKeys: async (p: { keys: string[] }) => { keys.push(p.keys); queue.shift(); return { type: "ok" } as never; },
+      sendKeys: async (p: { keys: string[] }) => {
+        keys.push(p.keys);
+        if (options.throwOnSendKeys) throw new Error("sendKeys exploded");
+        queue.shift();
+        return { type: "ok" } as never;
+      },
     },
   };
   const deps = {
-    appendAudit: async (_path: string, line: string) => { if (options.auditFails) throw new Error("disk full"); audit.push(JSON.parse(line)); },
+    appendAudit: async (_path: string, line: string) => {
+      auditCalls++;
+      const fails = options.auditFails === true || (typeof options.auditFails === "number" && auditCalls > options.auditFails);
+      if (fails) throw new Error("disk full");
+      audit.push(JSON.parse(line));
+    },
     now: () => new Date(Date.UTC(2026, 8, 18) + clock),
     wait: async (ms: number) => { clock += ms; },
     verifyTimeoutMs: 1_000,
@@ -253,6 +264,44 @@ describe("approvePermission", () => {
     const result = await approvePermission(f.client, { ...base, promptId: idOf(BASH_PROMPT) }, f.deps);
     expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
     expect(f.audit.map((r) => r.outcome)).toEqual(["approving", "not-cleared"]);
+  });
+
+  // DROVR-24: a throwing sendKeys used to escape approvePermission entirely,
+  // leaving the "approving" record stranded with no outcome. It must not
+  // throw, must record an outcome, and must never retry the keys.
+  test("a throwing sendKeys never escapes: ok:false keys-failed, audit holds approving then keys-failed, sendKeys called once", async () => {
+    const f = fixture([BASH_PROMPT], { throwOnSendKeys: true });
+    const result = await approvePermission(f.client, { ...base, promptId: idOf(BASH_PROMPT) }, f.deps);
+    expect(result).toMatchObject({ ok: false, reason: "keys-failed" });
+    expect((result as { detail: string }).detail).toMatch(/whether a key may have reached the pane is unknown/);
+    expect((result as { detail: string }).detail).toMatch(/sendKeys exploded/);
+    expect(f.keys).toHaveLength(1);
+    expect(f.audit.map((r) => r.outcome)).toEqual(["approving", "keys-failed"]);
+    const attemptIds = new Set(f.audit.map((r) => r.attemptId));
+    expect(attemptIds.size).toBe(1);
+    expect([...attemptIds][0]).toBe((result as { attemptId: string }).attemptId);
+  });
+
+  // DROVR-24 acceptance: the outcome-audit write failing must not mask the result.
+  test("a throwing sendKeys whose outcome-audit write also throws still returns ok:false keys-failed", async () => {
+    const f = fixture([BASH_PROMPT], { throwOnSendKeys: true, auditFails: 1 }); // the "approving" write (call 1) succeeds; the outcome write (call 2) fails
+    const result = await approvePermission(f.client, { ...base, promptId: idOf(BASH_PROMPT) }, f.deps);
+    expect(result).toMatchObject({ ok: false, reason: "keys-failed" });
+    expect(f.keys).toHaveLength(1);
+    expect(f.audit.map((r) => r.outcome)).toEqual(["approving"]); // the outcome write failed, but the result is still returned
+  });
+
+  // DROVR-24: an unexpected throw inside the verify loop (deps.now/deps.wait)
+  // is treated the same way, under the distinct reason verify-failed, since
+  // by then sendKeys already resolved.
+  test("a throwing wait inside the verify loop never escapes: ok:false verify-failed, audit holds approving then verify-failed", async () => {
+    const f = fixture([BASH_PROMPT, BASH_PROMPT]); // still shows the prompt after sendKeys, so the loop reaches deps.wait
+    const deps = { ...f.deps, wait: async () => { throw new Error("wait exploded"); } };
+    const result = await approvePermission(f.client, { ...base, promptId: idOf(BASH_PROMPT) }, deps);
+    expect(result).toMatchObject({ ok: false, reason: "verify-failed" });
+    expect((result as { detail: string }).detail).toMatch(/wait exploded/);
+    expect(f.keys).toHaveLength(1);
+    expect(f.audit.map((r) => r.outcome)).toEqual(["approving", "verify-failed"]);
   });
 });
 
@@ -346,17 +395,22 @@ describe("autoAnswerPermissions", () => {
     const results = await autoAnswerPermissions(client, { auditPath: path });
     const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
     expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered", tool: "Bash command" });
-    expect(byPane["w2:p1"]).toMatchObject({ outcome: "failed", reason: "unexpected-error" });
+    // DROVR-24 fix: approvePermission itself now catches a throwing sendKeys
+    // and returns ok:false reason:"keys-failed" instead of rejecting, so this
+    // pane's own outer try/catch in autoAnswerPermissions is no longer what
+    // reports it — it comes back through the same result-mapping path as
+    // not-cleared/audit-failed, not as "unexpected-error".
+    expect(byPane["w2:p1"]).toMatchObject({ outcome: "failed", reason: "keys-failed" });
     expect((byPane["w2:p1"] as { detail: string }).detail).toMatch(/sendKeys exploded/);
     expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
     expect(keysSent["w2:p1"]).toEqual([["down", "enter"]]);
     const audit = await readAudit(path);
     expect(audit.filter((r) => r.paneId === "w1:p1").map((r) => r.outcome)).toEqual(["approving", "approved"]);
-    // DROVR-24: a throwing sendKeys leaves this "approving" record with no
-    // outcome. This assertion documents the known gap, not the desired
-    // behaviour — flip it once DROVR-24 makes approvePermission itself
-    // record an outcome on a throw.
-    expect(audit.filter((r) => r.paneId === "w2:p1").map((r) => r.outcome)).toEqual(["approving"]);
+    // Previously this "approving" record was left stranded with no outcome
+    // line (the known DROVR-24 gap); approvePermission now writes a
+    // best-effort keys-failed outcome for the same attemptId before
+    // returning.
+    expect(audit.filter((r) => r.paneId === "w2:p1").map((r) => r.outcome)).toEqual(["approving", "keys-failed"]);
   });
 
   test("a pane whose approve attempt hangs past readTimeoutMs is failed, without blocking another pane's answer", async () => {
