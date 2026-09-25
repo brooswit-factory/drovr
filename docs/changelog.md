@@ -1,6 +1,42 @@
 # Changelog
 
-## 0.12.2
+## 0.13.0
+
+DROVR-24 and DROVR-33, both fleet-scan/auto-answer hardening so a failure
+under unattended use is loud, never silent.
+
+DROVR-33: a pane scan no longer turns "couldn't check" into "fine". Found by
+lead-bakr and lead-factory-dashboard reviewing bakr #42 (`bakr status
+--json`, BAKR-48) — their `status.v1` contract requires "couldn't check" to
+be `null`, never "down" and never "fine".
+
+- **`scanBlockingPrompts(client, { readTimeoutMs? })`** and
+  **`scanPendingPermissions(client, { readTimeoutMs? })`**: each returns
+  `{ prompts | pending, unreadable }`, where `unreadable` is every Claude
+  pane whose screen could not be read — `agent.read` rejected (`reason:
+  "error"`) or never settled within `readTimeoutMs` (`reason: "timeout"`,
+  default 1500ms). Previously a failed `agent.read` gave `screen = undefined`
+  and the pane was silently skipped (`listBlockingPrompts`), and
+  `readScreen(...).catch(() => "")` made an unreadable pane read as "no
+  pending prompt" (`listPendingPermissions`) — in both cases a caller could
+  not tell "not blocked" from "could not check". Reads run in parallel, so a
+  scan takes roughly the slowest read, capped by the deadline — not the sum
+  of every pane's read, and never unbounded, which is what let a hung
+  `herdr agent read` hold an entire scan open until the *caller's* own
+  timeout (bakr passes 15s) before this fix.
+- **`listBlockingPrompts` and `listPendingPermissions` are now thin wrappers**
+  over the two `scan*` functions above: same signature, same behaviour,
+  `unreadable` dropped. Every existing caller is unaffected.
+- A failure of `agent.list()` itself still rejects; the caller maps that to
+  "couldn't check anything", not an empty result.
+- `autoAnswerPermissions` still scans with `listPendingPermissions`, not
+  `scanPendingPermissions` — its own scan step still silently drops an
+  unreadable pane rather than reporting it `failed`. Left to the caller; see
+  `docs/permission-approval.md`.
+- New exports: `scanBlockingPrompts`, `scanPendingPermissions`,
+  `UnreadablePane`, `PaneReadDeadlineOptions`, `ScanBlockingPromptsOptions`,
+  `ScanPendingPermissionsOptions` (`src/pane-scan.ts`). See
+  `docs/permission-approval.md`.
 
 DROVR-24: a throw after the `approving` audit line used to escape
 `approvePermission` entirely, stranding that record with no outcome.

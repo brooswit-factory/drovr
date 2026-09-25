@@ -1,7 +1,10 @@
 import { stripTerminalEscapes } from "./blocking-conditions.js";
 import type { DrovrClient } from "./drovr-client.js";
+import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane } from "./pane-scan.js";
 import { classifyPermissionPrompt } from "./permission-approval.js";
 import { classifyStartupPrompt } from "./resident-host.js";
+
+export type { UnreadablePane } from "./pane-scan.js";
 
 /**
  * Every dialog a Claude pane is waiting on, so nothing hangs unseen.
@@ -56,25 +59,50 @@ export function classifyBlockingScreen(raw: string): Pick<BlockingPrompt, "kind"
   return { kind: "unknown", name: undefined, excerpt: excerptOf(screen) };
 }
 
+export interface ScanBlockingPromptsOptions extends PaneReadDeadlineOptions {}
+
+export interface ScanBlockingPromptsResult {
+  prompts: BlockingPrompt[];
+  unreadable: UnreadablePane[];
+}
+
 /**
  * Every Claude pane waiting on a dialog. Every Claude pane's screen is read,
- * whatever herdr says its status is. A pane whose screen cannot be read is
- * skipped, never reported as blocked.
+ * whatever herdr says its status is, bounded by `readTimeoutMs` (default
+ * 1500) per pane so one hung `agent.read` can't hold up the whole scan —
+ * reads run in parallel, so the scan takes roughly the slowest read, capped
+ * by the deadline. A pane whose screen cannot be read — it rejects, or it
+ * never resolves within the deadline — is reported in `unreadable`, never
+ * silently treated as "not blocked".
  */
-export async function listBlockingPrompts(client: ScanClient): Promise<BlockingPrompt[]> {
+export async function scanBlockingPrompts(client: ScanClient, options: ScanBlockingPromptsOptions = {}): Promise<ScanBlockingPromptsResult> {
   const { agents } = await client.agent.list();
   const found = await Promise.all(agents.filter((agent) => agent.agent === "claude").map(async (agent) => {
-    const screen = await client.agent.read({ target: agent.pane_id, source: "visible", strip_ansi: true })
-      .then((read) => read.read.text, () => undefined);
-    const blocking = screen === undefined ? undefined : classifyBlockingScreen(screen);
-    return blocking === undefined ? [] : [{
+    const base = {
       paneId: agent.pane_id,
       label: agent.name ?? undefined,
       sessionId: agent.agent_session?.kind === "id" ? agent.agent_session.value : undefined,
       cwd: agent.cwd ?? undefined,
       herdrStatus: agent.agent_status,
-      ...blocking,
-    }];
+    };
+    const read = await readPaneWithDeadline(client, agent.pane_id, options);
+    if (read.kind !== "ok") return { unreadable: { ...base, reason: read.kind, detail: read.detail } };
+    const blocking = classifyBlockingScreen(read.screen);
+    return blocking === undefined ? {} : { prompt: { ...base, ...blocking } };
   }));
-  return found.flat();
+  return {
+    prompts: found.flatMap((r) => (r.prompt ? [r.prompt] : [])),
+    unreadable: found.flatMap((r) => (r.unreadable ? [r.unreadable] : [])),
+  };
+}
+
+/**
+ * Every Claude pane waiting on a dialog. A thin wrapper over
+ * `scanBlockingPrompts` that drops its `unreadable` list — a pane whose
+ * screen could not be read is silently absent from the result, exactly as
+ * before. Callers that need to tell "not blocked" apart from "could not
+ * check" should call `scanBlockingPrompts` directly.
+ */
+export async function listBlockingPrompts(client: ScanClient): Promise<BlockingPrompt[]> {
+  return (await scanBlockingPrompts(client)).prompts;
 }

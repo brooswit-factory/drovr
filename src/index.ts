@@ -189,6 +189,7 @@ export {
 export {
   classifyPermissionPrompt,
   listPendingPermissions,
+  scanPendingPermissions,
   approvePermission,
   autoAnswerPermissions,
   type PermissionPrompt,
@@ -200,13 +201,24 @@ export {
   type PermissionApprovalDeps,
   type AutoAnswerPermissionsOptions,
   type AutoAnswerPermissionResult,
+  type ScanPendingPermissionsOptions,
+  type ScanPendingPermissionsResult,
 } from "./permission-approval.js";
 export {
   listBlockingPrompts,
+  scanBlockingPrompts,
   classifyBlockingScreen,
   type BlockingPrompt,
   type BlockingPromptKind,
+  type ScanBlockingPromptsOptions,
+  type ScanBlockingPromptsResult,
 } from "./blocking-prompts.js";
+export {
+  readPaneWithDeadline,
+  type UnreadablePane,
+  type PaneReadDeadlineOptions,
+  type PaneReadOutcome,
+} from "./pane-scan.js";
 export {
   InboxRelay,
   connectChannelSource,

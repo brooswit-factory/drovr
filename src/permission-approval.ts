@@ -3,6 +3,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { stripTerminalEscapes } from "./blocking-conditions.js";
 import type { DrovrClient } from "./drovr-client.js";
+import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane } from "./pane-scan.js";
 
 /**
  * Approving a session's pending tool-permission prompt without a terminal.
@@ -126,24 +127,53 @@ export interface PendingPermission extends PermissionPrompt {
 const readScreen = (client: ApprovalClient, paneId: string): Promise<string> =>
   client.agent.read({ target: paneId, source: "visible", strip_ansi: true }).then((read) => read.read.text);
 
+export interface ScanPendingPermissionsOptions extends PaneReadDeadlineOptions {}
+
+export interface ScanPendingPermissionsResult {
+  pending: PendingPermission[];
+  unreadable: UnreadablePane[];
+}
+
 /**
  * Every Claude pane showing a tool-permission prompt. Every Claude pane's
  * screen is read, not only those herdr marks blocked: a dialog herdr reports
- * as idle is exactly what Drovr exists to catch.
+ * as idle is exactly what Drovr exists to catch. Bounded by `readTimeoutMs`
+ * (default 1500) per pane so one hung `agent.read` can't hold up the whole
+ * scan — reads run in parallel, so the scan takes roughly the slowest read,
+ * capped by the deadline. A pane whose screen cannot be read — it rejects,
+ * or it never resolves within the deadline — is reported in `unreadable`,
+ * never silently treated as "no pending prompt".
  */
-export async function listPendingPermissions(client: ApprovalClient): Promise<PendingPermission[]> {
+export async function scanPendingPermissions(client: ApprovalClient, options: ScanPendingPermissionsOptions = {}): Promise<ScanPendingPermissionsResult> {
   const { agents } = await client.agent.list();
-  const pending = await Promise.all(agents.filter((agent) => agent.agent === "claude").map(async (agent) => {
-    const prompt = classifyPermissionPrompt(await readScreen(client, agent.pane_id).catch(() => ""));
-    return prompt === undefined ? [] : [{
-      ...prompt,
+  const found = await Promise.all(agents.filter((agent) => agent.agent === "claude").map(async (agent) => {
+    const base = {
       paneId: agent.pane_id,
       label: agent.name ?? undefined,
       sessionId: agent.agent_session?.kind === "id" ? agent.agent_session.value : undefined,
       cwd: agent.cwd ?? undefined,
-    }];
+      herdrStatus: agent.agent_status,
+    };
+    const read = await readPaneWithDeadline(client, agent.pane_id, options);
+    if (read.kind !== "ok") return { unreadable: { ...base, reason: read.kind, detail: read.detail } };
+    const prompt = classifyPermissionPrompt(read.screen);
+    return prompt === undefined ? {} : { pending: { ...prompt, paneId: base.paneId, label: base.label, sessionId: base.sessionId, cwd: base.cwd } };
   }));
-  return pending.flat();
+  return {
+    pending: found.flatMap((r) => (r.pending ? [r.pending] : [])),
+    unreadable: found.flatMap((r) => (r.unreadable ? [r.unreadable] : [])),
+  };
+}
+
+/**
+ * Every Claude pane showing a tool-permission prompt. A thin wrapper over
+ * `scanPendingPermissions` that drops its `unreadable` list — a pane whose
+ * screen could not be read is silently absent from the result, exactly as
+ * before. Callers that need to tell "no pending prompt" apart from "could
+ * not check" should call `scanPendingPermissions` directly.
+ */
+export async function listPendingPermissions(client: ApprovalClient): Promise<PendingPermission[]> {
+  return (await scanPendingPermissions(client)).pending;
 }
 
 export interface ApprovePermissionRequest {
