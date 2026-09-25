@@ -1,11 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.12.0
 
 Brooswit's top Drovr priority (DROVR-37): no agent should sit frozen on
 Claude's tool-permission dialog waiting for a human. `autoAnswerPermissions`
-is the first unattended pass — DROVR-40 (a live proof on a real pane, plus
-host wiring) still has to land before this ships as a release.
+is the first unattended pass. Its live proof on a real pane and the host
+wiring are still to come (DROVR-40); this release is the library function.
 
 - **`autoAnswerPermissions(client, { auditPath, operator = "drovr-auto",
   readTimeoutMs? })`**: scans every pane with `listPendingPermissions` and
