@@ -104,6 +104,14 @@ const WRAPPED_NON_RULE_PROMPT = [
   " Esc to cancel · Tab to amend",
 ].join("\n");
 
+// Synthetic: the same wrap as WRAPPED_BASH_PROMPT, but the continuation line
+// starts at column 0 (unindented) instead of lining up under the option
+// text. It must end option collection, not fold into the previous option.
+const UNINDENTED_STRAY_LINE_PROMPT = WRAPPED_BASH_PROMPT.replace(
+  "      commands in /tmp/drovr-herdr-proof.41-neg",
+  "commands in /tmp/drovr-herdr-proof.41-neg",
+);
+
 describe("classifyPermissionPrompt", () => {
   test("reads the tool, the request, the options and the cursor off the measured dialog", () => {
     const prompt = classifyPermissionPrompt(BASH_PROMPT)!;
@@ -153,6 +161,13 @@ describe("classifyPermissionPrompt", () => {
     const prompt = classifyPermissionPrompt(WRAPPED_RULE_AT_THREE_PROMPT)!;
     expect(prompt.options).toHaveLength(4);
     expect(prompt.options[3]).toBe("No");
+  });
+
+  test("an unindented stray line ends option collection instead of folding into the previous option", () => {
+    // The stray line breaks the scan after only 2 options, so option 4 ("No")
+    // is never reached and the dialog fails the "must offer No" check below —
+    // proof the line was not silently absorbed into option 2's text.
+    expect(classifyPermissionPrompt(UNINDENTED_STRAY_LINE_PROMPT)).toBeUndefined();
   });
 });
 

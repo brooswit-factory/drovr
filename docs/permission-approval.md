@@ -173,10 +173,37 @@ the wrapped continuation line ("      commands in /tmp/…") and the footer
 check then looked at the wrong window. `listPendingPermissions` never
 surfaced the pane, so `autoAnswerPermissions` never saw it — worse than
 "skipped", because an agent sitting on it would sit frozen exactly like the
-case DROVR-37 exists to fix. Fixed: a non-option line now folds into the
-option it continues unless it's blank, the "Esc to cancel" footer, or a fresh
-separator/question, any of which still ends the scan. Covered by regression
-tests built from this exact raw screen in `test/permission-approval.test.ts`.
+case DROVR-37 exists to fix.
+
+**This was silently indistinguishable from "genuinely no pending prompt."**
+`classifyPermissionPrompt` returning `undefined` is the same return value for
+a pane showing this dialog and a pane showing nothing of interest at all —
+there was no separate signal (an error, a partial match, a different return
+shape) marking "a dialog is here but couldn't be parsed." `listPendingPermissions`
+therefore omitted a genuinely blocked pane with no indication anything had
+gone wrong, which is exactly the class of failure that makes this dangerous:
+nothing in the pass, the audit log, or the result array said the pane had
+been missed.
+
+This is the same *class* of failure DROVR-33 tracks (an unreadable pane also
+reads as "no prompt", with no per-read deadline in `listPendingPermissions`'s
+own scan) — **related, but distinct, and not fixed here.** DROVR-33 is about
+the *screen read itself* failing (a pane that can't be read at all, or hangs
+being read); this was a *successful* read of a well-formed, on-screen dialog
+that the *parser* then silently mis-cased due to terminal-width wrapping. Both
+end at the same observable symptom (a real dialog absent from
+`listPendingPermissions`'s results, no error raised), but the fix for one does
+not touch the other: this fix changes only how `classifyPermissionPrompt`
+folds wrapped lines: it has no effect on DROVR-33's read-level gap.
+
+Fixed: a non-option line now folds into the option it continues when it's
+indented continuation text (matching the wrap actually measured); a blank
+line, an unindented stray line, the "Esc to cancel" footer, or a fresh
+separator/question still ends the scan. Covered by regression tests built
+from this exact raw screen in `test/permission-approval.test.ts`, plus
+synthetic variants for a wrapped option at position 3, a wrapped non-"Yes,
+and…" option 2, and an unindented stray line (which must end the scan, not
+fold in).
 
 ## Live proof (DROVR-41, 2026-09-25)
 

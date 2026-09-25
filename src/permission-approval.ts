@@ -54,6 +54,8 @@ export interface PermissionPrompt {
 const SEPARATOR = /^\s*─{10,}\s*$/;
 const QUESTION = /^\s*(Do you want to .+\?)\s*$/;
 const OPTION = /^\s*(❯\s*)?\d+\.\s+(.+?)\s*$/;
+/** A wrapped option's continuation line: indented text with no number of its own. */
+const CONTINUATION = /^\s+\S/;
 
 /** Claude's tool-permission dialog on a screen, or undefined for anything else. */
 export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefined {
@@ -72,13 +74,14 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
       continue;
     }
     // A long option can wrap onto a following physical line with no number
-    // of its own. Fold it back into the option it continues rather than
-    // treating it as the end of the list — otherwise the footer check below
-    // looks at the wrong window and the whole dialog reads as "not a
-    // prompt", which is worse than unanswered: it becomes invisible to
-    // listPendingPermissions entirely. A blank line, a fresh separator or
-    // question, or the footer itself still ends the list.
-    const continuation = options.length > 0 && line.trim() !== "" && !SEPARATOR.test(line) && !QUESTION.test(line) && !/Esc to cancel/.test(line);
+    // of its own, indented like the measured wrap. Fold it back into the
+    // option it continues rather than treating it as the end of the list —
+    // otherwise the footer check below looks at the wrong window and the
+    // whole dialog reads as "not a prompt", which is worse than unanswered:
+    // it becomes invisible to listPendingPermissions entirely. A blank
+    // line, an unindented stray line, a fresh separator or question, or the
+    // footer itself still ends the list.
+    const continuation = options.length > 0 && CONTINUATION.test(line) && !SEPARATOR.test(line) && !QUESTION.test(line) && !/Esc to cancel/.test(line);
     if (!continuation) break;
     options[options.length - 1] = `${options[options.length - 1]} ${line.trim()}`;
   }
