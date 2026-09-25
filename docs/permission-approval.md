@@ -115,6 +115,16 @@ option, which is option 2 in the dialog measured above, and nothing else.
   independent attempt; one throwing, or (when `readTimeoutMs` is given)
   taking longer than the deadline, becomes a `failed` result for that pane
   alone; every other pane's result is unaffected.
+- **`readTimeoutMs` bounds the whole approve attempt, not a single read, and
+  does not cancel it.** It's a deadline on the entire `approvePermission`
+  call for one pane — the re-read, the keys, and the wait for the prompt to
+  clear — not on any one `read()`. A pane past it gets `outcome: "failed",
+  reason: "timeout"`, but `approvePermission` is not cancelled: it keeps
+  running in the background and may still press keys and write `approved` to
+  the audit log afterwards, or a deadline shorter than the verify window can
+  fire while a real answer is still landing. **A `timeout` result means the
+  outcome is unknown, not "nothing pressed"** — check the audit log for that
+  pane before treating it as untouched.
 - **Result mapping.** `ok: true` is `answered`. Of `approvePermission`'s
   refusal reasons, `prompt-changed`, `no-prompt` and `option-missing` map to
   `skipped` (the operator-visible reason is `approvePermission`'s own

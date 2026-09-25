@@ -248,7 +248,15 @@ export interface AutoAnswerPermissionsOptions {
   auditPath: string;
   /** Recorded as the audit operator on every attempt. Default lets an unattended pass be told apart from a human's. */
   operator?: string;
-  /** Per-pane deadline for the whole approve attempt. A pane past it is `failed`, never left out of the results. */
+  /**
+   * Deadline for the whole per-pane `approvePermission` attempt (not a single
+   * read). A pane past it is `failed` with `reason: "timeout"`, never left
+   * out of the results — but `approvePermission` is not cancelled, so a
+   * `timeout` result means the outcome is UNKNOWN, not "nothing pressed":
+   * the call keeps running and may still press keys and record `approved` in
+   * the audit log after this function has already returned. Check the audit
+   * log for a pane that timed out.
+   */
   readTimeoutMs?: number;
 }
 
@@ -270,8 +278,10 @@ const AUTO_ANSWER_TIMEOUT = Symbol("auto-answer-timeout");
  * `scope: "always"` option, which is option 2 on the current dialog, and
  * nothing else. A prompt whose option 2 isn't that "Yes, and …" option is
  * skipped before `approvePermission` is ever called, so no "approving" audit
- * record is written for it. One pane throwing or hanging is caught and
- * reported as `failed` for that pane; it never fails the rest of the pass.
+ * record is written for it. One pane throwing, or (with `readTimeoutMs` set)
+ * missing its deadline, is caught and reported as `failed` for that pane; it
+ * never fails the rest of the pass. A `timeout` failure does not mean nothing
+ * was pressed — see `AutoAnswerPermissionsOptions.readTimeoutMs`.
  */
 export async function autoAnswerPermissions(
   client: ApprovalClient,
@@ -296,11 +306,25 @@ export async function autoAnswerPermissions(
         auditPath: options.auditPath,
       });
       attempt.catch(() => undefined);
-      const result: ApprovePermissionResult | typeof AUTO_ANSWER_TIMEOUT = options.readTimeoutMs === undefined
-        ? await attempt
-        : await Promise.race([attempt, wait(options.readTimeoutMs).then((): typeof AUTO_ANSWER_TIMEOUT => AUTO_ANSWER_TIMEOUT)]);
+      let result: ApprovePermissionResult | typeof AUTO_ANSWER_TIMEOUT;
+      if (options.readTimeoutMs === undefined) {
+        result = await attempt;
+      } else {
+        let timer: ReturnType<typeof setTimeout>;
+        const deadline = new Promise<typeof AUTO_ANSWER_TIMEOUT>((resolve) => {
+          timer = setTimeout(() => resolve(AUTO_ANSWER_TIMEOUT), options.readTimeoutMs);
+        });
+        try {
+          result = await Promise.race([attempt, deadline]);
+        } finally {
+          clearTimeout(timer!);
+        }
+      }
       if (result === AUTO_ANSWER_TIMEOUT) {
-        return { ...base, outcome: "failed", reason: "timeout", detail: `no result from approvePermission within ${options.readTimeoutMs}ms` };
+        return {
+          ...base, outcome: "failed", reason: "timeout",
+          detail: `approvePermission did not return within ${options.readTimeoutMs}ms; it is still running and the outcome is unknown — it may still press keys and record "approved" in the audit log, check it before retrying this pane`,
+        };
       }
       if (result.ok) return { ...base, outcome: "answered", tool: result.tool, request: result.request };
       if (result.reason === "audit-failed" || result.reason === "not-cleared" || result.reason === "invalid-operator") {
@@ -312,5 +336,3 @@ export async function autoAnswerPermissions(
     }
   }));
 }
-
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

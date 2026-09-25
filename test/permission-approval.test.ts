@@ -159,8 +159,9 @@ describe("autoAnswerPermissions", () => {
     return text.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line));
   }
 
-  function autoClient(panes: Record<string, { reads: string[]; throwOnSendKeys?: boolean }>) {
+  function autoClient(panes: Record<string, { reads: string[]; throwOnSendKeys?: boolean; hangAfterReads?: number }>) {
     const keysSent: Record<string, string[][]> = {};
+    const readCounts: Record<string, number> = {};
     const client = {
       agent: {
         list: async () => ({
@@ -170,6 +171,10 @@ describe("autoAnswerPermissions", () => {
         get: async (target: string) => ({ type: "agent_info", agent: { pane_id: target, name: target } }) as never,
         read: async (p: { target: string }) => {
           const script = panes[p.target];
+          const count = (readCounts[p.target] = (readCounts[p.target] ?? 0) + 1);
+          // Simulates a pane approvePermission can never finish reading, e.g. a
+          // wedged terminal: the read call itself never settles.
+          if (script?.hangAfterReads !== undefined && count > script.hangAfterReads) return new Promise<never>(() => undefined);
           const text = script && script.reads.length > 0 ? script.reads.shift()! : AFTER;
           return { type: "pane_read", read: { text } } as never;
         },
@@ -230,6 +235,25 @@ describe("autoAnswerPermissions", () => {
     expect(keysSent["w2:p1"]).toEqual([["down", "enter"]]);
     const audit = await readAudit(path);
     expect(audit.filter((r) => r.paneId === "w1:p1").map((r) => r.outcome)).toEqual(["approving", "approved"]);
+    // DROVR-24: a throwing sendKeys leaves this "approving" record with no
+    // outcome. This assertion documents the known gap, not the desired
+    // behaviour — flip it once DROVR-24 makes approvePermission itself
+    // record an outcome on a throw.
     expect(audit.filter((r) => r.paneId === "w2:p1").map((r) => r.outcome)).toEqual(["approving"]);
+  });
+
+  test("a pane whose approve attempt hangs past readTimeoutMs is failed, without blocking another pane's answer", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({
+      "w1:p1": { reads: [BASH_PROMPT, BASH_PROMPT, AFTER] },
+      "w2:p1": { reads: [BASH_PROMPT], hangAfterReads: 1 }, // scan succeeds; approvePermission's own re-read never resolves
+    });
+    const results = await autoAnswerPermissions(client, { auditPath: path, readTimeoutMs: 20 });
+    const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
+    expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered", tool: "Bash command" });
+    expect(byPane["w2:p1"]).toMatchObject({ outcome: "failed", reason: "timeout" });
+    expect((byPane["w2:p1"] as { detail: string }).detail).toMatch(/outcome is unknown/);
+    expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
+    expect(keysSent["w2:p1"]).toBeUndefined();
   });
 });

@@ -16,8 +16,10 @@ host wiring) still has to land before this ships as a release.
   `approving` audit record. Answers are audited under `drovr-auto` by
   default, distinct from a human operator's name. One pane throwing, or (with
   `readTimeoutMs` set) missing its deadline, is `failed` for that pane alone
-  and never stops the rest. See `docs/permission-approval.md` for the full
-  result-mapping table.
+  and never stops the rest. `readTimeoutMs` bounds the whole approve attempt
+  but does not cancel it, so a `timeout` result means the outcome is unknown
+  (check the audit log), not "nothing pressed". See
+  `docs/permission-approval.md` for the full result-mapping table.
 - DROVR-24 and DROVR-33 sit under this pass but are deliberately not fixed
   here (see `docs/permission-approval.md`); `autoAnswerPermissions` only
   guarantees that a throwing or hung **approve** attempt can't take the whole
