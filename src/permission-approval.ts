@@ -166,7 +166,11 @@ export type ApprovePermissionRefusalReason =
   /** The audit record could not be written, so nothing was pressed. */
   | "audit-failed"
   /** Keys were sent but the same prompt is still on screen. */
-  | "not-cleared";
+  | "not-cleared"
+  /** `sendKeys` itself threw. Whether a key reached the pane is unknown; never retried. */
+  | "keys-failed"
+  /** The verify loop threw after keys were sent (e.g. `deps.now`/`deps.wait`). Whether the prompt cleared is unknown; never retried. */
+  | "verify-failed";
 
 export type ApprovePermissionResult =
   | { ok: true; attemptId: string; tool: string; request: string; scope: PermissionScope }
@@ -198,6 +202,14 @@ const AUDIT_REQUEST_CHARS = 500;
  * re-read first and a changed prompt is refused, so an approval can never land
  * on a prompt that appeared after the operator looked. An audit record is
  * written before any key is sent, and a second one with the outcome after.
+ *
+ * Once that `approving` record is written, nothing past this point escapes as
+ * a throw: a `sendKeys` that rejects is `keys-failed`, and a verify-loop
+ * throw (`deps.now`/`deps.wait`; `readScreen` failures are already caught) is
+ * `verify-failed`. Both make a best-effort outcome `appendAudit` for the same
+ * `attemptId` before returning `ok: false` — a failed write there is itself
+ * swallowed (`.catch(() => undefined)`), so it never masks the result. Keys
+ * are never retried either way.
  */
 export async function approvePermission(
   client: ApprovalClient,
@@ -242,20 +254,32 @@ export async function approvePermission(
   } catch (error) {
     return { ok: false, attemptId, reason: "audit-failed", detail: `audit not written, nothing pressed: ${error instanceof Error ? error.message : String(error)}` };
   }
-  await client.agent.sendKeys({ target: request.paneId, keys: keysFor(prompt, target) });
+  try {
+    await client.agent.sendKeys({ target: request.paneId, keys: keysFor(prompt, target) });
+  } catch (error) {
+    const detail = `whether a key may have reached the pane is unknown: ${error instanceof Error ? error.message : String(error)}`;
+    await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "keys-failed", detail })).catch(() => undefined);
+    return { ok: false, attemptId, reason: "keys-failed", detail };
+  }
 
-  const deadline = deps.now().getTime() + deps.verifyTimeoutMs;
-  for (;;) {
-    const still = classifyPermissionPrompt(await readScreen(client, request.paneId).catch(() => ""));
-    if (still?.promptId !== request.promptId) {
-      await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "approved" })).catch(() => undefined);
-      return { ok: true, attemptId, tool: prompt.tool, request: prompt.request, scope };
+  try {
+    const deadline = deps.now().getTime() + deps.verifyTimeoutMs;
+    for (;;) {
+      const still = classifyPermissionPrompt(await readScreen(client, request.paneId).catch(() => ""));
+      if (still?.promptId !== request.promptId) {
+        await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "approved" })).catch(() => undefined);
+        return { ok: true, attemptId, tool: prompt.tool, request: prompt.request, scope };
+      }
+      if (deps.now().getTime() >= deadline) {
+        await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "not-cleared" })).catch(() => undefined);
+        return { ok: false, attemptId, reason: "not-cleared", detail: `keys were sent but pane ${request.paneId} still shows the prompt` };
+      }
+      await deps.wait(deps.pollMs);
     }
-    if (deps.now().getTime() >= deadline) {
-      await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "not-cleared" })).catch(() => undefined);
-      return { ok: false, attemptId, reason: "not-cleared", detail: `keys were sent but pane ${request.paneId} still shows the prompt` };
-    }
-    await deps.wait(deps.pollMs);
+  } catch (error) {
+    const detail = `keys were sent but whether pane ${request.paneId} shows the prompt is unknown: ${error instanceof Error ? error.message : String(error)}`;
+    await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "verify-failed", detail })).catch(() => undefined);
+    return { ok: false, attemptId, reason: "verify-failed", detail };
   }
 }
 
@@ -343,7 +367,10 @@ export async function autoAnswerPermissions(
         };
       }
       if (result.ok) return { ...base, outcome: "answered", tool: result.tool, request: result.request };
-      if (result.reason === "audit-failed" || result.reason === "not-cleared" || result.reason === "invalid-operator") {
+      if (
+        result.reason === "audit-failed" || result.reason === "not-cleared" || result.reason === "invalid-operator" ||
+        result.reason === "keys-failed" || result.reason === "verify-failed"
+      ) {
         return { ...base, outcome: "failed", reason: result.reason, detail: result.detail };
       }
       return { ...base, outcome: "skipped", reason: result.detail };

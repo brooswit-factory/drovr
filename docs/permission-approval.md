@@ -69,6 +69,20 @@ permission rule that the session reads at start changes that outcome.
   `option` and `outcome`, and the file is created mode 0600.
 - **Verified.** Success means the prompt left the screen. Keys that leave it
   there are `not-cleared`, never claimed as approved.
+- **A throw after `approving` never escapes.** If `sendKeys` itself rejects
+  (herdr socket gone, pane closed, a timeout), the call never throws out of
+  `approvePermission`: it makes a best-effort outcome `appendAudit`
+  (`keys-failed`, same `attemptId`) and returns `ok: false` — the detail says
+  whether a key may have reached the pane is unknown. A throw inside the
+  verify loop itself (`deps.now`/`deps.wait`; a `readScreen` failure is
+  already caught and treated as "still showing the prompt") is the same shape
+  under a distinct reason, `verify-failed`, because by then `sendKeys` did
+  resolve — the ambiguity is only over whether the prompt cleared, not
+  whether the keys landed. Either way the outcome write failing is itself
+  swallowed (`.catch(() => undefined)`, like every other outcome write), so
+  it can never mask the `ok: false` result, and the keys are never retried.
+  Treat both as a **failure**, not a refusal — like `not-cleared`, not like
+  `prompt-changed` or `option-missing`.
 
 Every Claude pane's screen is read, not only those herdr marks `blocked`,
 because a dialog herdr misreports as idle is exactly what Drovr is for.
@@ -129,19 +143,13 @@ option, which is option 2 in the dialog measured above, and nothing else.
   refusal reasons, `prompt-changed`, `no-prompt` and `option-missing` map to
   `skipped` (the operator-visible reason is `approvePermission`'s own
   `detail`) because nothing was pressed and the pane may simply need a fresh
-  scan; `invalid-operator`, `audit-failed` and `not-cleared` map to `failed`,
-  because those name a problem with the attempt itself, not a stale read. A
-  pane that throws, or that misses its `readTimeoutMs` deadline, is also
-  `failed`.
+  scan; `invalid-operator`, `audit-failed`, `not-cleared`, `keys-failed` and
+  `verify-failed` map to `failed`, because those name a problem with the
+  attempt itself, not a stale read. A pane that throws, or that misses its
+  `readTimeoutMs` deadline, is also `failed`.
 
 **Left to their own tickets, deliberately not fixed here:**
 
-- **DROVR-24** (a throwing `sendKeys` leaves an `approving` audit record with
-  no outcome) is not fixed inside `approvePermission` itself — that record
-  still stands incomplete on disk after a throw. `autoAnswerPermissions` only
-  guarantees that such a throw becomes a `failed` result for that pane
-  instead of rejecting the whole pass; the audit trail's own gap is
-  unchanged.
 - **DROVR-33** (an unreadable pane reads as "no prompt", and
   `listPendingPermissions`'s own scan has no per-read deadline) is unchanged
   in `listPendingPermissions`, which `autoAnswerPermissions` calls as its scan
@@ -149,6 +157,35 @@ option, which is option 2 in the dialog measured above, and nothing else.
   results, not reported as `failed`. `readTimeoutMs` only bounds the
   **approve** attempt for a pane the scan already found; it does not bound
   the scan itself.
+
+## A throw after `approving` used to escape, leaving the audit record stranded
+
+Before this fix, `approvePermission` wrote the `approving` audit record and
+then called `client.agent.sendKeys` with no guard. A `sendKeys` that rejected
+(herdr socket gone, pane closed, a timeout) escaped as a thrown exception:
+the caller got an error instead of an `ApprovePermissionResult`, and the
+audit trail was left holding `approving` with no matching outcome line for
+that `attemptId` — the same *stranded record* class of gap DROVR-33 and the
+wrapped-option bug below both belong to, just at a different point in the
+call. `deps.now()`/`deps.wait()` inside the verify loop (run after `sendKeys`
+resolves, to confirm the prompt actually cleared) could throw the same way;
+`readScreen` failures inside that loop were already caught.
+
+Fixed: both are now caught. A throwing `sendKeys` returns `{ ok: false,
+reason: "keys-failed", detail }`, where the detail says whether a key may
+have reached the pane is unknown. A throw inside the verify loop returns the
+same shape under `reason: "verify-failed"` — a distinct reason because by
+that point `sendKeys` already resolved, so the ambiguity is only over whether
+the prompt cleared, not whether the keys landed. Both make a best-effort
+outcome `appendAudit` (same `attemptId`) before returning, and a failure to
+write *that* record is itself swallowed so it can never mask the result —
+matching every other outcome write in this function. Keys are never retried.
+`autoAnswerPermissions` maps both reasons to `failed` (see "Result mapping"
+above), like `not-cleared` and `audit-failed`.
+
+Covered by regression tests in `test/permission-approval.test.ts`: a fake
+client whose `sendKeys` rejects, and one whose outcome-audit write also
+rejects after that.
 
 ## A wrapped option used to be invisible, not just unanswered
 
