@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+Brooswit's top Drovr priority (DROVR-37): no agent should sit frozen on
+Claude's tool-permission dialog waiting for a human. `autoAnswerPermissions`
+is the first unattended pass — DROVR-40 (a live proof on a real pane, plus
+host wiring) still has to land before this ships as a release.
+
+- **`autoAnswerPermissions(client, { auditPath, operator = "drovr-auto",
+  readTimeoutMs? })`**: scans every pane with `listPendingPermissions` and
+  presses only the `scope: "always"` option, which is option 2 in the
+  measured dialog — the prompt's own `options` are checked before
+  `approvePermission` is ever called, so a dialog whose option 2 isn't the
+  "Yes, and …" stored-rule option is `skipped` with nothing pressed and no
+  `approving` audit record. Answers are audited under `drovr-auto` by
+  default, distinct from a human operator's name. One pane throwing, or (with
+  `readTimeoutMs` set) missing its deadline, is `failed` for that pane alone
+  and never stops the rest. See `docs/permission-approval.md` for the full
+  result-mapping table.
+- DROVR-24 and DROVR-33 sit under this pass but are deliberately not fixed
+  here (see `docs/permission-approval.md`); `autoAnswerPermissions` only
+  guarantees that a throwing or hung **approve** attempt can't take the whole
+  pass down with it.
+
 ## 0.11.1
 
 Codex usage limits are recognised, so a Codex worker at its limit is replaced

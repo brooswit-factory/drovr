@@ -82,3 +82,60 @@ through `claude attach`.
 `scripts/verify-permission-approve.ts` then lists it, refuses a stale
 `promptId`, approves the real one once, and checks that the command ran.
 Both passed on 2026-09-18.
+
+## Unattended: `autoAnswerPermissions`
+
+```ts
+const results = await autoAnswerPermissions(client, {
+  auditPath: `${homedir()}/.local/state/bakr/permission-approvals.jsonl`,
+  operator: "drovr-auto",  // default; pass one only to override it
+  readTimeoutMs: 10_000,   // optional per-pane deadline
+});
+// [{ paneId: "w1:p1", label, outcome: "answered", tool, request }
+//  { paneId: "w2:p1", label, outcome: "skipped", reason }
+//  { paneId: "w3:p1", label, outcome: "failed", reason, detail }]
+```
+
+One unattended pass over every pane `listPendingPermissions` reports, with no
+operator in the loop: every prompt is answered with the `scope: "always"`
+option, which is option 2 in the dialog measured above, and nothing else.
+
+- **Option rule.** Before `approvePermission` is ever called, the prompt's own
+  `options` are checked: only when the "Yes, and …" stored-rule option (never
+  the auto-mode one) sits at position 2 does the pane get an approve attempt.
+  A prompt where it sits elsewhere, or is absent, is `skipped` with a reason
+  naming what was actually at that position — no key is pressed and no
+  `approving` audit record is written for it, because the check runs before
+  the call that would write one.
+- **Audited as `drovr-auto`.** The default `operator`, distinct from a human
+  name, so an unattended answer is never mistaken for one a person gave.
+  Every other `approvePermission` guarantee still applies: audit before keys,
+  re-read and refuse a changed prompt, success only once the prompt clears.
+- **One pane never stops the rest.** Each pending prompt gets its own
+  independent attempt; one throwing, or (when `readTimeoutMs` is given)
+  taking longer than the deadline, becomes a `failed` result for that pane
+  alone; every other pane's result is unaffected.
+- **Result mapping.** `ok: true` is `answered`. Of `approvePermission`'s
+  refusal reasons, `prompt-changed`, `no-prompt` and `option-missing` map to
+  `skipped` (the operator-visible reason is `approvePermission`'s own
+  `detail`) because nothing was pressed and the pane may simply need a fresh
+  scan; `invalid-operator`, `audit-failed` and `not-cleared` map to `failed`,
+  because those name a problem with the attempt itself, not a stale read. A
+  pane that throws, or that misses its `readTimeoutMs` deadline, is also
+  `failed`.
+
+**Left to their own tickets, deliberately not fixed here:**
+
+- **DROVR-24** (a throwing `sendKeys` leaves an `approving` audit record with
+  no outcome) is not fixed inside `approvePermission` itself — that record
+  still stands incomplete on disk after a throw. `autoAnswerPermissions` only
+  guarantees that such a throw becomes a `failed` result for that pane
+  instead of rejecting the whole pass; the audit trail's own gap is
+  unchanged.
+- **DROVR-33** (an unreadable pane reads as "no prompt", and
+  `listPendingPermissions`'s own scan has no per-read deadline) is unchanged
+  in `listPendingPermissions`, which `autoAnswerPermissions` calls as its scan
+  step: a pane that fails to read during the scan is silently absent from the
+  results, not reported as `failed`. `readTimeoutMs` only bounds the
+  **approve** attempt for a pane the scan already found; it does not bound
+  the scan itself.

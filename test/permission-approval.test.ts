@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { approvePermission, classifyPermissionPrompt, listPendingPermissions } from "../src/permission-approval.js";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { approvePermission, autoAnswerPermissions, classifyPermissionPrompt, listPendingPermissions } from "../src/permission-approval.js";
 
 // Measured on claude 2.1.277 in a herdr pane, 2026-09-18.
 const BASH_PROMPT = [
@@ -133,5 +136,100 @@ describe("approvePermission", () => {
     const result = await approvePermission(f.client, { ...base, promptId: idOf(BASH_PROMPT) }, f.deps);
     expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
     expect(f.audit.map((r) => r.outcome)).toEqual(["approving", "not-cleared"]);
+  });
+});
+
+// Option 2 is not the stored-rule "Yes, and …" option: it's the auto-mode
+// option instead, which sits at position 3.
+const NO_RULE_AT_TWO_PROMPT = BASH_PROMPT
+  .replace(" 2. Yes, and always allow access to /tmp/drovr-herdr-proof.hostres from this project", " 2. Yes, and switch to auto mode · auto mode handles these prompts for you")
+  .replace(" 3. Yes, and switch to auto mode · auto mode handles these prompts for you", " 3. Yes, and always allow access to /tmp/drovr-herdr-proof.hostres from this project");
+
+describe("autoAnswerPermissions", () => {
+  let dir: string | undefined;
+  afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); dir = undefined; });
+
+  async function freshAuditPath(): Promise<string> {
+    dir = await mkdtemp(join(tmpdir(), "drovr-auto-answer-"));
+    return join(dir, "audit.jsonl");
+  }
+
+  async function readAudit(path: string): Promise<Record<string, unknown>[]> {
+    const text = await readFile(path, "utf8").catch(() => "");
+    return text.split("\n").filter((line) => line.trim() !== "").map((line) => JSON.parse(line));
+  }
+
+  function autoClient(panes: Record<string, { reads: string[]; throwOnSendKeys?: boolean }>) {
+    const keysSent: Record<string, string[][]> = {};
+    const client = {
+      agent: {
+        list: async () => ({
+          type: "agent_list",
+          agents: Object.keys(panes).map((paneId) => ({ pane_id: paneId, agent: "claude", name: paneId, agent_status: "blocked" })),
+        }) as never,
+        get: async (target: string) => ({ type: "agent_info", agent: { pane_id: target, name: target } }) as never,
+        read: async (p: { target: string }) => {
+          const script = panes[p.target];
+          const text = script && script.reads.length > 0 ? script.reads.shift()! : AFTER;
+          return { type: "pane_read", read: { text } } as never;
+        },
+        sendKeys: async (p: { target: string; keys: string[] }) => {
+          (keysSent[p.target] ??= []).push(p.keys);
+          if (panes[p.target]?.throwOnSendKeys) throw new Error("sendKeys exploded");
+          return { type: "ok" } as never;
+        },
+      },
+    };
+    return { client, keysSent };
+  }
+
+  test("an option-2 'Yes, and …' prompt is answered exactly once, scope always, audited as drovr-auto", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({ "w1:p1": { reads: [BASH_PROMPT, BASH_PROMPT, AFTER] } });
+    const results = await autoAnswerPermissions(client, { auditPath: path });
+    expect(results).toEqual([{ paneId: "w1:p1", label: "w1:p1", outcome: "answered", tool: "Bash command", request: "touch drovr-permission-probe.txt\nCreate empty probe file" }]);
+    expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
+    const audit = await readAudit(path);
+    expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);
+    expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "always", option: "Yes, and always allow access to /tmp/drovr-herdr-proof.hostres from this project" });
+  });
+
+  test("a prompt whose option 2 is not 'Yes, and …' is skipped with nothing pressed", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({ "w1:p1": { reads: [NO_RULE_AT_TWO_PROMPT] } });
+    const results = await autoAnswerPermissions(client, { auditPath: path });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    expect((results[0] as { reason: string }).reason).toMatch(/not option 2/);
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(await readAudit(path)).toEqual([]);
+  });
+
+  test("a prompt that changed between scan and press is refused, nothing pressed", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({ "w1:p1": { reads: [BASH_PROMPT, OTHER_PROMPT] } });
+    const results = await autoAnswerPermissions(client, { auditPath: path });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    expect((results[0] as { reason: string }).reason).toMatch(/different prompt/);
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    const audit = await readAudit(path);
+    expect(audit.map((r) => r.outcome)).toEqual(["prompt-changed"]);
+  });
+
+  test("one pane throwing does not stop another pane from being answered", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({
+      "w1:p1": { reads: [BASH_PROMPT, BASH_PROMPT, AFTER] },
+      "w2:p1": { reads: [BASH_PROMPT, BASH_PROMPT], throwOnSendKeys: true },
+    });
+    const results = await autoAnswerPermissions(client, { auditPath: path });
+    const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
+    expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered", tool: "Bash command" });
+    expect(byPane["w2:p1"]).toMatchObject({ outcome: "failed", reason: "unexpected-error" });
+    expect((byPane["w2:p1"] as { detail: string }).detail).toMatch(/sendKeys exploded/);
+    expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
+    expect(keysSent["w2:p1"]).toEqual([["down", "enter"]]);
+    const audit = await readAudit(path);
+    expect(audit.filter((r) => r.paneId === "w1:p1").map((r) => r.outcome)).toEqual(["approving", "approved"]);
+    expect(audit.filter((r) => r.paneId === "w2:p1").map((r) => r.outcome)).toEqual(["approving"]);
   });
 });
