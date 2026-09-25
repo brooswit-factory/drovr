@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+BUTCHR-417: `InboxRelay.push()` race fix — a message pushed as the previous
+`drain()` loop finishes could be silently dropped forever.
+
+- **`InboxRelay` fix**: `push()` used to clear its internal `draining` flag
+  via `.finally()` chained onto the promise `drain()` returns. `drain()`'s
+  own while-loop exiting and that `.finally()` callback actually running are
+  two separate microtask turns; a `push()` landing in that gap saw `draining`
+  still truthy, skipped starting a new drain, and its message sat queued
+  forever with nothing left running to ever deliver it — deterministically,
+  not just under pathological timing, whenever a second message arrived
+  right as the first one finished draining. `draining` is now cleared inside
+  `drain()`'s own `try/finally`, as part of its synchronous continuation when
+  the loop exits, closing the gap. Found by BUTCHR-413 building the Codex
+  channel relay in butchr.
+
 ## 0.13.0
 
 DROVR-24 and DROVR-33, both fleet-scan/auto-answer hardening so a failure

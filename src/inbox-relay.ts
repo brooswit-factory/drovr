@@ -117,7 +117,7 @@ export class InboxRelay {
       const dropped = this.queue.shift()!;
       this.options.onEvent?.({ kind: "dropped", message: dropped, reason: `queue over ${this.maxQueue}` });
     }
-    this.draining ??= this.drain().finally(() => { this.draining = undefined; });
+    this.draining ??= this.drain();
   }
 
   /** Resolves once everything queued so far is delivered, or the relay stopped. */
@@ -127,36 +127,49 @@ export class InboxRelay {
 
   stop(): void { this.stopped = true; }
 
+  /**
+   * `draining` must be cleared as part of THIS function's own synchronous
+   * continuation, not via a `.finally()` chained onto the promise this
+   * returns (found by BUTCHR-413 in review): resolving that outer promise is
+   * itself a separate, later microtask, and a `push()` landing in the gap
+   * between the while-loop exiting and that resolution would see `draining`
+   * still truthy, skip starting a new drain, and leave its message queued
+   * forever with nothing left running to ever drain it.
+   */
   private async drain(): Promise<void> {
-    let failures = 0;
-    while (!this.stopped && this.queue.length > 0) {
-      const message = this.queue[0]!;
-      let outcome: DeliveryOutcome;
-      try {
-        outcome = await this.options.deliver(renderInboxTurn(message), message);
-      } catch (error) {
-        outcome = { status: "failed", detail: error instanceof Error ? error.message : String(error) };
+    try {
+      let failures = 0;
+      while (!this.stopped && this.queue.length > 0) {
+        const message = this.queue[0]!;
+        let outcome: DeliveryOutcome;
+        try {
+          outcome = await this.options.deliver(renderInboxTurn(message), message);
+        } catch (error) {
+          outcome = { status: "failed", detail: error instanceof Error ? error.message : String(error) };
+        }
+        if (outcome.status === "delivered") {
+          this.queue.shift();
+          failures = 0;
+          this.options.onEvent?.({ kind: "delivered", message });
+          continue;
+        }
+        if (outcome.status === "failed") failures++;
+        const permanent = outcome.status === "rejected";
+        if (permanent || failures >= this.maxAttempts) {
+          this.queue.shift();
+          failures = 0;
+          this.options.onEvent?.({
+            kind: "dropped",
+            message,
+            reason: permanent ? `rejected: ${outcome.status === "rejected" ? outcome.detail : ""}` : `failed ${this.maxAttempts} times`,
+          });
+          continue;
+        }
+        this.options.onEvent?.({ kind: "retrying", message, outcome });
+        await this.wait(this.retryMs);
       }
-      if (outcome.status === "delivered") {
-        this.queue.shift();
-        failures = 0;
-        this.options.onEvent?.({ kind: "delivered", message });
-        continue;
-      }
-      if (outcome.status === "failed") failures++;
-      const permanent = outcome.status === "rejected";
-      if (permanent || failures >= this.maxAttempts) {
-        this.queue.shift();
-        failures = 0;
-        this.options.onEvent?.({
-          kind: "dropped",
-          message,
-          reason: permanent ? `rejected: ${outcome.status === "rejected" ? outcome.detail : ""}` : `failed ${this.maxAttempts} times`,
-        });
-        continue;
-      }
-      this.options.onEvent?.({ kind: "retrying", message, outcome });
-      await this.wait(this.retryMs);
+    } finally {
+      this.draining = undefined;
     }
   }
 }

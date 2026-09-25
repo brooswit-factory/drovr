@@ -117,6 +117,32 @@ describe("InboxRelay", () => {
     expect(events.find((e) => e.kind === "dropped")).toMatchObject({ message: { content: "stuck" }, reason: "failed 3 times" });
   });
 
+  test("REGRESSION (BUTCHR-417): a push landing in the gap between drain()'s loop exiting and its promise settling is not dropped", async () => {
+    // Reproduces the race deterministically, no timing luck needed: the second
+    // push is scheduled two microtask-queue levels deep from the first
+    // message's own delivery, which is exactly what lands it in the one-tick
+    // gap between drain()'s while-loop exiting (message "one" shifted, queue
+    // empty) and the promise `drain()` returns actually settling. On the old
+    // `this.drain().finally(() => { this.draining = undefined })` code this
+    // push saw `draining` still truthy, was silently queued forever, and
+    // "two" was never delivered.
+    const delivered: string[] = [];
+    let relay!: InboxRelay;
+    relay = new InboxRelay({
+      deliver: async (_text, m) => {
+        delivered.push(m.content);
+        if (m.content === "one") {
+          queueMicrotask(() => queueMicrotask(() => relay.push(message("two"))));
+        }
+        return { status: "delivered" };
+      },
+    });
+    relay.push(message("one"));
+    await relay.idle();
+    expect(delivered).toEqual(["one", "two"]);
+    expect(relay.pending).toBe(0);
+  });
+
   test("past the queue limit the oldest are dropped, and each drop is reported", async () => {
     // An agent that stays busy holds the queue, so it fills.
     const events: InboxRelayEvent[] = [];
