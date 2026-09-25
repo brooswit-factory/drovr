@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.12.1
+
+DROVR-41: live proof of `autoAnswerPermissions` against a real herdr pane
+(both the answer and the skip path), and a classifier fix it found along the
+way.
+
+- **`classifyPermissionPrompt` fix**: an option long enough to wrap onto a
+  second physical line with no number of its own used to end the option
+  scan early, so the whole dialog read as "not a prompt" — invisible to
+  `listPendingPermissions`/`autoAnswerPermissions`, not merely unanswered.
+  Measured live on claude 2.1.251: a Bash-tool "don't ask again for … commands
+  in …" option wrapped this way went unrecognised entirely. A wrapped
+  continuation line is now folded back into the option it continues; a blank
+  line, the "Esc to cancel" footer, or a fresh separator/question still ends
+  the scan. See `docs/permission-approval.md`.
+
 ## 0.12.0
 
 Brooswit's top Drovr priority (DROVR-37): no agent should sit frozen on
