@@ -148,15 +148,56 @@ option, which is option 2 in the dialog measured above, and nothing else.
   attempt itself, not a stale read. A pane that throws, or that misses its
   `readTimeoutMs` deadline, is also `failed`.
 
-**Left to their own tickets, deliberately not fixed here:**
+**Known limitation, not fixed here:**
 
-- **DROVR-33** (an unreadable pane reads as "no prompt", and
-  `listPendingPermissions`'s own scan has no per-read deadline) is unchanged
-  in `listPendingPermissions`, which `autoAnswerPermissions` calls as its scan
-  step: a pane that fails to read during the scan is silently absent from the
-  results, not reported as `failed`. `readTimeoutMs` only bounds the
-  **approve** attempt for a pane the scan already found; it does not bound
-  the scan itself.
+`autoAnswerPermissions` still calls `listPendingPermissions` (not
+`scanPendingPermissions`) as its scan step, so an unreadable pane found
+during *that* scan is silently absent from its results rather than becoming
+a `failed` entry — `readTimeoutMs` on `autoAnswerPermissions` only bounds the
+**approve** attempt for a pane the scan already found, same as before. A
+caller that needs `autoAnswerPermissions` itself to see unreadable panes
+should scan with `scanPendingPermissions` first and reconcile the two lists;
+that wiring is left to the caller, not fixed here.
+
+## Scanning without losing an unreadable pane: `scanPendingPermissions`
+
+Fixed by DROVR-33: `listPendingPermissions` used to skip a pane whose screen
+it could not read — `readScreen(...).catch(() => "")` turned a read failure
+into an empty screen, which classifies as "no pending prompt", the same
+return shape as a pane genuinely showing nothing. Nothing told a caller the
+pane had been missed. Its scan also had no deadline of its own: a hung
+`agent.read` held the whole pass open until the *caller's* own timeout
+(bakr passes 15s), far past a status poll's usual ~2s budget.
+
+```ts
+const { pending, unreadable } = await scanPendingPermissions(client, {
+  readTimeoutMs: 1500,   // optional; this is the default
+});
+// pending:    same shape as listPendingPermissions's result
+// unreadable: [{ paneId, label, sessionId, cwd, herdrStatus,
+//               reason: "timeout" | "error", detail }]
+```
+
+- **Every unreadable pane is reported, never silently dropped.** A pane whose
+  `agent.read` rejects is `reason: "error"`; one that has not settled by
+  `readTimeoutMs` is `reason: "timeout"`. Both carry `herdrStatus` alongside,
+  because herdr often calls these panes idle while they sit unreadable.
+- **Reads run in parallel, bounded per pane.** The scan takes roughly the
+  slowest read, capped by `readTimeoutMs` (default 1500ms) — not the sum of
+  every pane's read, and never unbounded.
+- **`agent.list()` failing still rejects.** Only a per-pane `agent.read` is
+  bounded and caught; a caller that cannot even list its panes gets a
+  rejection, which it maps to "couldn't check anything" — a stronger signal
+  than an empty result.
+- **`listPendingPermissions` is now a thin wrapper** over
+  `scanPendingPermissions` that drops the `unreadable` list, so its signature
+  and behaviour are unchanged for every existing caller. Use
+  `scanPendingPermissions` directly to tell "no pending prompt" apart from
+  "could not check".
+
+The same fix applies to blocking prompts: see `scanBlockingPrompts` in
+`src/blocking-prompts.ts`, which shares this `UnreadablePane` shape (from
+`src/pane-scan.ts`) and the same per-pane deadline.
 
 ## A throw after `approving` used to escape, leaving the audit record stranded
 
@@ -222,8 +263,8 @@ gone wrong, which is exactly the class of failure that makes this dangerous:
 nothing in the pass, the audit log, or the result array said the pane had
 been missed.
 
-This is the same *class* of failure DROVR-33 tracks (an unreadable pane also
-reads as "no prompt", with no per-read deadline in `listPendingPermissions`'s
+This is the same *class* of failure DROVR-33 tracked (an unreadable pane also
+read as "no prompt", with no per-read deadline in `listPendingPermissions`'s
 own scan) — **related, but distinct, and not fixed here.** DROVR-33 is about
 the *screen read itself* failing (a pane that can't be read at all, or hangs
 being read); this was a *successful* read of a well-formed, on-screen dialog
@@ -231,7 +272,8 @@ that the *parser* then silently mis-cased due to terminal-width wrapping. Both
 end at the same observable symptom (a real dialog absent from
 `listPendingPermissions`'s results, no error raised), but the fix for one does
 not touch the other: this fix changes only how `classifyPermissionPrompt`
-folds wrapped lines: it has no effect on DROVR-33's read-level gap.
+folds wrapped lines; it has no effect on DROVR-33's read-level gap, which is
+`scanPendingPermissions`'s own `unreadable` list (above).
 
 Fixed: a non-option line now folds into the option it continues when it's
 indented continuation text (matching the wrap actually measured); a blank

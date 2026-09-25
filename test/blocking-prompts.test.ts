@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyBlockingScreen, listBlockingPrompts } from "../src/blocking-prompts.js";
+import { classifyBlockingScreen, listBlockingPrompts, scanBlockingPrompts } from "../src/blocking-prompts.js";
 
 // Screens measured on this host, 2026-09-18.
 const TRUST = " Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel";
@@ -72,5 +72,53 @@ describe("listBlockingPrompts", () => {
       ["w4:p1", "fresh", "blocked", "startup", "trust"],
     ]);
     expect(found[0]!.sessionId).toBe("s1");
+  });
+});
+
+describe("scanBlockingPrompts", () => {
+  test("an unreadable pane is reported, never silently treated as 'not blocked'; a hung read is bounded by readTimeoutMs, not left open", async () => {
+    let hungReadWasCalled = false;
+    const client = {
+      agent: {
+        list: async () => ({ type: "agent_list", agents: [
+          { pane_id: "w1:p1", agent: "claude", name: "fine", agent_status: "blocked", agent_session: { kind: "id", value: "s1" }, cwd: "/a" },
+          { pane_id: "w2:p1", agent: "claude", name: "broken", agent_status: "idle" },
+          { pane_id: "w3:p1", agent: "claude", name: "hung", agent_status: "idle" },
+        ] }) as never,
+        read: async (p: { target: string }) => {
+          if (p.target === "w1:p1") return { type: "pane_read", read: { text: TRUST } } as never;
+          if (p.target === "w2:p1") throw new Error("gone");
+          hungReadWasCalled = true;
+          // Simulates a wedged `agent.read` that never settles.
+          return new Promise<never>(() => undefined);
+        },
+      },
+    };
+    // The test seam (`readWait`) replaces the real per-read timer with a
+    // microtask-ordered stand-in: it yields a fixed number of microtask
+    // ticks, comfortably more than a genuinely resolving read ever takes, so
+    // a normal read still wins its race deterministically while the hung
+    // read — which never settles at all — always eventually loses to it.
+    // No wall-clock time is ever waited on, even though readTimeoutMs is set
+    // to 1500.
+    const flush = async (ticks = 20) => { for (let i = 0; i < ticks; i++) await Promise.resolve(); };
+    const startedAt = Date.now();
+    const result = await scanBlockingPrompts(client, { readTimeoutMs: 1500, readWait: () => flush() });
+    expect(hungReadWasCalled).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThan(200);
+    expect(result.prompts).toEqual([{
+      paneId: "w1:p1", label: "fine", sessionId: "s1", cwd: "/a", herdrStatus: "blocked",
+      kind: "startup", name: "trust", excerpt: expect.any(String),
+    }]);
+    expect(result.unreadable).toHaveLength(2);
+    const byPane = Object.fromEntries(result.unreadable.map((u) => [u.paneId, u]));
+    expect(byPane["w2:p1"]).toMatchObject({ label: "broken", herdrStatus: "idle", reason: "error", detail: "gone" });
+    expect(byPane["w3:p1"]).toMatchObject({ label: "hung", herdrStatus: "idle", reason: "timeout" });
+    expect((byPane["w3:p1"] as { detail: string }).detail).toContain("1500");
+  });
+
+  test("a failure of agent.list() itself still rejects — the caller maps that to 'couldn't check anything'", async () => {
+    const client = { agent: { list: async () => { throw new Error("herdr socket gone"); }, read: async () => { throw new Error("unused"); } } };
+    await expect(scanBlockingPrompts(client)).rejects.toThrow("herdr socket gone");
   });
 });

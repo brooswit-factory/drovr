@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvePermission, autoAnswerPermissions, classifyPermissionPrompt, listPendingPermissions } from "../src/permission-approval.js";
+import { approvePermission, autoAnswerPermissions, classifyPermissionPrompt, listPendingPermissions, scanPendingPermissions } from "../src/permission-approval.js";
 
 // Measured on claude 2.1.277 in a herdr pane, 2026-09-18.
 const BASH_PROMPT = [
@@ -217,6 +217,60 @@ describe("listPendingPermissions", () => {
     const f = fixture([BASH_PROMPT]);
     const pending = await listPendingPermissions(f.client);
     expect(pending.map((p) => [p.paneId, p.label, p.sessionId, p.tool])).toEqual([["w1:p1", "lead-drovr", "s1", "Bash command"]]);
+  });
+});
+
+describe("scanPendingPermissions", () => {
+  test("an unreadable pane is reported, never silently treated as 'no pending prompt'; a hung read is bounded by readTimeoutMs, not left open", async () => {
+    let hungReadWasCalled = false;
+    const client = {
+      agent: {
+        list: async () => ({ type: "agent_list", agents: [
+          { pane_id: "w1:p1", agent: "claude", name: "fine", agent_status: "blocked", agent_session: { kind: "id", value: "s1" }, cwd: "/a" },
+          { pane_id: "w2:p1", agent: "claude", name: "broken", agent_status: "idle" },
+          { pane_id: "w3:p1", agent: "claude", name: "hung", agent_status: "idle" },
+        ] }) as never,
+        get: async (target: string) => ({ type: "agent_info", agent: { pane_id: target } }) as never,
+        read: async (p: { target: string }) => {
+          if (p.target === "w1:p1") return { type: "pane_read", read: { text: BASH_PROMPT } } as never;
+          if (p.target === "w2:p1") throw new Error("gone");
+          hungReadWasCalled = true;
+          // Simulates a wedged `agent.read` that never settles.
+          return new Promise<never>(() => undefined);
+        },
+        sendKeys: async () => { throw new Error("not used in this test"); },
+      },
+    };
+    // The test seam (`readWait`) replaces the real per-read timer with a
+    // microtask-ordered stand-in: it yields a fixed number of microtask
+    // ticks, comfortably more than a genuinely resolving read ever takes, so
+    // a normal read still wins its race deterministically while the hung
+    // read — which never settles at all — always eventually loses to it.
+    // No wall-clock time is ever waited on, even though readTimeoutMs is set
+    // to 1500.
+    const flush = async (ticks = 20) => { for (let i = 0; i < ticks; i++) await Promise.resolve(); };
+    const startedAt = Date.now();
+    const result = await scanPendingPermissions(client, { readTimeoutMs: 1500, readWait: () => flush() });
+    expect(hungReadWasCalled).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThan(200);
+    expect(result.pending).toEqual([{ ...classifyPermissionPrompt(BASH_PROMPT)!, paneId: "w1:p1", label: "fine", sessionId: "s1", cwd: "/a" }]);
+    expect(result.unreadable).toHaveLength(2);
+    const byPane = Object.fromEntries(result.unreadable.map((u) => [u.paneId, u]));
+    expect(byPane["w2:p1"]).toMatchObject({ label: "broken", herdrStatus: "idle", reason: "error", detail: "gone" });
+    expect(byPane["w3:p1"]).toMatchObject({ label: "hung", herdrStatus: "idle", reason: "timeout" });
+    expect((byPane["w3:p1"] as { detail: string }).detail).toContain("1500");
+  });
+
+  test("a failure of agent.list() itself still rejects — the caller maps that to 'couldn't check anything'", async () => {
+    const client = {
+      agent: {
+        list: async () => { throw new Error("herdr socket gone"); },
+        get: async () => { throw new Error("unused"); },
+        read: async () => { throw new Error("unused"); },
+        sendKeys: async () => { throw new Error("unused"); },
+      },
+    };
+    await expect(scanPendingPermissions(client)).rejects.toThrow("herdr socket gone");
   });
 });
 
