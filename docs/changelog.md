@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.1
 
 DROVR-41: live proof of `autoAnswerPermissions` against a real herdr pane
 (both the answer and the skip path), and a classifier fix it found along the
