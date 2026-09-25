@@ -190,6 +190,7 @@ export {
   classifyPermissionPrompt,
   listPendingPermissions,
   approvePermission,
+  autoAnswerPermissions,
   type PermissionPrompt,
   type PermissionScope,
   type PendingPermission,
@@ -197,6 +198,8 @@ export {
   type ApprovePermissionResult,
   type ApprovePermissionRefusalReason,
   type PermissionApprovalDeps,
+  type AutoAnswerPermissionsOptions,
+  type AutoAnswerPermissionResult,
 } from "./permission-approval.js";
 export {
   listBlockingPrompts,
