@@ -149,3 +149,132 @@ option, which is option 2 in the dialog measured above, and nothing else.
   results, not reported as `failed`. `readTimeoutMs` only bounds the
   **approve** attempt for a pane the scan already found; it does not bound
   the scan itself.
+
+## A wrapped option used to be invisible, not just unanswered
+
+Found live during DROVR-41's proof (claude 2.1.251, 2026-09-25): a real
+Bash-tool dialog whose option 2 was long enough to wrap onto a second
+physical line with no number of its own —
+
+```
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for mkdir -p scratch-dir-neg and rm -rf scratch-dir-neg
+      commands in /tmp/drovr-herdr-proof.41-neg
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain
+```
+
+— was not `skipped`, it was invisible: `classifyPermissionPrompt` returned
+`undefined` for the whole screen, because the option-collecting loop broke on
+the wrapped continuation line ("      commands in /tmp/…") and the footer
+check then looked at the wrong window. `listPendingPermissions` never
+surfaced the pane, so `autoAnswerPermissions` never saw it — worse than
+"skipped", because an agent sitting on it would sit frozen exactly like the
+case DROVR-37 exists to fix.
+
+**This was silently indistinguishable from "genuinely no pending prompt."**
+`classifyPermissionPrompt` returning `undefined` is the same return value for
+a pane showing this dialog and a pane showing nothing of interest at all —
+there was no separate signal (an error, a partial match, a different return
+shape) marking "a dialog is here but couldn't be parsed." `listPendingPermissions`
+therefore omitted a genuinely blocked pane with no indication anything had
+gone wrong, which is exactly the class of failure that makes this dangerous:
+nothing in the pass, the audit log, or the result array said the pane had
+been missed.
+
+This is the same *class* of failure DROVR-33 tracks (an unreadable pane also
+reads as "no prompt", with no per-read deadline in `listPendingPermissions`'s
+own scan) — **related, but distinct, and not fixed here.** DROVR-33 is about
+the *screen read itself* failing (a pane that can't be read at all, or hangs
+being read); this was a *successful* read of a well-formed, on-screen dialog
+that the *parser* then silently mis-cased due to terminal-width wrapping. Both
+end at the same observable symptom (a real dialog absent from
+`listPendingPermissions`'s results, no error raised), but the fix for one does
+not touch the other: this fix changes only how `classifyPermissionPrompt`
+folds wrapped lines: it has no effect on DROVR-33's read-level gap.
+
+Fixed: a non-option line now folds into the option it continues when it's
+indented continuation text (matching the wrap actually measured); a blank
+line, an unindented stray line, the "Esc to cancel" footer, or a fresh
+separator/question still ends the scan. Covered by regression tests built
+from this exact raw screen in `test/permission-approval.test.ts`, plus
+synthetic variants for a wrapped option at position 3, a wrapped non-"Yes,
+and…" option 2, and an unindented stray line (which must end the scan, not
+fold in).
+
+## Live proof (DROVR-41, 2026-09-25)
+
+`scripts/verify-auto-answer-permissions.ts` is the opt-in proof: it opens two
+real Claude panes in default permission mode inside a named `drovr-proof-*`
+herdr session (never a default socket), provokes a real dialog in each, runs
+one `autoAnswerPermissions` pass over both, and checks the result. Measured
+on claude 2.1.251:
+
+- **Positive** — a Bash-tool dialog ("touch drovr-permission-probe.txt")
+  whose option 2 is "Yes, and always allow access to …/pos from this
+  project": the pass returned `outcome: "answered"` for that pane, option 2
+  is what was pressed, the audit JSONL holds `approving` then `approved`
+  under `operator: "drovr-auto"`, the probe file appeared, and a follow-up
+  scan no longer lists the pane.
+- **Negative** — a Read-tool dialog outside the project ("Read(/etc/hostname)")
+  whose options are `["Yes", "Yes, allow reading from /etc during this
+  session", "No"]`, no "Yes, and …" match: the same pass returned `outcome:
+  "skipped"` with a reason naming what was actually at option 2, pressed
+  nothing, and wrote no audit record for that pane at all.
+- The run is what surfaced the wrapped-option bug above; re-run live against
+  the same wrapped dialog after the fix, `autoAnswerPermissions` answered it
+  correctly on the next pass.
+
+Full log/audit excerpts are in the DROVR-41 PR description and ticket.
+
+## Host wiring
+
+Drovr is a library — it never runs anything on a timer itself; "the command
+itself belongs to the host" (above). Two processes are documented as driving
+herdr directly through this SDK: **butchr**, the software-factory daemon, and
+**candlestix** (see the top-level README's "Why it exists"). The recommendation
+is **butchr**:
+
+- The motivating incident for this whole epic (DROVR-37) — "a new Claude Code
+  dialog once froze a batch of *epic agents* for hours while herdr reported
+  every one of them as idle or done" (README) — is stated in butchr's own
+  fleet vocabulary (project/epic/story/task tiers exist only in butchr's
+  model), not candlestix's.
+- candlestix is a separate, smaller consumer currently slated to be folded
+  into butchr (butchr's own BUTCHR-391, still open) rather than grown; new
+  automation added to it now would need rewiring once that consolidation
+  lands.
+- butchr already owns the trust relationship and the live socket to the
+  panes it hosts (via `hostResident`/`listResidents` and its own pane
+  bookkeeping), so it can call `autoAnswerPermissions` with no new process
+  gaining key-pressing access to those panes.
+
+**Cadence: a dedicated interval, not piggybacked on butchr's own reconcile
+tick, in the same 15–30s order of magnitude butchr already polls at.**
+butchr's daemon already runs a reconcile/admission poll on a measured
+~15-second cadence under load (its own BUTCHR-117 finding). Do not hang the
+permission scan off that same tick: a `reconcileNow` failure already stalls
+other poll-driven work in that loop (also BUTCHR-117), and a permission scan
+has no reason to share that failure mode. Instead, a standalone interval —
+every 15–30s is a reasonable starting point, tunable once real pane counts
+are measured — calling `autoAnswerPermissions` once across every pane butchr
+currently hosts, with `readTimeoutMs` set comfortably below the interval
+(e.g. 10s) so one wedged pane's attempt can't still be running when the next
+tick fires.
+
+Justification: `listPendingPermissions` costs one `agent.read` per live
+Claude pane per pass — the same shape of call butchr's status polling already
+makes — so an additional pass at this cadence is one more read per pane per
+cycle, not a new class of load. Against that: the DROVR-37 incident measured
+agents frozen *for hours* with the dialog untouched; bounding the wait to a
+15–30s poll interval is a two-to-three-orders-of-magnitude improvement, and
+there is no benefit to polling much faster than that, since the mechanism
+only matters for the case where no human is watching the pane at all.
+
+Because the host lives in a different repo (butchr, not drovr), it is not
+wired here. Filed as **DROVR-42** (`file_where_it_belongs`, an unlinked
+orphan ticket carrying this recommendation and a definition of done, since no
+existing epic already covered it).

@@ -29,6 +29,89 @@ const BASH_PROMPT = [
 const OTHER_PROMPT = BASH_PROMPT.replaceAll("touch drovr-permission-probe.txt", "rm -rf build");
 const AFTER = "● Creating empty probe file\n  ⎿  (No output)\n\n❯ ";
 
+// Measured live on claude 2.1.251 in a herdr pane (DROVR-41 live proof,
+// 2026-09-25): option 2's text is long enough to wrap onto a second
+// physical line with no number of its own.
+const WRAPPED_BASH_PROMPT = [
+  "❯ Run the shell command mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg with the Bash",
+  "  tool. Nothing else.",
+  "",
+  "● Bash(mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg)",
+  "  ⎿  Waiting…",
+  "",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+  " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+  "",
+  "   mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg",
+  "   Create and remove scratch-dir-neg",
+  "",
+  " Do you want to proceed?",
+  " ❯ 1. Yes",
+  "   2. Yes, and don't ask again for mkdir -p scratch-dir-neg and rm -rf scratch-dir-neg",
+  "      commands in /tmp/drovr-herdr-proof.41-neg",
+  "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+  "   4. No",
+  "",
+  " Esc to cancel · Tab to amend · ctrl+e to explain",
+].join("\n");
+
+// Synthetic (built from the measured wrap above): the stored-rule option's
+// wrapped text now sits at position 3, with the short auto-mode option at
+// position 2, so it must still be skipped rather than pressed.
+const WRAPPED_RULE_AT_THREE_PROMPT = [
+  "❯ Run the shell command mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg with the Bash",
+  "  tool. Nothing else.",
+  "",
+  "● Bash(mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg)",
+  "  ⎿  Waiting…",
+  "",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+  " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+  "",
+  "   mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg",
+  "   Create and remove scratch-dir-neg",
+  "",
+  " Do you want to proceed?",
+  " ❯ 1. Yes",
+  "   2. Yes, and switch to auto mode · auto mode handles these prompts for you",
+  "   3. Yes, and don't ask again for mkdir -p scratch-dir-neg and rm -rf scratch-dir-neg",
+  "      commands in /tmp/drovr-herdr-proof.41-neg",
+  "   4. No",
+  "",
+  " Esc to cancel · Tab to amend · ctrl+e to explain",
+].join("\n");
+
+// Synthetic: a non-"Yes, and …" option 2 (the shape measured live on a
+// Read-tool dialog outside the project) long enough to wrap.
+const WRAPPED_NON_RULE_PROMPT = [
+  "❯ Use the Read tool to read the file /etc/an-unusually-long-hostname-file. Nothing else.",
+  "",
+  "● Read(/etc/an-unusually-long-hostname-file)",
+  "",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " Read file",
+  "",
+  "  Read(/etc/an-unusually-long-hostname-file)",
+  "",
+  " Do you want to proceed?",
+  " ❯ 1. Yes",
+  "   2. Yes, allow reading from /etc/an-unusually-long-hostname-file",
+  "      during this session",
+  "   3. No",
+  "",
+  " Esc to cancel · Tab to amend",
+].join("\n");
+
+// Synthetic: the same wrap as WRAPPED_BASH_PROMPT, but the continuation line
+// starts at column 0 (unindented) instead of lining up under the option
+// text. It must end option collection, not fold into the previous option.
+const UNINDENTED_STRAY_LINE_PROMPT = WRAPPED_BASH_PROMPT.replace(
+  "      commands in /tmp/drovr-herdr-proof.41-neg",
+  "commands in /tmp/drovr-herdr-proof.41-neg",
+);
+
 describe("classifyPermissionPrompt", () => {
   test("reads the tool, the request, the options and the cursor off the measured dialog", () => {
     const prompt = classifyPermissionPrompt(BASH_PROMPT)!;
@@ -51,6 +134,40 @@ describe("classifyPermissionPrompt", () => {
     expect(classifyPermissionPrompt("Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel")).toBeUndefined();
     expect(classifyPermissionPrompt(BASH_PROMPT.replace(" Esc to cancel · Tab to amend", ""))).toBeUndefined();
     expect(classifyPermissionPrompt(BASH_PROMPT.replace("   4. No\n", ""))).toBeUndefined();
+  });
+
+  // DROVR-41: a long option wraps onto a following physical line with no
+  // number of its own. Before the fix, that continuation line ended the
+  // option scan early, the footer check then looked at the wrong window,
+  // and the whole dialog read as "not a prompt" — invisible to
+  // listPendingPermissions, not merely unanswered.
+  test("a wrapped option is folded back into the option it continues", () => {
+    const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT)!;
+    expect(prompt).toBeDefined();
+    expect(prompt.options).toEqual([
+      "Yes",
+      "Yes, and don't ask again for mkdir -p scratch-dir-neg and rm -rf scratch-dir-neg commands in /tmp/drovr-herdr-proof.41-neg",
+      "Yes, and switch to auto mode · auto mode handles these prompts for you",
+      "No",
+    ]);
+    expect(prompt.cursor).toBe(0);
+    // The footer must still end the scan, never get folded into the last option.
+    expect(prompt.options.some((option) => /Esc to cancel/.test(option))).toBe(false);
+    // Stable across two reads of the same wrapped screen: promptId only names the request.
+    expect(classifyPermissionPrompt(WRAPPED_BASH_PROMPT)!.promptId).toBe(prompt.promptId);
+  });
+
+  test("a blank line still ends the option scan even when earlier options wrapped", () => {
+    const prompt = classifyPermissionPrompt(WRAPPED_RULE_AT_THREE_PROMPT)!;
+    expect(prompt.options).toHaveLength(4);
+    expect(prompt.options[3]).toBe("No");
+  });
+
+  test("an unindented stray line ends option collection instead of folding into the previous option", () => {
+    // The stray line breaks the scan after only 2 options, so option 4 ("No")
+    // is never reached and the dialog fails the "must offer No" check below —
+    // proof the line was not silently absorbed into option 2's text.
+    expect(classifyPermissionPrompt(UNINDENTED_STRAY_LINE_PROMPT)).toBeUndefined();
   });
 });
 
@@ -255,5 +372,38 @@ describe("autoAnswerPermissions", () => {
     expect((byPane["w2:p1"] as { detail: string }).detail).toMatch(/outcome is unknown/);
     expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
     expect(keysSent["w2:p1"]).toBeUndefined();
+  });
+
+  // DROVR-41: regression coverage for the wrap fix, built from the raw
+  // screen measured live on claude 2.1.251 in the DROVR-41 proof session.
+  test("a wrapped option-2 'Yes, and …' prompt is answered exactly once, scope always, audited as drovr-auto", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT, WRAPPED_BASH_PROMPT, AFTER] } });
+    const results = await autoAnswerPermissions(client, { auditPath: path });
+    expect(results).toEqual([{ paneId: "w1:p1", label: "w1:p1", outcome: "answered", tool: "Bash command", request: "mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg\nCreate and remove scratch-dir-neg" }]);
+    expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
+    const audit = await readAudit(path);
+    expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);
+    expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "always", option: "Yes, and don't ask again for mkdir -p scratch-dir-neg and rm -rf scratch-dir-neg commands in /tmp/drovr-herdr-proof.41-neg" });
+  });
+
+  test("a wrapped stored-rule option sitting at position 3 (auto-mode at 2) is still skipped, nothing pressed", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_RULE_AT_THREE_PROMPT] } });
+    const results = await autoAnswerPermissions(client, { auditPath: path });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    expect((results[0] as { reason: string }).reason).toMatch(/not option 2/);
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(await readAudit(path)).toEqual([]);
+  });
+
+  test("a wrapped non-'Yes, and …' option 2 is still skipped, nothing pressed", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_NON_RULE_PROMPT] } });
+    const results = await autoAnswerPermissions(client, { auditPath: path });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    expect((results[0] as { reason: string }).reason).toMatch(/no "Yes, and …" stored-rule option/);
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(await readAudit(path)).toEqual([]);
   });
 });
