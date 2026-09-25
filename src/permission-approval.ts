@@ -242,3 +242,97 @@ export async function approvePermission(
     await deps.wait(deps.pollMs);
   }
 }
+
+export interface AutoAnswerPermissionsOptions {
+  /** JSONL audit file, forwarded to every `approvePermission` call. */
+  auditPath: string;
+  /** Recorded as the audit operator on every attempt. Default lets an unattended pass be told apart from a human's. */
+  operator?: string;
+  /**
+   * Deadline for the whole per-pane `approvePermission` attempt (not a single
+   * read). A pane past it is `failed` with `reason: "timeout"`, never left
+   * out of the results — but `approvePermission` is not cancelled, so a
+   * `timeout` result means the outcome is UNKNOWN, not "nothing pressed":
+   * the call keeps running and may still press keys and record `approved` in
+   * the audit log after this function has already returned. Check the audit
+   * log for a pane that timed out.
+   */
+  readTimeoutMs?: number;
+}
+
+interface AutoAnswerBase {
+  paneId: string;
+  label: string | undefined;
+}
+
+export type AutoAnswerPermissionResult =
+  | (AutoAnswerBase & { outcome: "answered"; tool: string; request: string })
+  | (AutoAnswerBase & { outcome: "skipped"; reason: string })
+  | (AutoAnswerBase & { outcome: "failed"; reason: string; detail: string });
+
+const DEFAULT_AUTO_OPERATOR = "drovr-auto";
+const AUTO_ANSWER_TIMEOUT = Symbol("auto-answer-timeout");
+
+/**
+ * One unattended pass over every pending Claude permission prompt: press the
+ * `scope: "always"` option, which is option 2 on the current dialog, and
+ * nothing else. A prompt whose option 2 isn't that "Yes, and …" option is
+ * skipped before `approvePermission` is ever called, so no "approving" audit
+ * record is written for it. One pane throwing, or (with `readTimeoutMs` set)
+ * missing its deadline, is caught and reported as `failed` for that pane; it
+ * never fails the rest of the pass. A `timeout` failure does not mean nothing
+ * was pressed — see `AutoAnswerPermissionsOptions.readTimeoutMs`.
+ */
+export async function autoAnswerPermissions(
+  client: ApprovalClient,
+  options: AutoAnswerPermissionsOptions,
+): Promise<AutoAnswerPermissionResult[]> {
+  const operator = options.operator ?? DEFAULT_AUTO_OPERATOR;
+  const pending = await listPendingPermissions(client);
+  return Promise.all(pending.map(async (permission): Promise<AutoAnswerPermissionResult> => {
+    const base = { paneId: permission.paneId, label: permission.label };
+    try {
+      const target = optionFor(permission, "always");
+      if (target !== 1) {
+        return { ...base, outcome: "skipped", reason: target < 0
+          ? `no "Yes, and …" stored-rule option on this prompt (options: ${JSON.stringify(permission.options)})`
+          : `the stored-rule option is at position ${target + 1}, not option 2 (options: ${JSON.stringify(permission.options)})` };
+      }
+      const attempt = approvePermission(client, {
+        paneId: permission.paneId,
+        promptId: permission.promptId,
+        operator,
+        scope: "always",
+        auditPath: options.auditPath,
+      });
+      attempt.catch(() => undefined);
+      let result: ApprovePermissionResult | typeof AUTO_ANSWER_TIMEOUT;
+      if (options.readTimeoutMs === undefined) {
+        result = await attempt;
+      } else {
+        let timer: ReturnType<typeof setTimeout>;
+        const deadline = new Promise<typeof AUTO_ANSWER_TIMEOUT>((resolve) => {
+          timer = setTimeout(() => resolve(AUTO_ANSWER_TIMEOUT), options.readTimeoutMs);
+        });
+        try {
+          result = await Promise.race([attempt, deadline]);
+        } finally {
+          clearTimeout(timer!);
+        }
+      }
+      if (result === AUTO_ANSWER_TIMEOUT) {
+        return {
+          ...base, outcome: "failed", reason: "timeout",
+          detail: `approvePermission did not return within ${options.readTimeoutMs}ms; it is still running and the outcome is unknown — it may still press keys and record "approved" in the audit log, check it before retrying this pane`,
+        };
+      }
+      if (result.ok) return { ...base, outcome: "answered", tool: result.tool, request: result.request };
+      if (result.reason === "audit-failed" || result.reason === "not-cleared" || result.reason === "invalid-operator") {
+        return { ...base, outcome: "failed", reason: result.reason, detail: result.detail };
+      }
+      return { ...base, outcome: "skipped", reason: result.detail };
+    } catch (error) {
+      return { ...base, outcome: "failed", reason: "unexpected-error", detail: error instanceof Error ? error.message : String(error) };
+    }
+  }));
+}
