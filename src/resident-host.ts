@@ -179,6 +179,7 @@ export type StartupPrompt =
   | { kind: "trust"; keys: string[] }
   | { kind: "development-channels"; keys: string[] }
   | { kind: "auto-mode-onboarding"; keys: string[] }
+  | { kind: "fullscreen-renderer"; keys: string[] }
   | { kind: "mcp-approval"; excerpt: string }
   | { kind: "unknown-blocking"; excerpt: string };
 
@@ -228,6 +229,38 @@ export function classifyStartupPrompt(raw: string): StartupPrompt | undefined {
     // Brooswit's choice is "Yes", which leads to the setup screen above.
     const keys = keysToChoose(screen, /^Yes$/);
     return keys ? { kind: "auto-mode-onboarding", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
+  }
+  if (/fullscreen renderer/i.test(screen) && /didn'?t finish start/i.test(screen)) {
+    // SPECULATIVE — reviewed 2026-09-26, evidence AGAINST this being a real
+    // dialog, not for it. FACTORY-46/FACTORY-44's ticket wording ("Claude
+    // Code's fullscreen renderer didn't finish starting last time…") is not
+    // reproduced in any fixture, log, or live capture this checkout could
+    // find. Worse: `strings` on the installed `claude` 2.1.283 binary
+    // (~/.local/share/claude/versions/2.1.283) shows this exact phrase only
+    // inside a NON-INTERACTIVE NOTICE, with no options and no footer:
+    // "Claude Code's fullscreen renderer didn't finish starting last time
+    // on this machine, so this launch is using the classic renderer. It
+    // will try fullscreen again next launch; /tui default keeps the
+    // classic renderer." (A sibling notice, also non-interactive: "...has
+    // repeatedly failed to start on this machine, so it has been turned off
+    // here.") Neither one is a dialog a pane can be BLOCKED on — a mere
+    // notice needs no key pressed and no escalation. So as written, this
+    // branch — which requires a "Not now" OPTION before it presses
+    // anything — most likely never fires on the real string at all: on
+    // real screens carrying either notice, `keysToChoose` finds no menu and
+    // returns undefined, correctly falling through to `unknown-blocking`
+    // rather than pressing anything on a non-dialog. It is kept, still
+    // gated this conservatively, only in case some OTHER, truly interactive
+    // variant of this dialog exists that this checkout has not seen; it is
+    // unconfirmed whether one does. It is deliberately distinct from the
+    // separate, already-recognised "Try the new fullscreen renderer?"
+    // opt-in offer (which never contains "didn't finish start"); that one
+    // IS interactive, and Butchr's fleet convention for it is "Not now" too
+    // (brooswit-factory/butchr src/agents/prompt.ts) — reused here for the
+    // same underlying reason (retrying may hang again; no user/global
+    // setting is changed), independently of whether this branch ever fires.
+    const keys = keysToChoose(screen, /^Not now\b/i);
+    return keys ? { kind: "fullscreen-renderer", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
   }
   if (classifyBlockingText("claude", screen)?.kind === "mcp-approval-prompt") return { kind: "mcp-approval", excerpt: excerptOf(screen) };
   if (/Enter to confirm/.test(screen)) return { kind: "unknown-blocking", excerpt: excerptOf(screen) };

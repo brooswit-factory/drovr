@@ -104,6 +104,29 @@ The test suite verifies typed startup, lifecycle forwarding, identity recovery,
 process health, and inventory handling without launching agents or consuming
 model quota.
 
+## Blocking dialogs: detect, auto-answer, escalate
+
+Any blocking dialog is Drovr's job to detect and handle — a host must not
+keep its own dialog list. `classifyBlockingScreen`/`scanBlockingPrompts`
+(`src/blocking-prompts.ts`) read every Claude pane's screen and say what it
+is waiting on: a known-safe `startup` prompt (trust, development-channels,
+auto-mode-onboarding) Drovr can press itself, an `mcp-approval`/tool-
+`permission` prompt with its own existing, deliberately unautomated flow, or
+a genuinely `unknown` dialog. A `"fullscreen-renderer"` startup-prompt kind
+also exists, but is **speculative and unconfirmed** — see
+[`docs/blocking-escalation.md`](docs/blocking-escalation.md) before relying
+on it; the phrase it matches on turned up in the installed Claude Code
+binary only as a non-interactive notice, not a dialog with anything to
+press.
+
+For everything Drovr does not recognise, `createBlockingEscalationWatcher`
+(`src/blocking-escalation.ts`) is a host-neutral escalation hook: it presses
+what it can, and for the rest calls a host-supplied callback with the
+pane's identity, the dialog's question and options verbatim, and a stable
+fingerprint — once per episode, with resolution signalled once the dialog
+clears. See [`docs/blocking-escalation.md`](docs/blocking-escalation.md) for
+the full contract and an example.
+
 ## The correction seam
 
 Every service method call and every `call()` funnels through a single choke

@@ -1,6 +1,6 @@
 {
   "name": "@brooswit/drovr",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Provider-neutral managed-agent runtime and correction layer over the Herdr SDK",
   "license": "MIT",
   "repository": {
