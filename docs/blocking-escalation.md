@@ -27,13 +27,17 @@ release) is unaffected.
 FACTORY-111/FACTORY-113. A Claude Code `AskUserQuestion` dialog is a numbered
 menu (`parseNumberedDialog` in `src/blocking-prompts.ts`), so it reaches
 `describeUnknownDialog` like any other unrecognised menu — but two shapes of
-it used to make that function return `undefined` (no fingerprint, no
-`ANSWER` path, a person had to intervene on the pane): a `preview` on any
+it used to defeat that function, each a different way: a `preview` on any
 option switches Claude Code to a side-by-side layout (a boxed preview
 column right of the option list, box-drawing borders, a
-`✂ N lines hidden` marker when the preview is too tall to fit), and even the
-plain layout adds a "Type something." / "Chat about this" trailer after the
-real options.
+`✂ N lines hidden` marker when the preview is too tall to fit), and that
+layout used to make the function return `undefined` outright (no
+fingerprint, no `ANSWER` path, a person had to intervene on the pane). The
+plain layout, by contrast, was recognised — but its "Type something." /
+"Chat about this" trailer read as a real, numbered option, so the dialog it
+returned silently carried a phantom extra option: a boss answering by
+number could press that meta-action instead of a genuine choice, and
+nothing flagged the mismatch.
 
 Measured live (2026-09-26, claude 2.1.251) against a fresh pane, not
 reconstructed:
