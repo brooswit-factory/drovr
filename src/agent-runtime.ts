@@ -21,6 +21,7 @@ export function managedAgentProviderOfProcess(process: ManagedAgentProcess): Man
 export type ManagedAgentArgvCheck = { ok: true } | { ok: false; reason: string };
 
 const CLAUDE_DEVELOPMENT_CHANNELS_FLAG = "--dangerously-load-development-channels";
+const CLAUDE_STRICT_MCP_FLAG = "--strict-mcp-config";
 const REQUIRED_CLAUDE_FLAGS = ["--permission-mode", "--mcp-config", CLAUDE_DEVELOPMENT_CHANNELS_FLAG] as const;
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -62,6 +63,8 @@ export function mergeDevelopmentChannels(
 
 export function checkManagedAgentArgv(expected: readonly string[], observed: readonly string[]): ManagedAgentArgvCheck {
   const missing: string[] = [];
+  // Valueless, like --dangerously-bypass-approvals-and-sandbox below: presence-only, no following value to compare.
+  if (expected.includes(CLAUDE_STRICT_MCP_FLAG) && !observed.includes(CLAUDE_STRICT_MCP_FLAG)) missing.push(CLAUDE_STRICT_MCP_FLAG);
   if (expected.includes("--dangerously-bypass-approvals-and-sandbox")) {
     if (!observed.includes("--dangerously-bypass-approvals-and-sandbox")) missing.push("--dangerously-bypass-approvals-and-sandbox");
     for (const flag of ["--cd", "--config"]) {
@@ -168,6 +171,14 @@ export interface ProviderLaunchInputs {
    * An approval given at launch holds regardless of trust.
    */
   mcpServersApproved?: readonly string[];
+  /**
+   * BUTCHR-453: Claude only. `true` emits `--strict-mcp-config` alongside
+   * `--mcp-config`, so Claude Code loads ONLY the servers named in
+   * `mcpConfigPath` — no project- or user-level `.mcp.json` discovery.
+   * Providers with no such concept ignore it, same discipline as every
+   * other field here.
+   */
+  strictMcpConfig?: boolean;
 }
 
 /**
@@ -213,6 +224,7 @@ export function buildProviderLaunchArgs(
   const approved = [...new Set(inputs.mcpServersApproved?.map(safeName) ?? [])];
   return [
     ...(inputs.mcpConfigPath === undefined ? [] : ["--mcp-config", inputs.mcpConfigPath]),
+    ...(inputs.strictMcpConfig ? [CLAUDE_STRICT_MCP_FLAG] : []),
     ...(approved.length ? ["--settings", JSON.stringify({ enabledMcpjsonServers: approved })] : []),
     ...channels.map((channel) => `${CLAUDE_DEVELOPMENT_CHANNELS_FLAG}=${channel}`),
   ];
@@ -246,6 +258,18 @@ export interface ClaudeAgentLaunch extends AgentLaunchBase {
   /** Claude always launches against an explicit MCP configuration. */
   mcpConfigPath: string;
   permissionMode?: string;
+  /**
+   * BUTCHR-453: emits `--strict-mcp-config` alongside `--mcp-config` when
+   * `true`, telling Claude Code to load ONLY the MCP servers named in that
+   * file — no project-level or user-level `.mcp.json` discovery. Distinct
+   * from `assertNoInheritedMcpConfig` (the caller-side check butchr already
+   * has): that refuses a spawn if a project-level `.mcp.json` sits in an
+   * ancestor directory; this flag closes the wider gap it explicitly does
+   * NOT cover — user-level MCP config Claude Code would otherwise still
+   * discover regardless of caller-side directory hygiene. Absent/`false`
+   * means today's behaviour exactly: no flag emitted, ordinary discovery.
+   */
+  strictMcpConfig?: boolean;
 }
 
 export interface CodexAgentLaunch extends AgentLaunchBase {
