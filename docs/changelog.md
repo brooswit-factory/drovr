@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.16.0
+
+FACTORY-107 (FACTORY-106): Codex lizard mode, drovr half. New
+`src/codex-permission-approval.ts` (exported from `src/index.ts`), the
+Codex-vendor twin of `permission-approval.ts`'s Claude support — for a Codex
+session launched WITHOUT `--dangerously-bypass-approvals-and-sandbox`
+(`buildAgentStartParams`'s `bypassApprovalsAndSandbox: false`).
+
+- **`classifyCodexApprovalScreen`**: recognises three on-screen shapes,
+  measured live on codex-cli 0.145.0 (2026-09-26; fixtures under
+  `test/fixtures/codex-approval/`) — `"command"` (a shell command needing
+  approval; a network-access escalation renders the IDENTICAL shape, only
+  the `Reason:` text differs — Codex has no separate dialog for it),
+  `"file-edit"` (an apply_patch edit outside the sandbox), and `"mcp-tool"`
+  (an MCP server tool call). See `docs/codex-permission-approval.md` for the
+  full wording table. A screen that is approval-shaped (one of the two known
+  footers, or a `Would you like to …`/`Field N/M` phrase) but fails to parse
+  into one of those three is `{ kind: "unrecognised", excerpt }` — **never**
+  silently `undefined` — the same DROVR-41 class of gap the Claude classifier
+  already closed, structured out by construction here instead.
+- **`onceOptionIndex`**: the plain approve-once option and nothing else —
+  `"Yes, proceed"` / `"Allow"` — never a stored-rule, session, or "always"
+  variant. There is no `"always"` scope for Codex; approve-once is the only
+  behaviour this module offers, by design.
+- **`scanPendingCodexApprovals`**: filtered to `agent.agent === "codex"`
+  only, mirroring `scanPendingPermissions`'s shape, plus a third bucket
+  (`unrecognised`) alongside `pending`/`unreadable`.
+- **`approveCodexApproval`** / **`autoAnswerCodexApprovals`**: reuse
+  `permission-approval.ts`'s exported `defaultDeps`/`PermissionApprovalDeps`
+  and write to the SAME audit file Claude lizard mode does (records carry
+  `vendor: "codex"`). An `"unrecognised"` pane is never answered — logged to
+  the audit trail (`outcome: "unrecognised"`) and reported back for a human,
+  never skipped silently.
+- A Codex agent still launched with `--dangerously-bypass-approvals-and-sandbox`
+  (today's default) never shows any of these dialogs, so scanning or
+  auto-answering it is a harmless no-op — enabling Codex lizard mode is
+  entirely a launch-flag decision the host makes (Butchr's FACTORY-108), and
+  a non-lizard Codex agent is structurally unaffected by this release.
+
+Additive; no existing export's behaviour changes. `permission-approval.ts`
+gains one new export, `defaultDeps`, for the reuse above; its value and
+default behaviour are unchanged.
+
 ## 0.15.1
 
 FACTORY-93: `autoAnswerPermissions` gains an optional `scope`

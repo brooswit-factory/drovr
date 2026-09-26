@@ -214,7 +214,8 @@ export interface PermissionApprovalDeps {
   pollMs: number;
 }
 
-const defaultDeps: PermissionApprovalDeps = {
+/** Exported so `codex-permission-approval.ts` writes the same audit-timing/IO defaults to the same file. */
+export const defaultDeps: PermissionApprovalDeps = {
   appendAudit: async (path, line) => {
     await mkdir(dirname(path), { recursive: true });
     await appendFile(path, line, { mode: 0o600 });
