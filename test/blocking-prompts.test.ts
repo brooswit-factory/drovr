@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyBlockingScreen, listBlockingPrompts, scanBlockingPrompts } from "../src/blocking-prompts.js";
+import { classifyBlockingScreen, describeUnknownDialog, listBlockingPrompts, scanBlockingPrompts } from "../src/blocking-prompts.js";
 
 // Screens measured on this host, 2026-09-18.
 const TRUST = " Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel";
@@ -32,18 +32,50 @@ const IDLE = [
 ].join("\n");
 
 describe("classifyBlockingScreen", () => {
-  test("names the prompts Drovr answers, and marks anything else waiting as unknown", () => {
-    expect(classifyBlockingScreen(TRUST)).toMatchObject({ kind: "startup", name: "trust" });
-    expect(classifyBlockingScreen(ONBOARDING)).toMatchObject({ kind: "startup", name: "auto-mode-onboarding" });
+  test("names the prompts Drovr answers, carries the keys for the ones it can press itself, and marks anything else waiting as unknown", () => {
+    expect(classifyBlockingScreen(TRUST)).toMatchObject({ kind: "startup", name: "trust", keys: ["down", "enter"] });
+    expect(classifyBlockingScreen(ONBOARDING)).toMatchObject({ kind: "startup", name: "auto-mode-onboarding", keys: ["enter"] });
     expect(classifyBlockingScreen(PERMISSION)).toMatchObject({ kind: "permission", name: "Bash command" });
+    expect(classifyBlockingScreen(PERMISSION)).not.toHaveProperty("keys");
     const unknown = classifyBlockingScreen(NEVER_SEEN)!;
     expect(unknown.kind).toBe("unknown");
     expect(unknown.excerpt).toContain("Something Claude Code added last week?");
+    expect(unknown.dialog).toEqual({ question: "Something Claude Code added last week?", options: ["Sure", "Later"] });
+  });
+
+  test("an MCP approval is a startup prompt Drovr reports, but carries no keys to press", () => {
+    const mcp = classifyBlockingScreen("New MCP server found in this project\n❯ 1. Use this and all future MCP servers\n  2. Continue without\nEnter to confirm")!;
+    expect(mcp).toMatchObject({ kind: "startup", name: "mcp-approval" });
+    expect(mcp).not.toHaveProperty("keys");
   });
 
   test("a screen waiting on nothing is not reported, even when its transcript quotes a prompt", () => {
     expect(classifyBlockingScreen(IDLE)).toBeUndefined();
     expect(classifyBlockingScreen("")).toBeUndefined();
+  });
+});
+
+describe("describeUnknownDialog", () => {
+  test("reads the question and verbatim options of a numbered or an unnumbered menu", () => {
+    expect(describeUnknownDialog(NEVER_SEEN)).toEqual({ question: "Something Claude Code added last week?", options: ["Sure", "Later"] });
+    expect(describeUnknownDialog(TRUST)).toEqual({
+      question: "Quick safety check: Is this a project you created or one you trust?",
+      options: ["No, exit", "Yes, I trust this folder"],
+    });
+  });
+
+  test("never reads a payload out of a pane merely narrating or quoting a past dialog — the exact loop this exists to close", () => {
+    expect(describeUnknownDialog(IDLE)).toBeUndefined();
+    // A ticket comment quoting NEVER_SEEN's options back verbatim, with no footer of its own directly beneath it.
+    const quoted = "● Escalated as: \"Something Claude Code added last week?\" with options Sure / Later.\n\n$ echo done";
+    expect(describeUnknownDialog(quoted)).toBeUndefined();
+  });
+
+  test("a menu with two visible cursors, or none, is not read with confidence", () => {
+    const twoCursors = "Pick one?\n\n❯ Sure\n❯ Later\n\nEnter to confirm · Esc to cancel";
+    const noCursor = "Pick one?\n\n  Sure\n  Later\n\nEnter to confirm · Esc to cancel";
+    expect(describeUnknownDialog(twoCursors)).toBeUndefined();
+    expect(describeUnknownDialog(noCursor)).toBeUndefined();
   });
 });
 
@@ -108,7 +140,7 @@ describe("scanBlockingPrompts", () => {
     expect(Date.now() - startedAt).toBeLessThan(200);
     expect(result.prompts).toEqual([{
       paneId: "w1:p1", label: "fine", sessionId: "s1", cwd: "/a", herdrStatus: "blocked",
-      kind: "startup", name: "trust", excerpt: expect.any(String),
+      kind: "startup", name: "trust", excerpt: expect.any(String), keys: ["down", "enter"],
     }]);
     expect(result.unreadable).toHaveLength(2);
     const byPane = Object.fromEntries(result.unreadable.map((u) => [u.paneId, u]));
