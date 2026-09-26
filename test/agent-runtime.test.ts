@@ -19,6 +19,18 @@ describe("provider-owned agent launch plans", () => {
     });
   });
 
+  test("BUTCHR-453: a live process missing --strict-mcp-config reads as drifted, same as any other required flag", () => {
+    const expected = ["--permission-mode", "bypassPermissions", "--mcp-config", "/w/mcp.json", "--strict-mcp-config"];
+    expect(checkManagedAgentArgv(expected, expected)).toEqual({ ok: true });
+    expect(checkManagedAgentArgv(expected, ["--permission-mode", "bypassPermissions", "--mcp-config", "/w/mcp.json"])).toEqual({
+      ok: false,
+      reason: "argv lacks --strict-mcp-config",
+    });
+    // Not required when the expected launch never asked for it.
+    const withoutStrict = ["--permission-mode", "bypassPermissions", "--mcp-config", "/w/mcp.json"];
+    expect(checkManagedAgentArgv(withoutStrict, withoutStrict)).toEqual({ ok: true });
+  });
+
   test("parses and filters Codex MCP inventory", () => {
     const output = JSON.stringify([
       { name: "butchr", transport: { type: "streamable_http" } },
@@ -60,6 +72,37 @@ describe("provider-owned agent launch plans", () => {
         "--dangerously-load-development-channels=server:butchr",
       ],
     });
+  });
+
+  test("BUTCHR-453: strictMcpConfig: true produces --strict-mcp-config in a Claude launch's argv", () => {
+    expect(buildAgentStartParams({
+      provider: "claude",
+      name: "butchr-test-1",
+      paneId: "w1:p1",
+      cwd: "/work/TEST-1",
+      prompt: "follow your CLAUDE.md",
+      effort: "high",
+      mcpConfigPath: "/work/TEST-1/mcp.json",
+      strictMcpConfig: true,
+    }).args).toEqual([
+      "follow your CLAUDE.md",
+      "--effort", "high",
+      "--permission-mode", "bypassPermissions",
+      "--mcp-config", "/work/TEST-1/mcp.json",
+      "--strict-mcp-config",
+    ]);
+  });
+
+  test("BUTCHR-453: a definition without strictMcpConfig set produces no such flag", () => {
+    expect(buildAgentStartParams({
+      provider: "claude",
+      name: "butchr-test-1",
+      paneId: "w1:p1",
+      cwd: "/work/TEST-1",
+      prompt: "follow your CLAUDE.md",
+      effort: "high",
+      mcpConfigPath: "/work/TEST-1/mcp.json",
+    }).args).not.toContain("--strict-mcp-config");
   });
 
   test.each([undefined, "test-model"])("builds an interactive AGY launch with model %s and pane-owned cwd", (model) => {

@@ -43,6 +43,21 @@ applies the same rule for callers combining channel lists of their own.
 `checkManagedAgentArgv` compares every configured channel against the live
 process, not just the first, so a worker that lost one channel reads as drifted.
 
+### Strict MCP discovery (BUTCHR-453)
+
+`strictMcpConfig: true` on a `ClaudeAgentLaunch` (or `ProviderLaunchInputs`)
+emits `--strict-mcp-config` immediately after `--mcp-config`, telling Claude
+Code to load ONLY the servers named in that file — no project-level or
+user-level `.mcp.json` discovery on top of it. Codex and AGY accept the same
+field and spell nothing, same discipline as every other neutral input here.
+`checkManagedAgentArgv` treats it as a required, presence-only flag (there is
+no value to compare, unlike `--mcp-config`) when the expected launch sets it —
+a live worker missing it reads as drifted, the same as missing any other
+required flag.
+
+Absent or `false`, behaviour is byte-for-byte unchanged: no flag, ordinary
+discovery, exactly as before this field existed.
+
 ## Launching a provider CLI directly
 
 Not every caller goes through Herdr. A daemon that spawns `claude` itself still
@@ -50,11 +65,13 @@ must not spell Claude's flags, so `buildProviderLaunchArgs(provider, inputs)`
 returns the arguments for one provider from the same neutral inputs and is the
 only place those flags are written. `ProviderLaunchInputs` takes an
 `mcpConfigPath`, `mcpNotificationServers` — the MCP servers whose notifications
-the session must receive — and `developmentChannels` for a caller that already
-holds spelled-out names. Drovr turns each notifying server into the channel
-Claude names it by (`server:<name>`) and merges it with the named channels, so a
-caller that knows only "this session talks to yappr" never learns that spelling.
-Codex and AGY take the same inputs and return no arguments.
+the session must receive — `developmentChannels` for a caller that already
+holds spelled-out names, and `strictMcpConfig` (see above) for a caller that
+wants Claude Code to load only that file. Drovr turns each notifying server
+into the channel Claude names it by (`server:<name>`) and merges it with the
+named channels, so a caller that knows only "this session talks to yappr"
+never learns that spelling. Codex and AGY take the same inputs and return no
+arguments.
 
 `ManagedAgentLaunch` and `ManagedHerdrStartRequest` carry
 `mcpNotificationServers` too, and the Herdr adapter builds its Claude arguments

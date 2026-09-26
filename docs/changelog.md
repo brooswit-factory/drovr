@@ -17,6 +17,21 @@ BUTCHR-417: `InboxRelay.push()` race fix — a message pushed as the previous
   the loop exits, closing the gap. Found by BUTCHR-413 building the Codex
   channel relay in butchr.
 
+BUTCHR-453: `strictMcpConfig` for a Claude launch — the Candlestix directors
+need "permission mode auto with a strict MCP config" to migrate to
+butchr-managed sessions faithfully, and Drovr had no way to ask Claude Code
+for one.
+
+- **`ClaudeAgentLaunch.strictMcpConfig`/`ProviderLaunchInputs.strictMcpConfig`**
+  (`boolean`, optional): `true` emits `--strict-mcp-config` immediately after
+  `--mcp-config` in `buildProviderLaunchArgs`/`buildAgentStartParams`, so
+  Claude Code loads ONLY the MCP servers named in that file — no
+  project-level or user-level `.mcp.json` discovery. Codex and AGY accept the
+  field and spell nothing. `checkManagedAgentArgv` treats it as a required,
+  presence-only flag (no value to compare) when the expected launch sets it,
+  same discipline as `--dangerously-bypass-approvals-and-sandbox`. Absent or
+  `false`: no flag, today's behaviour exactly.
+
 ## 0.13.0
 
 DROVR-24 and DROVR-33, both fleet-scan/auto-answer hardening so a failure

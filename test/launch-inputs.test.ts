@@ -225,6 +225,24 @@ describe("a direct CLI launch outside Herdr", () => {
     expect(buildProviderLaunchArgs("claude", { mcpNotificationServers: [] })).toEqual([]);
   });
 
+  test("BUTCHR-453: strictMcpConfig emits --strict-mcp-config alongside --mcp-config for Claude", () => {
+    expect(buildProviderLaunchArgs("claude", {
+      mcpConfigPath: "/w/mcp.json",
+      strictMcpConfig: true,
+    })).toEqual(["--mcp-config", "/w/mcp.json", "--strict-mcp-config"]);
+  });
+
+  test("BUTCHR-453: absent/false strictMcpConfig emits no flag — today's behaviour exactly", () => {
+    expect(buildProviderLaunchArgs("claude", { mcpConfigPath: "/w/mcp.json" }))
+      .toEqual(["--mcp-config", "/w/mcp.json"]);
+    expect(buildProviderLaunchArgs("claude", { mcpConfigPath: "/w/mcp.json", strictMcpConfig: false }))
+      .toEqual(["--mcp-config", "/w/mcp.json"]);
+  });
+
+  test.each(["codex", "agy"] as const)("BUTCHR-453: %s takes strictMcpConfig without spelling a flag", (provider) => {
+    expect(buildProviderLaunchArgs(provider, { mcpConfigPath: "/w/mcp.json", strictMcpConfig: true })).toEqual([]);
+  });
+
   test.each(["codex", "agy"] as const)("%s takes the same inputs and spells no Claude flag", (provider) => {
     expect(buildProviderLaunchArgs(provider, {
       mcpConfigPath: "/home/brooswit/code/brooswit/.mcp.json",
