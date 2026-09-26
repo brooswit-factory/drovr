@@ -205,6 +205,26 @@ export {
   type ScanPendingPermissionsResult,
 } from "./permission-approval.js";
 export {
+  classifyCodexApprovalScreen,
+  onceOptionIndex,
+  scanPendingCodexApprovals,
+  approveCodexApproval,
+  autoAnswerCodexApprovals,
+  type CodexPermissionKind,
+  type CodexPermissionPrompt,
+  type UnrecognisedCodexPrompt,
+  type CodexApprovalScreen,
+  type PendingCodexApproval,
+  type UnrecognisedCodexPane,
+  type ScanCodexApprovalsOptions,
+  type ScanCodexApprovalsResult,
+  type ApproveCodexApprovalRequest,
+  type ApproveCodexApprovalResult,
+  type ApproveCodexApprovalRefusalReason,
+  type AutoAnswerCodexApprovalsOptions,
+  type AutoAnswerCodexApprovalResult,
+} from "./codex-permission-approval.js";
+export {
   listBlockingPrompts,
   scanBlockingPrompts,
   classifyBlockingScreen,
