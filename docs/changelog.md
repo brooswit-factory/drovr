@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.15.1
+
+FACTORY-93: `autoAnswerPermissions` gains an optional `scope`
+(`"always"` default — unchanged; `"once"` new). With `"once"` an unattended
+pass presses option 1 only when it is exactly `Yes`, instead of hunting for
+the "Yes, and …" stored-rule option. The "always" matcher never recognised
+Claude's read-permission dialog ("Yes, allow reading from … from this
+project") and silently skipped it, freezing a lizard-mode agent on its first
+out-of-workspace read (seen live on codey, 2026-09-26). `"once"` is
+wording-independent and stores no rules. Additive; existing callers are
+unaffected.
+
 ## 0.15.0
 
 FACTORY-46 (FACTORY-44): any blocking dialog is Drovr's job to detect and

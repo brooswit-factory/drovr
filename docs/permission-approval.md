@@ -104,6 +104,7 @@ const results = await autoAnswerPermissions(client, {
   auditPath: `${homedir()}/.local/state/bakr/permission-approvals.jsonl`,
   operator: "drovr-auto",  // default; pass one only to override it
   readTimeoutMs: 10_000,   // optional per-pane deadline
+  scope: "once",           // optional; default "always" (see "Scope" below)
 });
 // [{ paneId: "w1:p1", label, outcome: "answered", tool, request }
 //  { paneId: "w2:p1", label, outcome: "skipped", reason }
@@ -111,8 +112,17 @@ const results = await autoAnswerPermissions(client, {
 ```
 
 One unattended pass over every pane `listPendingPermissions` reports, with no
-operator in the loop: every prompt is answered with the `scope: "always"`
-option, which is option 2 in the dialog measured above, and nothing else.
+operator in the loop: every prompt is answered with the option for
+`options.scope`, and nothing else.
+
+- **Scope (FACTORY-93).** `"always"` (the default, unchanged) presses option 2
+  only when it is the "Yes, and …" stored-rule option. `"once"` presses
+  option 1 only when it is exactly `Yes` — no stored rule, and no dependence
+  on how Claude words its "always allow" option. Claude's read-permission
+  dialog words it "Yes, allow reading from … from this project" (no "and"), so
+  `"always"` skips that dialog; `"once"` answers it. Butchr's lizard mode uses
+  `"once"`. A `"once"` prompt whose option 1 is not `Yes` is `skipped` with a
+  reason, nothing pressed.
 
 - **Option rule.** Before `approvePermission` is ever called, the prompt's own
   `options` are checked: only when the "Yes, and …" stored-rule option (never

@@ -361,6 +361,12 @@ describe("approvePermission", () => {
 
 // Option 2 is not the stored-rule "Yes, and …" option: it's the auto-mode
 // option instead, which sits at position 3.
+// Claude's read-permission dialog as seen live on codey (FACTORY-93,
+// 2026-09-26): its stored-rule option says "Yes, allow reading …", with no
+// "and", so the "always" matcher never recognises it.
+const READ_PROMPT = BASH_PROMPT
+  .replace(" 2. Yes, and always allow access to /tmp/drovr-herdr-proof.hostres from this project", " 2. Yes, allow reading from /home/brooswit/Projects/rocketchat from this project");
+
 const NO_RULE_AT_TWO_PROMPT = BASH_PROMPT
   .replace(" 2. Yes, and always allow access to /tmp/drovr-herdr-proof.hostres from this project", " 2. Yes, and switch to auto mode · auto mode handles these prompts for you")
   .replace(" 3. Yes, and switch to auto mode · auto mode handles these prompts for you", " 3. Yes, and always allow access to /tmp/drovr-herdr-proof.hostres from this project");
@@ -425,6 +431,42 @@ describe("autoAnswerPermissions", () => {
     const results = await autoAnswerPermissions(client, { auditPath: path });
     expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
     expect((results[0] as { reason: string }).reason).toMatch(/not option 2/);
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(await readAudit(path)).toEqual([]);
+  });
+
+  test("scope once presses option 1 'Yes' with no key movement, audited as scope once", async () => {
+    const path = await freshAuditPath();
+    const { client, keysSent } = autoClient({ "w1:p1": { reads: [BASH_PROMPT, BASH_PROMPT, AFTER] } });
+    const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "answered", tool: "Bash command" }]);
+    expect(keysSent["w1:p1"]).toEqual([["enter"]]);
+    const audit = await readAudit(path);
+    expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);
+    expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "once", option: "Yes" });
+  });
+
+  test("scope once answers the read-permission dialog that scope always skips (FACTORY-93)", async () => {
+    const path = await freshAuditPath();
+    const always = autoClient({ "w1:p1": { reads: [READ_PROMPT] } });
+    const skipped = await autoAnswerPermissions(always.client, { auditPath: path });
+    expect(skipped).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    expect(always.keysSent["w1:p1"]).toBeUndefined();
+    const once = autoClient({ "w1:p1": { reads: [READ_PROMPT, READ_PROMPT, AFTER] } });
+    const answered = await autoAnswerPermissions(once.client, { auditPath: path, scope: "once" });
+    expect(answered).toMatchObject([{ paneId: "w1:p1", outcome: "answered" }]);
+    expect(once.keysSent["w1:p1"]).toEqual([["enter"]]);
+  });
+
+  test("scope once skips a prompt whose option 1 is not plain 'Yes', nothing pressed", async () => {
+    const path = await freshAuditPath();
+    const odd = BASH_PROMPT.replace(" ❯ 1. Yes", " ❯ 1. No").replace("   4. No", "   4. Yes");
+    const { client, keysSent } = autoClient({ "w1:p1": { reads: [odd] } });
+    const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
+    // Either not classified as a permission prompt at all, or classified and
+    // skipped — never answered, never pressed, never audited.
+    expect(results.filter((r) => r.outcome === "answered")).toEqual([]);
+    for (const r of results) expect(r.outcome).toBe("skipped");
     expect(keysSent["w1:p1"]).toBeUndefined();
     expect(await readAudit(path)).toEqual([]);
   });
