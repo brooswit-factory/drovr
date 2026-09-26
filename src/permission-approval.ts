@@ -328,6 +328,15 @@ export interface AutoAnswerPermissionsOptions {
    * log for a pane that timed out.
    */
   readTimeoutMs?: number;
+  /**
+   * Which option an unattended pass presses (FACTORY-93). `"always"` (the
+   * default, unchanged) presses option 2 only when it is the "Yes, and …"
+   * stored-rule option. `"once"` presses option 1 only when it is exactly
+   * "Yes" — no stored rule, and no dependence on how Claude words its
+   * "always allow" option (the read-permission dialog says "Yes, allow reading
+   * … from this project", which `"always"` never recognised and skipped).
+   */
+  scope?: PermissionScope;
 }
 
 interface AutoAnswerBase {
@@ -345,10 +354,11 @@ const AUTO_ANSWER_TIMEOUT = Symbol("auto-answer-timeout");
 
 /**
  * One unattended pass over every pending Claude permission prompt: press the
- * `scope: "always"` option, which is option 2 on the current dialog, and
- * nothing else. A prompt whose option 2 isn't that "Yes, and …" option is
- * skipped before `approvePermission` is ever called, so no "approving" audit
- * record is written for it. One pane throwing, or (with `readTimeoutMs` set)
+ * option for `options.scope` and nothing else — with `"always"` (default),
+ * option 2 when it is the "Yes, and …" stored-rule option; with `"once"`,
+ * option 1 when it is exactly "Yes". A prompt without that option in that
+ * position is skipped (with a `reason`) before `approvePermission` is ever
+ * called, so no "approving" audit record is written for it. One pane throwing, or (with `readTimeoutMs` set)
  * missing its deadline, is caught and reported as `failed` for that pane; it
  * never fails the rest of the pass. A `timeout` failure does not mean nothing
  * was pressed — see `AutoAnswerPermissionsOptions.readTimeoutMs`.
@@ -362,8 +372,14 @@ export async function autoAnswerPermissions(
   return Promise.all(pending.map(async (permission): Promise<AutoAnswerPermissionResult> => {
     const base = { paneId: permission.paneId, label: permission.label };
     try {
-      const target = optionFor(permission, "always");
-      if (target !== 1) {
+      const scope = options.scope ?? "always";
+      const target = optionFor(permission, scope);
+      if (scope === "once" && target !== 0) {
+        return { ...base, outcome: "skipped", reason: target < 0
+          ? `no plain "Yes" option on this prompt (options: ${JSON.stringify(permission.options)})`
+          : `"Yes" is at position ${target + 1}, not option 1 (options: ${JSON.stringify(permission.options)})` };
+      }
+      if (scope === "always" && target !== 1) {
         return { ...base, outcome: "skipped", reason: target < 0
           ? `no "Yes, and …" stored-rule option on this prompt (options: ${JSON.stringify(permission.options)})`
           : `the stored-rule option is at position ${target + 1}, not option 2 (options: ${JSON.stringify(permission.options)})` };
@@ -372,7 +388,7 @@ export async function autoAnswerPermissions(
         paneId: permission.paneId,
         promptId: permission.promptId,
         operator,
-        scope: "always",
+        scope,
         auditPath: options.auditPath,
       });
       attempt.catch(() => undefined);
