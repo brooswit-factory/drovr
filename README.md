@@ -71,6 +71,29 @@ consumer needs from the SDK — `HerdrError`, `isTimeout`, `Subscription`, and
 the generated/typed-escape-hatch types — is re-exported from `@brooswit/drovr`
 too, so a migrated consumer never has to import from both packages.
 
+## Bundled assets
+
+The published package includes non-code assets under `assets/`, alongside
+`dist` and `docs` in package.json's `files` list. The first is
+`assets/sounds/lizard-button.mp3` (30,940 bytes) — the default sound for
+lizard mode's optional, off-by-default approval sound (FACTORY-100): when a
+host application enables that option, it plays a sound each time an
+auto-answer approves a prompt. **drovr itself never plays this file** — it
+only ships it; the host application (currently
+[`butchr`](https://github.com/brooswit-factory/butchr)) does the playback.
+It was supplied by the operator and delivered into this repo by the Director
+via branch `FACTORY-100-sound-asset`.
+
+`package.json`'s `exports` map exposes only `"."`, so there is no
+`@brooswit/drovr/assets/...` subpath to import. A consumer locates the
+package root by resolving drovr's main entry (e.g.
+`import.meta.resolve("@brooswit/drovr")`; a CommonJS `require.resolve`
+throws `ERR_PACKAGE_PATH_NOT_EXPORTED`, since `exports` declares only an
+`import` condition) and walking up
+from that file to the nearest `package.json` whose `name` is
+`@brooswit/drovr` — then joining `assets/sounds/lizard-button.mp3` onto that
+directory.
+
 ## Managed agents
 
 Drovr supports both **Codex** and **Claude**, while passing other Herdr agent

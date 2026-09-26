@@ -70,6 +70,49 @@ const FOOTER_LINE = /^\s*(Enter to (confirm|continue|select)|Esc to cancel)/;
 const SEPARATOR_OR_TIP = /^(─+|·|Tip:)/;
 
 /**
+ * `AskUserQuestion`'s side-by-side layout draws a boxed preview column to
+ * the right of the option list — border and fill lines introduced by 2+
+ * spaces then a box-drawing char, never real option text. Measured live
+ * (2026-09-26): stripping everything from that point on, on every line,
+ * removes the column (and the `✂ N lines hidden` truncation marker, which
+ * lives entirely inside it) before the option regex ever sees the line, so
+ * none of it can bleed into a label.
+ */
+const PREVIEW_COLUMN = /\s{2,}[┌┐└┘├┤─│]/;
+function stripPreviewColumn(line: string): string {
+  const at = line.search(PREVIEW_COLUMN);
+  return at < 0 ? line : line.slice(0, at).replace(/\s+$/, "");
+}
+
+/** A full-width rule, distinct from `SEPARATOR_OR_TIP`: on an AskUserQuestion screen it marks the boundary before the "Chat about this" meta-action, never a real option. */
+const FULL_WIDTH_SEPARATOR = /^─{10,}$/;
+
+/**
+ * Trailing lines a real footer can sit behind without the gap meaning
+ * "this isn't actually a live dialog": the divider before AskUserQuestion's
+ * "Chat about this" meta-action, that action itself (numbered, in the
+ * plain layout, or not, in the side-by-side one — measured live, both
+ * occur), and the note prompt the preview column adds. An unrecognised
+ * non-blank line still fails the gate below.
+ */
+const TRAILER_LINE = /^\s*(?:─{10,}|Notes: press n to add notes|(?:\d+\.\s+)?Chat about this)\s*$/;
+
+/**
+ * An indented line with no number of its own, directly after an option
+ * line. Only a genuine wrapped label when the screen carries a preview
+ * column: measured live, a preview column narrows the option list enough
+ * to wrap a long label onto a second line, and — on the same screen —
+ * suppresses each option's own description line, which a plain (no
+ * preview) dialog instead prints on this exact same kind of line. Folding
+ * this unconditionally would swallow a plain dialog's descriptions into
+ * its option labels, so it's gated on `hasPreviewColumn` below rather than
+ * applied whenever the shape matches.
+ */
+const WRAPPED_LABEL_CONTINUATION = /^\s+\S/;
+
+const NUMBERED_OPTION = /^\s*(❯\s*)?(\d+)\.\s+(.+)$/;
+
+/**
  * The question and verbatim options of a screen that is genuinely waiting —
  * for an escalation payload nobody may paraphrase. Ported from butchr's
  * `parsePrompt` (`src/agents/prompt.ts`), which closed a self-sustaining
@@ -102,30 +145,53 @@ function questionAbove(lines: string[], lastAboveOptions: number): string {
   return text.join(" ").trim();
 }
 
-/** The `❯ N. label` / `  N. label` shape (permission prompts, some startup menus). */
-function parseNumberedDialog(lines: string[]): { question: string; options: string[] } | undefined {
+/**
+ * The `❯ N. label` / `  N. label` shape (permission prompts, some startup
+ * menus, and AskUserQuestion — plain, or side-by-side with a preview
+ * column stripped by `stripPreviewColumn` first).
+ */
+function parseNumberedDialog(rawLines: string[]): { question: string; options: string[] } | undefined {
+  const hasPreviewColumn = rawLines.some((line) => PREVIEW_COLUMN.test(line));
+  const lines = rawLines.map(stripPreviewColumn);
+  const first = lines.findIndex((line) => NUMBERED_OPTION.test(line));
+  if (first < 0) return undefined;
+  // AskUserQuestion's "Chat about this" meta-action sits past a full-width
+  // separator, sometimes numbered like a real option — bound the scan to
+  // before it so it's never read as one (see `TRAILER_LINE` for how the
+  // footer gate still tolerates it, and the separator itself, below).
+  let separator = -1;
+  for (let i = first; i < lines.length; i++) if (FULL_WIDTH_SEPARATOR.test(lines[i]!)) { separator = i; break; }
+  const end = separator >= 0 ? separator : lines.length;
+
   const options: string[] = [];
   let cursorCount = 0;
-  let firstOptionLine = -1;
   let lastOptionLine = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const match = /^\s*(❯\s*)?(\d+)\.\s+(.+)$/.exec(lines[i]!);
-    if (!match) continue;
-    const index = Number(match[2]);
-    if (match[1]) cursorCount++;
-    options[index - 1] = match[3]!.trim();
-    if (firstOptionLine < 0) firstOptionLine = i;
-    lastOptionLine = i;
+  let lastOptionIndex = -1;
+  for (let i = first; i < end; i++) {
+    const line = lines[i]!;
+    const match = NUMBERED_OPTION.exec(line);
+    if (match) {
+      const index = Number(match[2]);
+      if (match[1]) cursorCount++;
+      options[index - 1] = match[3]!.trim();
+      lastOptionLine = i;
+      lastOptionIndex = index - 1;
+      continue;
+    }
+    if (hasPreviewColumn && lastOptionIndex >= 0 && i === lastOptionLine + 1 && WRAPPED_LABEL_CONTINUATION.test(line)) {
+      options[lastOptionIndex] = `${options[lastOptionIndex]} ${line.trim()}`;
+      lastOptionLine = i;
+    }
   }
   const found = options.filter((option): option is string => option !== undefined);
   if (found.length < 2 || cursorCount !== 1 || !footerImmediatelyFollows(lines, lastOptionLine)) return undefined;
-  return { question: questionAbove(lines, firstOptionLine - 1), options: found };
+  return { question: questionAbove(lines, first - 1), options: found };
 }
 
 function footerImmediatelyFollows(lines: string[], lastOptionLine: number): boolean {
   if (lastOptionLine < 0) return false;
   const footer = lines.findIndex((line, i) => i > lastOptionLine && FOOTER_LINE.test(line));
-  return footer >= 0 && lines.slice(lastOptionLine + 1, footer).every((line) => !line.trim());
+  return footer >= 0 && lines.slice(lastOptionLine + 1, footer).every((line) => !line.trim() || TRAILER_LINE.test(line));
 }
 
 /** The unnumbered `❯ label` shape (Claude's trust/development-channels menus). */
