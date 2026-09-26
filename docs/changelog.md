@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.15.2
+
+Two changes ship together: FACTORY-113's dialog-recognition fix, merged to
+`main` after 0.15.1 but not yet released, and FACTORY-100's bundled
+approval-sound asset.
+
+- **`describeUnknownDialog` recognises Claude Code's `AskUserQuestion`
+  dialog** (`src/blocking-prompts.ts`) in all three shapes — plain, a
+  side-by-side preview, and a truncated (`✂ N lines hidden`) preview —
+  instead of returning `undefined` for every one of them, so
+  `classifyBlockingScreen` reports `kind: "unknown"` with `dialog` populated
+  and the escalation watcher gets a stable fingerprint and `ANSWER` path.
+  Fixes the FACTORY-111 hang. The old footer gate required pure-blank lines
+  between the last option and the footer; every `AskUserQuestion` dialog —
+  plain included — draws a "Chat about this" meta-action past a full-width
+  separator (and, with a preview, a `Notes: press n to add notes` line)
+  that violated it, so this was never a preview-only bug. Fixtures are real
+  captures against a live Claude Code pane (2.1.251). See
+  [`docs/blocking-escalation.md`](blocking-escalation.md) for the full
+  measured writeup. (FACTORY-113/FACTORY-114)
+- **Bundles `assets/sounds/lizard-button.mp3`** (30,940 bytes) in the
+  published package, and adds `assets` to package.json `files`. This is the
+  default sound for lizard mode's optional, off-by-default approval sound
+  (FACTORY-100): the host application (`butchr`) plays it when that option
+  is on and an auto-answer approves a prompt. **drovr never plays this file
+  itself** — see the README's new "Bundled assets" section for how a
+  consumer locates it (`exports` still exposes only `"."`) and where the
+  file came from. The original `myinstants.com` URL returns a Cloudflare 403
+  to non-browser clients on this factory's hosts, which is why the file is
+  bundled rather than fetched at runtime.
+
 ## 0.15.1
 
 FACTORY-93: `autoAnswerPermissions` gains an optional `scope`
