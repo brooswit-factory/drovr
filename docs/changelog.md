@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0
 
 BUTCHR-417: `InboxRelay.push()` race fix — a message pushed as the previous
 `drain()` loop finishes could be silently dropped forever.
