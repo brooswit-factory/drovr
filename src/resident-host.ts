@@ -179,6 +179,7 @@ export type StartupPrompt =
   | { kind: "trust"; keys: string[] }
   | { kind: "development-channels"; keys: string[] }
   | { kind: "auto-mode-onboarding"; keys: string[] }
+  | { kind: "fullscreen-renderer"; keys: string[] }
   | { kind: "mcp-approval"; excerpt: string }
   | { kind: "unknown-blocking"; excerpt: string };
 
@@ -228,6 +229,24 @@ export function classifyStartupPrompt(raw: string): StartupPrompt | undefined {
     // Brooswit's choice is "Yes", which leads to the setup screen above.
     const keys = keysToChoose(screen, /^Yes$/);
     return keys ? { kind: "auto-mode-onboarding", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
+  }
+  if (/fullscreen renderer/i.test(screen) && /didn'?t finish start/i.test(screen)) {
+    // FACTORY-46/FACTORY-44: the ticket's own wording only —
+    // "Claude Code's fullscreen renderer didn't finish starting last
+    // time…" — is not reproduced in any fixture, log, or live capture this
+    // checkout could find (see the PR). This is DESIGNED FROM THAT WORDING
+    // ALONE, not measured. It is deliberately distinct from the already-
+    // recognised, unrelated "Try the new fullscreen renderer?" opt-in offer
+    // (a mid-session offer with no "didn't finish start" text; Butchr's own
+    // fleet convention for that one is "Not now" too — see
+    // brooswit-factory/butchr src/agents/prompt.ts — chosen independently
+    // here for the same reason: it neither retries a start that may hang
+    // again nor changes any user/global setting). If this recovery dialog's
+    // real option text doesn't contain "Not now", `keysToChoose` returns
+    // undefined and this correctly falls through to unknown-blocking rather
+    // than guessing at an unverified shape.
+    const keys = keysToChoose(screen, /^Not now\b/i);
+    return keys ? { kind: "fullscreen-renderer", keys } : { kind: "unknown-blocking", excerpt: excerptOf(screen) };
   }
   if (classifyBlockingText("claude", screen)?.kind === "mcp-approval-prompt") return { kind: "mcp-approval", excerpt: excerptOf(screen) };
   if (/Enter to confirm/.test(screen)) return { kind: "unknown-blocking", excerpt: excerptOf(screen) };

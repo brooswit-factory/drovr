@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.15.0
+
+FACTORY-46 (FACTORY-44): any blocking dialog is Drovr's job to detect and
+handle, not a host's — hosts must not keep their own dialog lists. This
+release teaches Drovr the "fullscreen renderer didn't finish starting last
+time" startup dialog and adds the general, host-neutral mechanism for
+everything Drovr does not recognise.
+
+- **`classifyStartupPrompt` recognises the fullscreen-renderer recovery
+  dialog** (`src/resident-host.ts`): a new `StartupPrompt` kind,
+  `"fullscreen-renderer"`. Answered `Not now` — it neither retries a start
+  that may hang again nor changes any user/global setting, the same
+  standing answer Butchr's fleet already gives the unrelated "Try the new
+  fullscreen renderer?" opt-in offer. **This dialog's exact wording and
+  option text are UNVERIFIED**: no fixture, log, or live capture of it was
+  found in this checkout (only the ticket's own prose, quoted in the code
+  comment). The matcher requires both "fullscreen renderer" and "didn't
+  finish start" in the screen, and requires an option literally containing
+  "Not now" before it presses anything — an unrecognised option shape (or
+  the unrelated offer dialog, which lacks "didn't finish start") falls
+  through to `unknown-blocking` rather than guessing. Re-verify against a
+  live capture before relying on this in a fleet that actually hits it.
+- **`BlockingPrompt` (`src/blocking-prompts.ts`) gains two additive,
+  optional fields**: `keys` (present for a `startup` prompt Drovr can press
+  itself — trust, development-channels, auto-mode-onboarding,
+  fullscreen-renderer; absent for `mcp-approval`, which stays reported-only)
+  and `dialog: { question, options }` (present for an `unknown` prompt only
+  when its shape can be read with confidence). Existing consumers reading
+  only `kind`/`name`/`excerpt` are unaffected.
+- **`describeUnknownDialog`** (`src/blocking-prompts.ts`, exported): the
+  question and verbatim options of any dialog waiting on Drovr's existing
+  `WAITING_FOOTER`, adapted from `brooswit-factory/butchr`'s
+  `src/agents/prompt.ts` `parsePrompt` — which had already, independently,
+  closed a self-sustaining escalation loop (that repo's KAN-756): a pane
+  merely narrating or quoting a past dialog, including one already
+  escalated and quoted back from a ticket comment, must never itself read
+  as a live menu. Same two structural gates carried over: the footer must
+  be the very next thing after the last option, and an unnumbered menu must
+  carry exactly one visible cursor. Undefined — never a guessed payload —
+  when the shape can't be read with confidence.
+- **`createBlockingEscalationWatcher`** (new `src/blocking-escalation.ts`):
+  the host-neutral escalation hook. One `watcher.poll(client)` call per
+  fleet poll presses the keys for every known-safe startup prompt, leaves
+  `mcp-approval` and tool-`permission` prompts reported (their existing
+  flows are unchanged), and for a genuinely unrecognised dialog calls
+  `hook.onUnknownDialog` with pane/session identity (`cwd` doubles as
+  identity for a pane with no issue key), the question and options
+  verbatim, and a content-based `fingerprint` — exactly once per
+  `(pane, fingerprint)` episode, tracked in the watcher's own closure, never
+  in Drovr's exports or in a host's ticket system. `hook.onDialogResolved`
+  fires once that episode's dialog is no longer on screen with the same
+  fingerprint; a pane that goes `unreadable` mid-episode is left open, not
+  resolved on a guess. A hook rejection is caught per-pane
+  (`AutoHandleOutcome`'s `hook-failed`) and never fails the rest of a poll.
+  Drovr ships no consumer of this hook itself — see
+  [`docs/blocking-escalation.md`](blocking-escalation.md).
+
 ## 0.14.0
 
 BUTCHR-417: `InboxRelay.push()` race fix — a message pushed as the previous

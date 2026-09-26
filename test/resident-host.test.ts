@@ -35,6 +35,19 @@ const CHANNELS = [
 ].join("\n");
 const MCP = "New MCP server found in this project\n❯ 1. Use this and all future MCP servers\n  2. Continue without\nEnter to confirm";
 const IDLE_SCREEN = "╭────╮\n│ >  │\n╰────╯";
+// FACTORY-46/FACTORY-44: designed from the ticket's own wording, NOT
+// measured — no fixture, log, or live capture of this dialog was found in
+// this checkout. See classifyStartupPrompt's own comment and the PR.
+const RENDERER = [
+  "Claude Code's fullscreen renderer didn't finish starting last time.",
+  "",
+  "❯ 1. Try again",
+  "  2. Not now",
+  "",
+  "Enter to confirm · Esc to cancel",
+].join("\n");
+const RENDERER_AMBIGUOUS = RENDERER.replace("2. Not now", "2. Always disable it");
+const RENDERER_OFFER = "Try the new fullscreen renderer?\n\n❯ 1. Yes, try it\n  2. Not now\n\nEnter to confirm · Esc to cancel";
 
 interface Agent { pane_id: string; workspace_id: string; name?: string; agent?: string; agent_status: string; interactive_ready?: boolean; cwd?: string; agent_session?: { kind: string; value: string } }
 
@@ -185,6 +198,15 @@ describe("startup prompts", () => {
   test("the development-channels warning is accepted; an MCP approval is only reported", () => {
     expect(classifyStartupPrompt(CHANNELS)).toEqual({ kind: "development-channels", keys: ["enter"] });
     expect(classifyStartupPrompt(MCP)?.kind).toBe("mcp-approval");
+  });
+
+  test("the fullscreen-renderer recovery dialog is answered Not now; a variant with no such option is left blocking, never guessed", () => {
+    expect(classifyStartupPrompt(RENDERER)).toEqual({ kind: "fullscreen-renderer", keys: ["down", "enter"] });
+    expect(classifyStartupPrompt(RENDERER_AMBIGUOUS)?.kind).toBe("unknown-blocking");
+  });
+
+  test("the unrelated 'try the new fullscreen renderer' offer (no 'didn't finish start' text) is not mistaken for the recovery dialog", () => {
+    expect(classifyStartupPrompt(RENDERER_OFFER)?.kind).toBe("unknown-blocking");
   });
 
   test("an unrecognised confirmation is blocking, and an idle screen is no prompt", () => {

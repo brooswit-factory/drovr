@@ -208,11 +208,20 @@ export {
   listBlockingPrompts,
   scanBlockingPrompts,
   classifyBlockingScreen,
+  describeUnknownDialog,
   type BlockingPrompt,
   type BlockingPromptKind,
   type ScanBlockingPromptsOptions,
   type ScanBlockingPromptsResult,
 } from "./blocking-prompts.js";
+export {
+  createBlockingEscalationWatcher,
+  type BlockingEscalationHook,
+  type BlockingEscalationWatcher,
+  type UnknownDialogEscalation,
+  type DialogResolved,
+  type AutoHandleOutcome,
+} from "./blocking-escalation.js";
 export {
   readPaneWithDeadline,
   type UnreadablePane,
