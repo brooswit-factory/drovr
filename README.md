@@ -87,7 +87,9 @@ via branch `FACTORY-100-sound-asset`.
 `package.json`'s `exports` map exposes only `"."`, so there is no
 `@brooswit/drovr/assets/...` subpath to import. A consumer locates the
 package root by resolving drovr's main entry (e.g.
-`require.resolve("@brooswit/drovr")` or `import.meta.resolve`) and walking up
+`import.meta.resolve("@brooswit/drovr")`; a CommonJS `require.resolve`
+throws `ERR_PACKAGE_PATH_NOT_EXPORTED`, since `exports` declares only an
+`import` condition) and walking up
 from that file to the nearest `package.json` whose `name` is
 `@brooswit/drovr` — then joining `assets/sounds/lizard-button.mp3` onto that
 directory.
