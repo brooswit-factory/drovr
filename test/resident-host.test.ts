@@ -35,9 +35,16 @@ const CHANNELS = [
 ].join("\n");
 const MCP = "New MCP server found in this project\n❯ 1. Use this and all future MCP servers\n  2. Continue without\nEnter to confirm";
 const IDLE_SCREEN = "╭────╮\n│ >  │\n╰────╯";
-// FACTORY-46/FACTORY-44: designed from the ticket's own wording, NOT
-// measured — no fixture, log, or live capture of this dialog was found in
-// this checkout. See classifyStartupPrompt's own comment and the PR.
+// SYNTHETIC — invented for this test, not observed or measured anywhere.
+// FACTORY-46/FACTORY-44's ticket wording is not reproduced in any fixture,
+// log, or live capture in this checkout; worse, `strings` on the installed
+// claude 2.1.283 binary shows this exact phrase only inside a
+// non-interactive NOTICE with no options and no footer — see
+// classifyStartupPrompt's own comment for the full evidence. This fixture
+// and the tests below it exercise the matcher's OWN conservative logic
+// (require both phrases + an explicit "Not now" option, else fall through)
+// on an invented menu shape; they are not evidence the real dialog exists
+// or looks like this.
 const RENDERER = [
   "Claude Code's fullscreen renderer didn't finish starting last time.",
   "",

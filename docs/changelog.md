@@ -4,24 +4,28 @@
 
 FACTORY-46 (FACTORY-44): any blocking dialog is Drovr's job to detect and
 handle, not a host's — hosts must not keep their own dialog lists. This
-release teaches Drovr the "fullscreen renderer didn't finish starting last
-time" startup dialog and adds the general, host-neutral mechanism for
-everything Drovr does not recognise.
+release adds the general, host-neutral mechanism for everything Drovr does
+not recognise, plus a speculative, unconfirmed matcher for the wording
+FACTORY-44 described.
 
-- **`classifyStartupPrompt` recognises the fullscreen-renderer recovery
-  dialog** (`src/resident-host.ts`): a new `StartupPrompt` kind,
-  `"fullscreen-renderer"`. Answered `Not now` — it neither retries a start
-  that may hang again nor changes any user/global setting, the same
-  standing answer Butchr's fleet already gives the unrelated "Try the new
-  fullscreen renderer?" opt-in offer. **This dialog's exact wording and
-  option text are UNVERIFIED**: no fixture, log, or live capture of it was
-  found in this checkout (only the ticket's own prose, quoted in the code
-  comment). The matcher requires both "fullscreen renderer" and "didn't
-  finish start" in the screen, and requires an option literally containing
-  "Not now" before it presses anything — an unrecognised option shape (or
-  the unrelated offer dialog, which lacks "didn't finish start") falls
-  through to `unknown-blocking` rather than guessing. Re-verify against a
-  live capture before relying on this in a fleet that actually hits it.
+- **`classifyStartupPrompt` gains a SPECULATIVE matcher for the
+  "fullscreen renderer didn't finish starting last time" wording**
+  (`src/resident-host.ts`), a new `StartupPrompt` kind
+  `"fullscreen-renderer"`, answered `Not now` if a screen ever shows one.
+  **This is not a confirmed fix for a real dialog.** No fixture, log, or
+  live capture of an interactive dialog carrying this wording exists
+  anywhere in this checkout — only the ticket's own prose. Worse:
+  `strings` run directly against the installed `claude` 2.1.283 binary
+  shows this exact phrase only inside a NON-INTERACTIVE NOTICE, with no
+  options and no footer — a screen carrying it is not something this (or
+  any) matcher could press a key on. As written, this branch most likely
+  never fires on the real string at all; it is kept only as a conservative
+  fallback in case some other, genuinely interactive variant exists that
+  this checkout has not seen — that is unconfirmed. See
+  [`docs/blocking-escalation.md`](blocking-escalation.md) for the full
+  evidence and the version checked. It is deliberately distinct from the
+  separate, already-recognised "Try the new fullscreen renderer?" opt-in
+  offer (interactive, and unaffected by any of the above).
 - **`BlockingPrompt` (`src/blocking-prompts.ts`) gains two additive,
   optional fields**: `keys` (present for a `startup` prompt Drovr can press
   itself — trust, development-channels, auto-mode-onboarding,

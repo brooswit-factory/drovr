@@ -22,29 +22,53 @@ is waiting on.
 fields: a consumer reading only `kind`/`name`/`excerpt` (as before this
 release) is unaffected.
 
-## The fullscreen-renderer recovery dialog
+## The fullscreen-renderer "dialog": SPECULATIVE, likely does not exist as written
 
-Observed live (FACTORY-44's own description): a managed session hit
-Claude Code's first-run dialog "Claude Code's fullscreen renderer didn't
-finish starting last time…" and sat blocked, because nothing recognised it.
+FACTORY-44's own description: a managed session hit Claude Code's first-run
+"Claude Code's fullscreen renderer didn't finish starting last time…" and
+sat blocked, with nothing recognising it. `classifyStartupPrompt`
+(`src/resident-host.ts`) added a matcher for this wording, gated
+conservatively — but **reviewing this ticket turned up evidence that this
+phrase is very likely NOT a dialog at all**, and the matcher as written
+probably never fires on anything real.
 
-**This dialog's exact wording and option text are UNVERIFIED.** No fixture,
-log, or live capture of it was found anywhere in this checkout — only the
-ticket's own prose. `classifyStartupPrompt` (`src/resident-host.ts`) matches
-conservatively on that wording alone (`fullscreen renderer` AND
-`didn't finish start`, both required) and answers only when an option
-literally contains `Not now` — the same standing fleet answer already given
-to the unrelated "Try the new fullscreen renderer?" opt-in offer
-(`brooswit-factory/butchr` `src/agents/prompt.ts`), chosen independently
-here for the same reason: it neither retries a start that may hang again nor
-changes any user/global setting. An option shape without `Not now`, or the
-unrelated offer dialog itself (which never contains "didn't finish start"),
-both fall through to `unknown-blocking` — never a guess.
+**What was checked (2026-09-26):** no fixture, log, or live capture of an
+interactive dialog carrying this wording exists anywhere in this checkout —
+only the ticket's own prose. `strings` run directly against the installed
+`claude` 2.1.283 binary (`~/.local/share/claude/versions/2.1.283`) DOES
+contain the exact phrase, twice, but both are non-interactive notices, not
+dialogs — no options, no footer, nothing to answer:
 
-**Before relying on this in a fleet that actually hits the dialog:** capture
-its real screen text (`agent.read` with `source: "visible"`) and check it
-against `classifyStartupPrompt`'s regexes; if the real option text isn't
-`Not now`, update the matcher rather than assume it works.
+> Claude Code's fullscreen renderer didn't finish starting last time on
+> this machine, so this launch is using the classic renderer. It will try
+> fullscreen again next launch; /tui default keeps the classic renderer.
+
+> Claude Code's fullscreen renderer has repeatedly failed to start on this
+> machine, so it has been turned off here. Run /tui fullscreen to try it
+> again (this also resets after an update).
+
+A screen carrying either string as-is is not a menu `classifyStartupPrompt`
+could ever answer — there is nothing to press. The matcher (`fullscreen
+renderer` AND `didn't finish start`, both required, THEN an explicit
+`Not now` option before it presses anything) is written so that on a real
+screen carrying one of these notices, `keysToChoose` finds no menu, returns
+undefined, and this correctly falls through to `unknown-blocking` — never
+pressing a key on a non-dialog. It is kept only as a conservative fallback
+in case some OTHER, genuinely interactive variant of this text exists that
+this checkout has not seen; **that is unconfirmed**. It is deliberately
+distinct from the separate, already-recognised "Try the new fullscreen
+renderer?" opt-in offer (which never contains "didn't finish start") — that
+one IS interactive, and reuses the same `Not now` answer as Butchr's fleet
+convention for it (`brooswit-factory/butchr` `src/agents/prompt.ts`),
+independently of whether the recovery-dialog branch above ever fires.
+
+**Before relying on this for anything:** find out whether the pane that
+motivated FACTORY-44 was actually blocked on an interactive dialog, or on
+something else entirely (the notice above, mid-render, a different prompt
+altogether). If a real interactive dialog does exist, capture its actual
+screen text (`agent.read` with `source: "visible"`) and check it against
+`classifyStartupPrompt`'s regexes before trusting this matcher to do
+anything.
 
 ## The host-neutral escalation hook
 
