@@ -22,6 +22,48 @@ is waiting on.
 fields: a consumer reading only `kind`/`name`/`excerpt` (as before this
 release) is unaffected.
 
+## AskUserQuestion: `dialog` is now populated, plain or side-by-side with a preview
+
+FACTORY-111/FACTORY-113. A Claude Code `AskUserQuestion` dialog is a numbered
+menu (`parseNumberedDialog` in `src/blocking-prompts.ts`), so it reaches
+`describeUnknownDialog` like any other unrecognised menu — but two shapes of
+it used to make that function return `undefined` (no fingerprint, no
+`ANSWER` path, a person had to intervene on the pane): a `preview` on any
+option switches Claude Code to a side-by-side layout (a boxed preview
+column right of the option list, box-drawing borders, a
+`✂ N lines hidden` marker when the preview is too tall to fit), and even the
+plain layout adds a "Type something." / "Chat about this" trailer after the
+real options.
+
+Measured live (2026-09-26, claude 2.1.251) against a fresh pane, not
+reconstructed:
+
+- `Notes: press n to add notes` and the trailing "Chat about this" line
+  render on **every** `AskUserQuestion` dialog, preview or not — but only
+  the preview layout adds the `Notes:` line; the plain layout goes straight
+  from the options to a separator and "Chat about this". Either way, a
+  full-width separator (`─{10,}`) always sits directly before "Chat about
+  this", which is why `parseNumberedDialog` now stops treating lines as
+  options at that separator rather than reading "Chat about this" itself as
+  one (it's numbered in the plain layout, unnumbered in the side-by-side
+  one — both observed).
+- The side-by-side layout drops each option's own `description` from the
+  screen entirely (only the preview is shown) and, in exchange, can wrap a
+  long label onto a second physical line with no number of its own — the
+  exact shape a plain dialog uses for a `description` line instead. Telling
+  them apart isn't a matter of the line's own shape (both are indented text
+  right after an option); it's whether the *screen* has a preview column at
+  all. `parseNumberedDialog` only folds such a line into the option above it
+  when it does.
+- Multi-select (`multiSelect: true`) renders each option as `[ ] label`
+  (bracket bleeds into the label as read today) inside a `←  ☐ … ✔ Submit
+  →` tab bar instead of the single-select `☐ …` header — observed, not
+  fixed; nothing in the required scope exercises it.
+
+Fixtures for all three required shapes (plain, a short preview, a
+truncated one) are real captures in `test/blocking-prompts.test.ts` — see
+that file's comment for how they were taken.
+
 ## The fullscreen-renderer "dialog": SPECULATIVE, likely does not exist as written
 
 FACTORY-44's own description: a managed session hit Claude Code's first-run

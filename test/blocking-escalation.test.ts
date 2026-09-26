@@ -7,6 +7,26 @@ const PERMISSION = "────────────────────
 const UNKNOWN_A = "  Something Claude Code added last week?\n\n  ❯ 1. Sure\n    2. Later\n\n  Enter to confirm · Esc to cancel";
 const UNKNOWN_B = "  A different unknown menu?\n\n  ❯ 1. Yep\n    2. Nope\n\n  Enter to confirm · Esc to cancel";
 const IDLE = "❯ some idle shell prompt, no dialog";
+// A side-by-side AskUserQuestion dialog (a preview on one option), captured live the same way as
+// blocking-prompts.test.ts's fixture of the same name — see that file for how.
+const ASK_USER_QUESTION_PREVIEW_SHORT = [
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " ☐ Migration",
+  "",
+  "Which migration approach should we use?",
+  "",
+  "❯ 1. Add nullable column then     ┌──────────────────────────────────────────────────────────┐",
+  "    backfill                      │ ALTER TABLE users ADD COLUMN status text;                │",
+  "  2. Add NOT NULL column with     │ UPDATE users SET status = 'active' WHERE status IS NULL; │",
+  "    default                       └──────────────────────────────────────────────────────────┘",
+  "",
+  "                                  Notes: press n to add notes",
+  "",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  "  Chat about this",
+  "",
+  "Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel",
+].join("\n");
 
 interface Agent { pane_id: string; agent_status: string; cwd?: string; agent_session?: { kind: string; value: string }; name?: string }
 
@@ -118,6 +138,27 @@ describe("createBlockingEscalationWatcher", () => {
     ]);
     expect(hook.escalations).toHaveLength(2);
     expect(hook.resolutions).toHaveLength(1);
+  });
+
+  test("an AskUserQuestion dialog with a side-by-side preview escalates with a stable fingerprint and a clean, verbatim payload", async () => {
+    const c = client(
+      [{ pane_id: "w1:p1", agent_status: "blocked", cwd: "/home/agent/nexus", name: "nexus", agent_session: { kind: "id", value: "s1" } }],
+      { "w1:p1": ASK_USER_QUESTION_PREVIEW_SHORT },
+    );
+    const hook = recordingHook();
+    const watcher = createBlockingEscalationWatcher(hook);
+
+    const first = await watcher.poll(c);
+    expect(first).toEqual([{ paneId: "w1:p1", outcome: "escalated", fingerprint: expect.any(String) }]);
+    expect(hook.escalations).toEqual([{
+      paneId: "w1:p1", label: "nexus", sessionId: "s1", cwd: "/home/agent/nexus", herdrStatus: "blocked",
+      question: "Which migration approach should we use?",
+      options: ["Add nullable column then backfill", "Add NOT NULL column with default"],
+      fingerprint: expect.any(String),
+    }]);
+
+    const second = await watcher.poll(c);
+    expect(second).toEqual([]); // same (pane, fingerprint) episode: no repeat call
   });
 
   test("a hook rejection is reported per-pane and never thrown, so one failing pane cannot fail the whole poll", async () => {
