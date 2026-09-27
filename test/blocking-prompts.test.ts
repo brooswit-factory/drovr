@@ -20,6 +20,81 @@ const PERMISSION = [
 ].join("\n");
 const ONBOARDING = "  Teach auto mode about your environment?\n\n  ❯ 1. Yes\n    2. Not now\n    3. Don't show again\n\n  Enter to confirm · Esc to cancel";
 const NEVER_SEEN = "  Something Claude Code added last week?\n\n  ❯ 1. Sure\n    2. Later\n\n  Enter to confirm · Esc to cancel";
+// AskUserQuestion screens I captured live (2026-09-26) against a real Claude Code pane, by
+// starting a claude agent in a fresh herdr pane and prompting it to call AskUserQuestion with
+// exact tool input, then reading the pane's raw screen (`herdr agent read <name> --source
+// visible`) while it sat blocked on the dialog — see the PR description for the exact steps.
+// Plain dialogs turn out to be affected too: nothing here is a reconstruction.
+const ASK_USER_QUESTION_PLAIN = [
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " ☐ Color",
+  "",
+  "Which color should the button be?",
+  "",
+  "❯ 1. Red",
+  "     A warm, attention-grabbing red.",
+  "  2. Blue",
+  "     A cool, calm blue.",
+  "  3. Green",
+  "     A natural, easy-on-the-eyes green.",
+  "  4. Type something.",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  "  5. Chat about this",
+  "",
+  "Enter to select · ↑/↓ to navigate · Esc to cancel",
+].join("\n");
+// A short, non-truncated preview: one option carries `preview`, so Claude Code switches to the
+// side-by-side layout — a boxed preview column right of the option list, and the label of the
+// option next to it ("Add nullable column then backfill") wraps onto a second physical line.
+const ASK_USER_QUESTION_PREVIEW_SHORT = [
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " ☐ Migration",
+  "",
+  "Which migration approach should we use?",
+  "",
+  "❯ 1. Add nullable column then     ┌──────────────────────────────────────────────────────────┐",
+  "    backfill                      │ ALTER TABLE users ADD COLUMN status text;                │",
+  "  2. Add NOT NULL column with     │ UPDATE users SET status = 'active' WHERE status IS NULL; │",
+  "    default                       └──────────────────────────────────────────────────────────┘",
+  "",
+  "                                  Notes: press n to add notes",
+  "",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  "  Chat about this",
+  "",
+  "Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel",
+].join("\n");
+// A preview long enough that Claude Code truncates it with a "✂ N lines hidden" marker.
+const ASK_USER_QUESTION_PREVIEW_TRUNCATED = [
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " ☐ Refactor",
+  "",
+  "Apply this refactor?",
+  "",
+  "❯ 1. Apply the refactor           ┌──────────────────────────────────────────┐",
+  "  2. Skip for now                 │ line 1                                   │",
+  "                                  │ line 2                                   │",
+  "                                  │ line 3                                   │",
+  "                                  │ line 4                                   │",
+  "                                  │ line 5                                   │",
+  "                                  │ line 6                                   │",
+  "                                  │ line 7                                   │",
+  "                                  │ line 8                                   │",
+  "                                  │ line 9                                   │",
+  "                                  │ line 10                                  │",
+  "                                  │ line 11                                  │",
+  "                                  │ line 12                                  │",
+  "                                  │ line 13                                  │",
+  "                                  ├─── ✂ ─── 12 lines hidden ────────────────┤",
+  "                                  └──────────────────────────────────────────┘",
+  "",
+  "                                  Notes: press n to add notes",
+  "",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  "  Chat about this",
+  "",
+  "Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel",
+].join("\n");
 // lead-factory-dashboard's pane once unstuck: a quoted menu name in the transcript, no waiting footer.
 const IDLE = [
   "● I've saved the routing rule. The \"Teach auto mode about your environment?\" menu is answered.",
@@ -53,6 +128,14 @@ describe("classifyBlockingScreen", () => {
     expect(classifyBlockingScreen(IDLE)).toBeUndefined();
     expect(classifyBlockingScreen("")).toBeUndefined();
   });
+
+  test("an AskUserQuestion dialog is unknown with its dialog populated, plain or side-by-side with a preview", () => {
+    for (const screen of [ASK_USER_QUESTION_PLAIN, ASK_USER_QUESTION_PREVIEW_SHORT, ASK_USER_QUESTION_PREVIEW_TRUNCATED]) {
+      const unknown = classifyBlockingScreen(screen)!;
+      expect(unknown.kind).toBe("unknown");
+      expect(unknown.dialog).toBeDefined();
+    }
+  });
 });
 
 describe("describeUnknownDialog", () => {
@@ -76,6 +159,27 @@ describe("describeUnknownDialog", () => {
     const noCursor = "Pick one?\n\n  Sure\n  Later\n\nEnter to confirm · Esc to cancel";
     expect(describeUnknownDialog(twoCursors)).toBeUndefined();
     expect(describeUnknownDialog(noCursor)).toBeUndefined();
+  });
+
+  test("a plain AskUserQuestion dialog reads cleanly: verbatim options, no bled-in description, no 'Chat about this' meta-action", () => {
+    expect(describeUnknownDialog(ASK_USER_QUESTION_PLAIN)).toEqual({
+      question: "Which color should the button be?",
+      options: ["Red", "Blue", "Green", "Type something."],
+    });
+  });
+
+  test("a side-by-side AskUserQuestion dialog with a short preview folds the wrapped label back together and never bleeds the boxed preview text into it", () => {
+    expect(describeUnknownDialog(ASK_USER_QUESTION_PREVIEW_SHORT)).toEqual({
+      question: "Which migration approach should we use?",
+      options: ["Add nullable column then backfill", "Add NOT NULL column with default"],
+    });
+  });
+
+  test("a side-by-side AskUserQuestion dialog with a truncated ('✂ N lines hidden') preview reads the same way", () => {
+    expect(describeUnknownDialog(ASK_USER_QUESTION_PREVIEW_TRUNCATED)).toEqual({
+      question: "Apply this refactor?",
+      options: ["Apply the refactor", "Skip for now"],
+    });
   });
 });
 
