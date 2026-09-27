@@ -1,0 +1,21 @@
+✻ Worked for 39s · done 12:22 PM · 1 monitor still running
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+❯ [butchr] FACTORY-359 (related to your FACTORY-366) was updated — re-read it, then act
+  on what changed.
+
+  Called butchr (ctrl+o to expand)
+
+● Calling butchr… (ctrl+o to expand)
+
+   About the butchr — Tell Worker Tool:
+   │ The ONLY way to speak DOWN to a worker: comments on ONE OF THE CALLER'S OWN workers'
+   │ ticket. Refuses a `key` that is not one of the caller's own workers, verified via the…
+   (ctrl+o to expand description)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for butchr — Tell Worker commands in ~/butchr-workspac…
+   3. No
+
+ Esc to cancel · Tab to amend

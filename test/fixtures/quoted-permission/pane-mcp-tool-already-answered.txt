@@ -1,0 +1,23 @@
+Welcome to fish, the friendly interactive shell
+Type help for instructions on how to use fish
+booswrit@servyboi /t/c/-/5/s/mcp-capture> claude --permission-mode default --restricted --mcp-
+config mcp.json
+ ▐▛███▛█   Claude Code v2.1.251
+▝▜██████▀  Opus 5 (1M context) · Claude Max
+  ▝▝ ▝▝    /…/5b2f2799-d94b-4bfe-b4cc-e76dbc7cef5c/scratchpad/mcp-capture
+
+
+❯ Call the butchr MCP tool tell_worker with key "NONEXISTENT-5" and text "capture test 5".
+  Nothing else.
+
+  Called butchr (ctrl+o to expand)
+
+● The call failed: 404 Not Found — "Issue does not exist or you do not have permission to see
+  it." for key NONEXISTENT-5.
+
+✻ Brewed for 9s · done 11:39 AM
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+❯ Now try with a real ticket key
+──────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents   ✔ Update installed · Restart to update

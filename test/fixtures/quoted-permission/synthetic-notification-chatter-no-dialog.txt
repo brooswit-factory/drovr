@@ -1,0 +1,13 @@
+✻ Worked for 39s · done 12:22 PM · 1 monitor still running
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+❯ [butchr] FACTORY-359 (related to your FACTORY-366) was updated — re-read it, then act
+  on what changed.
+
+  Called butchr (ctrl+o to expand)
+
+● Re-read FACTORY-359 and there's nothing actionable for this task — continuing.
+
+✻ Worked for 4s · done 12:23 PM
+
+❯

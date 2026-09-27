@@ -27,6 +27,24 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  *
  *    Esc to cancel · Tab to amend
  *
+ * Two more measured shapes (FACTORY-365/6, claude 2.1.251), both missing one
+ * of the preconditions above and each recognised by a narrow, shape-specific
+ * fallback rather than by loosening the general rule:
+ *
+ * - A generic MCP-tool dialog draws no `─` rule anywhere on screen, framing
+ *   its body instead with `About the <server> — <Tool> Tool:` and
+ *   `(ctrl+o to expand description)`. A tool call whose displayed
+ *   parameters are long enough scrolls that frame's header line off a real
+ *   pane's *visible* screen too, leaving only the description onward above
+ *   the question — still recognised, from the description frame alone.
+ * - WebFetch draws the rule but no `Esc to cancel` footer at all; its escape
+ *   hint lives inline in the "No, …" option's own text as `(esc)`, accepted
+ *   only when the dialog's own body also carries "Claude wants to fetch
+ *   content from …" verbatim — never based on screen position, which broke
+ *   on ordinary trailing chatter landing on a still-live pane.
+ *
+ * See `docs/permission-approval.md` for the full captured screens.
+ *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
  * permission rule the session reads at start can change it.
@@ -57,6 +75,22 @@ const QUESTION = /^\s*(Do you want to .+\?)\s*$/;
 const OPTION = /^\s*(❯\s*)?\d+\.\s+(.+?)\s*$/;
 /** A wrapped option's continuation line: indented text with no number of its own. */
 const CONTINUATION = /^\s+\S/;
+/**
+ * A generic MCP-tool dialog's own header, e.g. `About the butchr — Tell
+ * Worker Tool:` — the body delimiter it draws instead of a `─` rule.
+ */
+const MCP_ABOUT = /^\s*About the (.+):\s*$/;
+/** The line the MCP-tool frame always ends its description on, right before the blank line and the question. */
+const MCP_EXPAND_HINT = /^\s*\(ctrl\+o to expand description\)\s*$/;
+/** A description line's own `│` (U+2502) prefix, stripped before joining into `request`. */
+const DESCRIPTION_LINE_PREFIX = /^\s*│\s?/;
+/**
+ * A `No, …` option carrying its own inline `(esc)` hint — WebFetch's stand-in
+ * for a footer `Esc to cancel` line, which it never draws at all.
+ */
+const INLINE_ESC_OPTION = /^No\b.*\(esc\)\s*$/;
+/** WebFetch's own body always carries this verbatim — the shape anchor for the inline-`(esc)` relaxation, so it can't be spoofed by a quoted option list alone. */
+const WEBFETCH_BODY_MARKER = /Claude wants to fetch content from/;
 
 /** Claude's tool-permission dialog on a screen, or undefined for anything else. */
 export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefined {
@@ -87,14 +121,68 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
     options[options.length - 1] = `${options[options.length - 1]} ${line.trim()}`;
   }
   if (options.length < 2 || cursor < 0 || options[0] !== "Yes" || !options.some((option) => /^No\b/.test(option))) return undefined;
-  if (!lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line))) return undefined;
+  const hasFooterLine = lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line));
+  // WebFetch draws no `Esc to cancel` footer at all; its escape hint lives
+  // inline in the "No, …" option's own text instead (FACTORY-365/6). Whether
+  // that inline hint counts is decided below, once `request` is known — it
+  // must be anchored to THIS shape's own body content (`WEBFETCH_BODY_MARKER`),
+  // never to screen position: an earlier version of this fix required the
+  // option list to be the last thing on screen, which broke on the ordinary
+  // case of butchr's own notification chatter landing on a still-live pane
+  // AFTER the dialog appeared (a routine real-fleet event, not hypothetical —
+  // see FACTORY-356's measurement). Position also violates criterion 7
+  // ("never screen position, line number, or distance from anywhere").
+  const hasInlineEscHintOption = options.some((option) => INLINE_ESC_OPTION.test(option));
+  if (!hasFooterLine && !hasInlineEscHintOption) return undefined;
   let separator = -1;
   for (let i = q - 1; i >= 0; i--) if (SEPARATOR.test(lines[i]!)) { separator = i; break; }
-  if (separator < 0) return undefined;
-  const body = lines.slice(separator + 1, q).map((line) => line.trim()).filter((line) => line !== "" && !/^Tip:/.test(line));
-  const tool = body[0];
-  if (tool === undefined) return undefined;
-  const request = body.slice(1).join("\n");
+  let tool: string | undefined;
+  let request: string;
+  if (separator >= 0) {
+    const body = lines.slice(separator + 1, q).map((line) => line.trim()).filter((line) => line !== "" && !/^Tip:/.test(line));
+    tool = body[0];
+    if (tool === undefined) return undefined;
+    request = body.slice(1).join("\n");
+  } else {
+    // A generic MCP-tool dialog draws no `─` rule anywhere on screen — it
+    // frames its body with `About the <server> — <Tool> Tool:` and
+    // `(ctrl+o to expand description)` instead (FACTORY-365/6). Both must be
+    // found, in an unbroken run of non-blank lines, or this isn't that shape.
+    let expandLine = -1;
+    for (let i = q - 1; i >= 0; i--) {
+      if (MCP_EXPAND_HINT.test(lines[i]!)) { expandLine = i; break; }
+      if (QUESTION.test(lines[i]!)) break;
+    }
+    // The measured shape has nothing but blank lines between the expand hint
+    // and the question — anything else in that gap (narration, a fresh code
+    // fence, more conversation) means this isn't the live frame, only text
+    // that happens to contain its wording somewhere further up the scrollback.
+    if (expandLine >= 0 && !lines.slice(expandLine + 1, q).every((line) => line.trim() === "")) expandLine = -1;
+    let aboutLine = -1;
+    if (expandLine >= 0) {
+      for (let i = expandLine - 1; i >= 0; i--) {
+        const line = lines[i]!;
+        const match = MCP_ABOUT.exec(line);
+        if (match) { aboutLine = i; tool = match[1]; break; }
+        if (line.trim() === "" || SEPARATOR.test(line) || QUESTION.test(line)) break;
+      }
+    }
+    if (aboutLine < 0 || tool === undefined) return undefined;
+    request = lines.slice(aboutLine + 1, q)
+      .map((line) => line.replace(DESCRIPTION_LINE_PREFIX, "").trim())
+      .filter((line) => line !== "" && !MCP_EXPAND_HINT.test(line))
+      .join("\n");
+  }
+  // The inline-`(esc)` hint alone is just verbatim option text, so a quoted
+  // narration of this dialog — complete with its own separator line and the
+  // same option wording — would otherwise be wrongly recognised (measured:
+  // this exact ticket's own diagnosis quotes the WebFetch shape verbatim).
+  // Anchor to the dialog's own body content instead of screen position:
+  // WebFetch's body always carries "Claude wants to fetch content from
+  // <host>" verbatim, which narration reproducing only the option text (not
+  // the framed request body) won't have. Unlike a position check, this
+  // survives real trailing chatter landing on a still-live pane.
+  if (!hasFooterLine && hasInlineEscHintOption && !WEBFETCH_BODY_MARKER.test(request)) return undefined;
   const question = QUESTION.exec(lines[q]!)![1]!;
   const promptId = createHash("sha256").update(JSON.stringify([tool, request, question, options])).digest("hex").slice(0, 16);
   return { tool, request, question, options, cursor, promptId };

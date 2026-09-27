@@ -216,6 +216,271 @@ describe("classifyPermissionPrompt", () => {
       });
     }
   });
+
+  // FACTORY-365/6: the generic MCP-tool dialog and WebFetch each fail exactly
+  // one of classifyPermissionPrompt's preconditions, and a different one
+  // each — see docs/permission-approval.md for the full captured screens and
+  // exactly how they were captured.
+  describe("the generic MCP-tool dialog (FACTORY-365/6): no ─ rule anywhere on screen", () => {
+    // Real capture, claude 2.1.251, `claude --permission-mode default
+    // --restricted` in an isolated scratch pane (herdr `pane run` + `pane
+    // read --source visible`), 2026-09-27: the butchr MCP tool tell_worker
+    // was called with a long enough `text` parameter that its own header
+    // ("Tool use" / the tool-call params / the ─ rule above them) scrolled
+    // off the *visible* screen — the exact read drovr itself uses
+    // (`source: "visible"` in `readScreen`). What remains above the question
+    // is only the dialog's own "About the … Tool:" frame, with no rule at
+    // all — this is the shape a real blocked pane's visible screen shows
+    // whenever the call's displayed request is long enough, not a shape
+    // specific to Tell Worker.
+    const mcpToolFixture = readFileSync(new URL("./fixtures/generic-mcp-tool-permission/pane-tell-worker-cropped.txt", import.meta.url), "utf8");
+
+    test("recognised from its own frame, with no ─ rule anywhere on screen", () => {
+      expect(mcpToolFixture).not.toMatch(/─{10,}/);
+      const prompt = classifyPermissionPrompt(mcpToolFixture);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("butchr — Tell Worker Tool");
+      expect(prompt!.options).toEqual([
+        "Yes",
+        "Yes, and don't ask again for butchr — Tell Worker commands in /tmp/claude-1002/…",
+        "No",
+      ]);
+    });
+
+    test("answerable with option 1 (\"Yes\") under scope once", () => {
+      const prompt = classifyPermissionPrompt(mcpToolFixture)!;
+      expect(optionFor(prompt, "once")).toBe(0);
+      expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+    });
+
+    // FACTORY-356 comment 26459 (relayed via FACTORY-146/FACTORY-327): a real
+    // blocked pane's screen routinely carries butchr's own notification
+    // lines and a `▔▔▔▔` (U+2594) status-bar rule interleaved in the SAME
+    // frame as the dialog, shifting between reads. Recognition must key on
+    // the dialog's own frame, never on screen position or a widened
+    // box-drawing character class — `▔` must never satisfy `SEPARATOR`
+    // (which only matches `─`, U+2500), and chatter above the frame must
+    // not defeat the fallback that looks for it. Synthetic (labelled):
+    // composited from the real chatter line shape (see
+    // `test/fixtures/session-limit/pane-cap-a.txt`) and the real `▔` rule
+    // (see `test/resident-host.test.ts`) around the real MCP-tool dialog
+    // frame captured above — reproducing the reported interleaving rather
+    // than a from-scratch guess.
+    test("still recognised with butchr notification chatter and a ▔▔▔▔ rule interleaved above the dialog's own frame", () => {
+      const chatterFixture = readFileSync(new URL("./fixtures/generic-mcp-tool-permission/synthetic-tell-worker-with-notification-chatter.txt", import.meta.url), "utf8");
+      expect(chatterFixture).toMatch(/▔{10,}/);
+      expect(chatterFixture).toMatch(/\[butchr\]/);
+      const prompt = classifyPermissionPrompt(chatterFixture);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("butchr — Tell Worker Tool");
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
+
+    // FACTORY-365/6 criterion 3, this shape's half: the MCP-tool fallback's
+    // delimiter is the "About the … Tool:" header line, not line 0 — so its
+    // promptId/tool/request must stay stable across differing preceding
+    // scrollback too, exactly like the WebFetch shape's test above.
+    test("promptId, tool and request are stable across differing preceding scrollback", () => {
+      const chatterLine = "← butchr: [butchr] related:jira-work:FACTORY-999 was updated — re-read it.\n";
+      const base = classifyPermissionPrompt(mcpToolFixture)!;
+      for (const n of [3, 9, 20]) {
+        const withChatter = classifyPermissionPrompt(chatterLine.repeat(n) + mcpToolFixture)!;
+        expect(withChatter.promptId).toBe(base.promptId);
+        expect(withChatter.tool).toBe(base.tool);
+        expect(withChatter.request).toBe(base.request);
+      }
+    });
+
+    // FACTORY-356 correction (2026-09-27 12:41): the only MCP-tool fixture so
+    // far was the rarer case where the tool call's own header scrolled OFF
+    // the visible screen. The ORDINARY case — header/params/rule all still
+    // visible — needs its own real capture too, since testing only the
+    // rarer variant is backwards from the risk (a suite can go green while
+    // the common case still hangs). Real capture, claude 2.1.251, `claude
+    // --permission-mode default --restricted` in an isolated scratch pane,
+    // short `text` parameter so nothing scrolls, 2026-09-27. This one DOES
+    // draw a `─` rule (it's the "Tool use" frame Web Search also uses, not
+    // the "About the … Tool:" one) — so it's recognised via the EXISTING
+    // general path, not the fallback below; `tool` comes out "Tool use",
+    // not "butchr — Tell Worker Tool". Confirms FACTORY-356's own
+    // measurement that this ordinary case already worked before this PR —
+    // this test adds coverage, not a fix.
+    test("also recognised in the ordinary case, header/rule still visible (via the existing general path, not the fallback)", () => {
+      const ordinary = readFileSync(new URL("./fixtures/generic-mcp-tool-permission/pane-tell-worker-header-visible.txt", import.meta.url), "utf8");
+      expect(ordinary).toMatch(/─{10,}/);
+      const prompt = classifyPermissionPrompt(ordinary);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Tool use");
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
+  });
+
+  describe("the WebFetch dialog (FACTORY-365/6): no Esc to cancel footer at all", () => {
+    // Real capture, claude 2.1.251, `claude --permission-mode default` in an
+    // isolated scratch pane, prompted "Use the WebFetch tool on
+    // https://example.com and tell me the page title. Nothing else.", read
+    // with `herdr pane read --source recent --lines 60` (also verified not a
+    // viewport-truncation artefact against a 60-line window), 2026-09-27.
+    const webfetchFixture = readFileSync(new URL("./fixtures/webfetch-permission/pane-fetch-example-com.txt", import.meta.url), "utf8");
+
+    test("recognised from the inline (esc) hint on its No option, with no Esc to cancel line anywhere", () => {
+      expect(webfetchFixture).not.toMatch(/Esc to cancel/);
+      const prompt = classifyPermissionPrompt(webfetchFixture);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Fetch");
+      expect(prompt!.options).toEqual([
+        "Yes",
+        "Yes, and don't ask again for example.com",
+        "No, and tell Claude what to do differently (esc)",
+      ]);
+    });
+
+    test("answerable with option 1 (\"Yes\") under scope once", () => {
+      const prompt = classifyPermissionPrompt(webfetchFixture)!;
+      expect(optionFor(prompt, "once")).toBe(0);
+      expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+    });
+
+    // FACTORY-365/6 criterion 3: `separator` is load-bearing twice in
+    // classifyPermissionPrompt — the recognition gate AND the body delimiter
+    // that bounds `tool`/`request`, which `promptId` hashes. Any change
+    // nearby must be proven not to make the fingerprint drift as unrelated
+    // scrollback/chatter shifts. This shape's separator is untouched by the
+    // footer relaxation, so promptId/tool/request must stay IDENTICAL no
+    // matter how much preceding scrollback there is — asserted directly
+    // (FACTORY-356 measured the same property independently: promptId
+    // `82d9321c404e013b`, tool "Fetch", request length 104, identical across
+    // 0/3/9/20 prepended chatter lines).
+    test("promptId, tool and request are stable across differing preceding scrollback", () => {
+      const chatterLine = "← butchr: [butchr] related:jira-work:FACTORY-999 was updated — re-read it.\n";
+      const base = classifyPermissionPrompt(webfetchFixture)!;
+      for (const n of [3, 9, 20]) {
+        const withChatter = classifyPermissionPrompt(chatterLine.repeat(n) + webfetchFixture)!;
+        expect(withChatter.promptId).toBe(base.promptId);
+        expect(withChatter.tool).toBe(base.tool);
+        expect(withChatter.request).toBe(base.request);
+      }
+    });
+  });
+
+  // Positive control (FACTORY-356 comment 26459): Web Search already has
+  // both the rule and the footer, and stays recognised unchanged by the two
+  // relaxations above. Not incidental — an explicit regression guard.
+  describe("Web Search stays recognised (regression guard, FACTORY-365/6)", () => {
+    // Real capture, claude 2.1.251, same scratch session as the WebFetch
+    // capture above, prompted 'Use the WebSearch tool to search for "example
+    // domain rfc". Nothing else.', 2026-09-27.
+    const webSearchFixture = readFileSync(new URL("./fixtures/websearch-permission/pane-web-search-example-domain-rfc.txt", import.meta.url), "utf8");
+
+    test("recognised, with option 1 (\"Yes\") answerable under scope once", () => {
+      const prompt = classifyPermissionPrompt(webSearchFixture);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Tool use");
+      expect(optionFor(prompt!, "once")).toBe(0);
+      expect(prompt!.options[0]).toBe("Yes");
+    });
+  });
+
+  // FACTORY-365/6: both gates relaxed above exist to stop a dialog that is
+  // merely QUOTED in scrollback — never live — from being pressed. Proving
+  // that hole is not open, for the specific shape the MCP-tool relaxation
+  // touches.
+  describe("a quoted or already-answered MCP-tool dialog is never recognised (FACTORY-365/6)", () => {
+    test("a real screen where the dialog was already answered classifies as undefined", () => {
+      // Real capture, same scratch session as the MCP-tool fixture above:
+      // after pressing "1" on the tell_worker dialog and letting the call
+      // finish, the dialog itself is gone from the screen entirely (Claude
+      // Code clears it on selection) — there is no "Do you want to
+      // proceed?" line left to match at all.
+      const answered = readFileSync(new URL("./fixtures/quoted-permission/pane-mcp-tool-already-answered.txt", import.meta.url), "utf8");
+      expect(answered).not.toMatch(/Do you want to proceed\?/);
+      expect(classifyPermissionPrompt(answered)).toBeUndefined();
+    });
+
+    test("synthetic: the expand hint narrated in prose, with no About the … Tool: frame directly above it, is not recognised", () => {
+      // Synthetic (labelled): the MCP-tool relaxation requires BOTH `About
+      // the … Tool:` and `(ctrl+o to expand description)` in an unbroken,
+      // directly-adjacent run above the question — never either alone. A
+      // screen that merely mentions the expand hint in ordinary assistant
+      // narration, without the real frame's header line immediately above
+      // it, must still fail to classify as a permission prompt.
+      const narrated = readFileSync(new URL("./fixtures/quoted-permission/synthetic-mcp-tool-narrated-not-framed.txt", import.meta.url), "utf8");
+      expect(narrated).toMatch(/ctrl\+o to expand description/);
+      expect(narrated).not.toMatch(/About the .+:/);
+      expect(classifyPermissionPrompt(narrated)).toBeUndefined();
+    });
+
+    // Found while hardening the WebFetch footer relaxation: the inline
+    // `(esc)` hint it accepts is verbatim option text, so a bare quoted
+    // option list — a WebFetch dialog's question and options, reproduced in
+    // narration, WITHOUT the framed request body around them — would be
+    // wrongly recognised unless the relaxation is anchored to the dialog's
+    // own body content (`WEBFETCH_BODY_MARKER`, "Claude wants to fetch
+    // content from …") rather than screen position. An earlier version of
+    // this fix anchored to position instead ("the option list is the last
+    // thing on screen") and broke on real trailing chatter — see the
+    // "still recognised with a butchr notification line landing on the pane
+    // AFTER the dialog" test below for that regression.
+    //
+    // A FULL byte-for-byte quote of the dialog, body included, is NOT
+    // something this anchor (or the SEPARATOR-based general path, for any
+    // other shape) can distinguish from a live screen — that limitation is
+    // the same pre-existing baseline every shape already accepts, not a new
+    // hole. What this closes is a bare quote of just the question/options.
+    test("synthetic: a bare quoted WebFetch option list, without the dialog's own body, is not recognised", () => {
+      const narrated = [
+        "❯ What does the WebFetch dialog look like when it's missing its footer?",
+        "",
+        "● Here's the shape, quoted from the ticket:",
+        "",
+        "  ──────────────────────────────────────────────────────────────",
+        "   Fetch",
+        "",
+        "   Do you want to allow Claude to fetch this content?",
+        "   ❯ 1. Yes",
+        "     2. Yes, and don't ask again for example.com",
+        "     3. No, and tell Claude what to do differently (esc)",
+        "",
+        "  That's the whole dialog — I never actually called the tool, so nothing is pending.",
+        "",
+        "❯",
+      ].join("\n");
+      expect(narrated).toMatch(/\(esc\)/);
+      expect(narrated).not.toMatch(/Claude wants to fetch content from/);
+      expect(classifyPermissionPrompt(narrated)).toBeUndefined();
+    });
+
+    // The regression this shape-anchor exists to avoid (FACTORY-356's
+    // finding against the position-based version of this fix): a live
+    // WebFetch dialog with a real butchr notification line landing on the
+    // pane AFTER it appeared — an ordinary real-fleet event, not
+    // hypothetical (two of the real MCP-tool captures in this PR have
+    // `← butchr: […]` lines below their own dialog too) — must still be
+    // recognised. Position-based anchoring broke this; content-based
+    // anchoring does not, because nothing about the dialog's own body
+    // changed.
+    test("still recognised with a butchr notification line landing on the pane AFTER the dialog", () => {
+      const webfetchFixture = readFileSync(new URL("./fixtures/webfetch-permission/pane-fetch-example-com.txt", import.meta.url), "utf8");
+      const withTrailingChatter = webfetchFixture + "\n← butchr: [butchr] FACTORY-999 was updated — re-read it.\n";
+      const prompt = classifyPermissionPrompt(withTrailingChatter);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Fetch");
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
+
+    // FACTORY-356 comment 26459 (relayed): the flip side of the chatter test
+    // above — a screen carrying the SAME notification chatter and `▔▔▔▔`
+    // rule but with NO live dialog at all must still classify as undefined.
+    // Proves the fallback isn't triggered by chatter alone, only by the
+    // dialog's own frame actually being present.
+    test("synthetic: notification chatter and a ▔▔▔▔ rule with no live dialog at all is not recognised", () => {
+      const chatterOnly = readFileSync(new URL("./fixtures/quoted-permission/synthetic-notification-chatter-no-dialog.txt", import.meta.url), "utf8");
+      expect(chatterOnly).toMatch(/▔{10,}/);
+      expect(chatterOnly).toMatch(/\[butchr\]/);
+      expect(chatterOnly).not.toMatch(/Do you want to/);
+      expect(classifyPermissionPrompt(chatterOnly)).toBeUndefined();
+    });
+  });
 });
 
 function fixture(screens: string[], options: { auditFails?: boolean | number; throwOnSendKeys?: boolean } = {}) {

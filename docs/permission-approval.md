@@ -102,6 +102,157 @@ exported specifically so a caller other than `approvePermission` (namely
 no-stored-rule shape" section) can ask "would MY scope answer this prompt?"
 without pressing anything or re-implementing the rule.
 
+### Two more measured shapes: the generic MCP-tool dialog and WebFetch (FACTORY-356/365/6)
+
+The four-option Bash dialog above is not THE shape — it's the first one
+measured. Two more real shapes each fail exactly one of the five
+preconditions (question, cursor, `options[0] === "Yes"`, a `No` option,
+`Esc to cancel` footer, `─{10,}` separator), a different one each, and each
+is recognised by a narrow fallback specific to what its own real captures
+justify — never by loosening the general rule for every shape.
+
+**Generic MCP-tool dialog — no `─` rule anywhere on screen.** Measured on
+`claude 2.1.251`, `claude --permission-mode default --restricted` in an
+isolated scratch pane, 2026-09-27 (a butchr MCP tool, `tell_worker`, called
+with a long enough `text` parameter that the tool-call header and the rule
+above it scrolled off the pane's *visible* screen — the same `source:
+"visible"` read `readScreen` uses, so this is the shape a real blocked pane
+shows once its displayed request is long enough, not one specific to Tell
+Worker):
+
+```
+   About the butchr — Tell Worker Tool:
+   │ The ONLY way to speak DOWN to a worker: comments on ONE OF THE CALLER'S OWN workers'
+   │ ticket. Refuses a `key` that is not one of the caller's own workers, verified via the…
+   (ctrl+o to expand description)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for butchr — Tell Worker commands in /tmp/claude-1002/…
+   3. No
+
+ Esc to cancel · Tab to amend
+```
+
+There is no `─{10,}` line anywhere on this screen at all — the dialog frames
+its body instead with an `About the <server> — <Tool> Tool:` header and a
+`(ctrl+o to expand description)` line. When no separator is found,
+`classifyPermissionPrompt` now falls back to that frame: it looks for
+`(ctrl+o to expand description)` directly (blank lines only) above the
+question, then for `About the (.+):` directly above THAT in an unbroken run
+of non-blank lines. Both must be found this way, or the fallback does not
+fire — a screen that merely mentions the expand hint in ordinary narration,
+with no real frame header immediately above it, still classifies as
+`undefined` (see `test/fixtures/quoted-permission/synthetic-mcp-tool-narrated-not-framed.txt`).
+Committed at `test/fixtures/generic-mcp-tool-permission/pane-tell-worker-cropped.txt`.
+
+A second, ordinary real capture — same tool call, short enough parameters
+that nothing scrolls — is committed at
+`test/fixtures/generic-mcp-tool-permission/pane-tell-worker-header-visible.txt`.
+This one DOES draw a `─` rule (it's the "Tool use" frame, same as Web
+Search's), so it is recognised via the EXISTING general path, not this
+fallback — `tool` comes out `"Tool use"`, not `"butchr — Tell Worker Tool"`.
+Committed alongside the scrolled-off variant so the common case has its own
+regression coverage, not just the rarer one.
+
+**WebFetch — no `Esc to cancel` footer at all.** Measured on `claude
+2.1.251`, `claude --permission-mode default` in an isolated scratch pane,
+prompted "Use the WebFetch tool on https://example.com and tell me the page
+title. Nothing else.", 2026-09-27 (also checked against a 60-line
+`--source recent` read to rule out viewport truncation — no footer line
+exists there either):
+
+```
+──────────────────────────────────────────────────────────────────────────────────────────────
+ Fetch
+
+   url: https://example.com/
+   prompt: What is the page title?
+   Claude wants to fetch content from example.com
+
+ Do you want to allow Claude to fetch this content?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for example.com
+   3. No, and tell Claude what to do differently (esc)
+```
+
+This one HAS the rule; what it lacks is the footer. The escape hint lives
+inline in option 3's own text as `(esc)` instead of a separate `Esc to
+cancel` line. `classifyPermissionPrompt` now also accepts a `No, …` option
+ending in `(esc)` as satisfying the footer requirement — but ONLY when the
+dialog's own body also carries "Claude wants to fetch content from …"
+verbatim. That second condition is load-bearing, not cosmetic: without it,
+a BARE quoted option list — this dialog's question and options reproduced
+in narration, without the framed request body around them — would be
+wrongly recognised as live, since the inline `(esc)` hint alone is just
+verbatim option text.
+
+An earlier version of this fix anchored the second condition to screen
+POSITION instead ("the option list must be the last thing on screen") — that
+broke on an ordinary real-fleet event: a butchr notification line landing
+on a still-live WebFetch pane AFTER the dialog appeared (two of this PR's
+own real MCP-tool captures have exactly this kind of trailing `← butchr:
+[…]` line below their dialog too), and it violated the "never key on screen
+position" rule this fix is supposed to follow for the same reason the
+MCP-tool fallback above does. Anchoring to the dialog's own body content
+instead survives trailing chatter, because nothing about the dialog's body
+changes when something is appended after it. Both properties are covered by
+regression tests in `test/permission-approval.test.ts`: "a bare quoted
+WebFetch option list, without the dialog's own body, is not recognised" and
+"still recognised with a butchr notification line landing on the pane AFTER
+the dialog." A FULL byte-for-byte quote of the dialog, body included, is
+NOT something this anchor (or the SEPARATOR-based general path, for any
+other shape) can distinguish from a live screen — that limitation is the
+same pre-existing baseline every shape already accepts, not a new hole this
+fix opens.
+
+The same footer gap exists in `classifyBlockingScreen`'s `WAITING_FOOTER`
+(`src/blocking-prompts.ts`): before this fix it matched nothing on this
+screen at all, so a WebFetch-blocked pane was invisible to the escalation
+scan as well as to the permission scan (worse than the MCP-tool shape
+above, which at least read as `"unknown"`) — `WAITING_FOOTER` now also
+matches a `No …(esc)` option. Committed at
+`test/fixtures/webfetch-permission/pane-fetch-example-com.txt`.
+
+**`separator` is load-bearing twice in `classifyPermissionPrompt`** — it is
+both a recognition gate AND the delimiter `tool`/`request` are sliced from
+(for the general path), and `promptId` is a hash of `[tool, request,
+question, options]`. A fix touching this function without care could make
+`promptId` drift as unrelated scrollback shifts. Both fixes above are
+proven NOT to have this problem, directly rather than assumed:
+`test/permission-approval.test.ts`'s "promptId, tool and request are stable
+across differing preceding scrollback" tests (one per shape) prepend 3, 9
+and 20 chatter lines to each real capture and assert `promptId`, `tool` and
+`request` all come out byte-identical regardless.
+
+**Web Search is the positive control, unaffected.** It has both the rule and
+the footer and was already recognised; a regression-guard test pins it at
+`test/fixtures/websearch-permission/pane-web-search-example-domain-rfc.txt`.
+
+Both relaxations exist to widen recognition of a genuinely LIVE dialog, not
+to recognise one merely quoted in scrollback — a finished prompt scrolled up
+the transcript, or text pasted into a ticket description (this exact ticket
+quotes both shapes verbatim, which is precisely the risk). A real capture of
+an already-answered MCP-tool dialog (`quoted-permission/pane-mcp-tool-already-answered.txt`)
+classifies as `undefined`, because Claude Code clears the dialog itself once
+answered — there is no "Do you want to proceed?" line left on screen at all.
+
+**A real blocked pane's screen also routinely carries butchr's own
+notification lines and a `▔▔▔▔` (U+2594) status-bar rule interleaved in the
+SAME frame as the dialog, shifting between reads** (FACTORY-356 comment
+26459, relayed via FACTORY-146/FACTORY-327's three-consecutive-capture
+finding). Two things this fix deliberately does NOT do, because either would
+turn the chatter into a false-positive vector: widen `SEPARATOR`'s character
+class to also match `▔` (it stays `─`-only, U+2500), or key recognition on
+screen position/line number/distance from the top. The MCP-tool fallback
+still keys on the dialog's own frame regardless of what chatter sits above
+it — see `test/fixtures/generic-mcp-tool-permission/synthetic-tell-worker-with-notification-chatter.txt`
+(dialog still recognised, chatter and `▔▔▔▔` above it, synthetic: composited
+from the real chatter line shape in `test/fixtures/session-limit/pane-cap-a.txt`
+and the real `▔▔▔▔` rule in `test/resident-host.test.ts` around the real
+dialog frame captured above) and `test/fixtures/quoted-permission/synthetic-notification-chatter-no-dialog.txt`
+(same chatter and rule, no live dialog at all, still `undefined`).
+
 ## Guarantees
 
 - **Only the prompt the operator saw.** The screen is re-read before any key

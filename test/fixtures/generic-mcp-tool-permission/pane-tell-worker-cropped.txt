@@ -1,0 +1,38 @@
+
+   butchr — Tell Worker Tool: (MCP)
+
+   key: "NONEXISTENT-4"
+   text:
+     │  This is filler sentence number 1 meant to add several wrapped lines of body text to
+     │  the tell worker comment so the dialog grows taller than the terminal viewport and
+     │ pushes the separator and header off screen. This is filler sentence number 2 meant
+     │ to add several wrapped lines of body text to the tell worker comment so the dialog
+     │ grows taller than the terminal viewport and pushes the separator and header off
+     │ screen. This is filler sentence number 3 meant to add several wrapped lines of body
+     │ text to the tell worker comment so the dialog grows taller than the terminal
+     │ viewport and pushes the separator and header off screen. This is filler sentence
+     │ number 4 meant to add several wrapped lines of body text to the tell worker comment
+     │ so the dialog grows taller than the terminal viewport and pushes the separator and
+     │ header off screen. This is filler sentence number 5 meant to add several wrapped
+     │ lines of body text to the tell worker comment so the dialog grows taller than the
+     │ terminal viewport and pushes the separator and header off screen. This is filler
+     │ sentence number 6 meant to add several wrapped lines of body text to the tell worker
+     │  comment so the dialog grows taller than the terminal viewport and pushes the
+     │ separator and header off screen. This is filler sentence number 7 meant to add
+     │ several wrapped lines of body text to the tell worker comment so the dialog grows
+     │ taller than the terminal viewport and pushes the separator and header off screen.
+     │ This is filler sentence number 8 meant to add several wrapped lines of body text to
+     │ the tell worker comment so the dialog grows taller than the terminal viewport and
+     │ pushes the separator and header off screen.
+
+   About the butchr — Tell Worker Tool:
+   │ The ONLY way to speak DOWN to a worker: comments on ONE OF THE CALLER'S OWN workers'
+   │ ticket. Refuses a `key` that is not one of the caller's own workers, verified via the…
+   (ctrl+o to expand description)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for butchr — Tell Worker commands in /tmp/claude-1002/…
+   3. No
+
+ Esc to cancel · Tab to amend

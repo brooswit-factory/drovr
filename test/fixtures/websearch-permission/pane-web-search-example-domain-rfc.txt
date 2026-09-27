@@ -1,0 +1,31 @@
+Welcome to fish, the friendly interactive shell
+Type help for instructions on how to use fish
+booswrit@servyboi /t/c/-/5/s/webfetch-capture> claude --permission-mode default
+ ▐▛███▛█   Claude Code v2.1.251
+▝▜██████▀  Opus 5 (1M context) with medium effort · Claude Max
+  ▝▝ ▝▝    /…/5b2f2799-d94b-4bfe-b4cc-e76dbc7cef5c/scratchpad/webfetch-capture
+
+
+❯ Use the WebFetch tool on https://example.com and tell me the page title. Nothing else.
+
+● Fetch(https://example.com)
+  ⎿  Interrupted · What should Claude do instead?
+
+✻ Baked for 7s · done 11:22 AM
+
+❯ Use the WebSearch tool to search for "example domain rfc". Nothing else.
+
+● Web Search("example domain rfc")
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+ Tool use
+
+   Web Search("example domain rfc")
+   │ Claude wants to search the web for: example domain rfc
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for Web Search commands in /tmp/claude-1002/-home-boos…
+   3. No
+
+ Esc to cancel · Tab to amend
