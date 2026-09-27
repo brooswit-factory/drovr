@@ -252,3 +252,169 @@ Drovr ships no consumer of this hook itself. What a host does inside
 `onUnknownDialog` — comment on an issue, write a workspace note, page an
 operator — is entirely the host's own design; Drovr's contract ends at
 calling it with a verified, verbatim payload once per episode.
+
+## The login-expired condition (FACTORY-360/FACTORY-357): a deliberately separate, transcript-only watcher
+
+2026-09-26 20:47 PT: a whole butchr daemon's worth of Claude panes (13) hit
+Claude Code's own OAuth expiry at once, every pane printed `Login expired ·
+Please run /login`, and nothing escalated for ~13 hours — a human found it
+by accident. `classifyBlockingScreen`'s `WAITING_FOOTER` gate is why: a
+login-expired pane draws no dialog and so no footer, so it never enters
+`prompts` at all, however faithfully drovr recognises the string elsewhere
+(`classifyBlockingText`, `classifyClaudeTranscriptRecord` — see
+`docs/background-launch.md`).
+
+**Why this is NOT simply "recognise the string in `classifyBlockingScreen`",
+even though that was the first fix attempted for this story.** Measured on
+the incident host (FACTORY-357 comment 26492): the last genuine auth
+failure on the incident session was `2026-09-27T16:40:35Z`. At
+`2026-09-27T17:22:01Z` — **41 minutes later** — that exact pane's screen
+still carried `● Login expired · Please run /login` in scrollback, while in
+that same second and the following 23 seconds the pane successfully
+answered five tool-permission prompts and was doing real work. The
+authentic error string, byte-identical, sat on a completely healthy pane's
+screen for 41+ minutes after the condition had cleared. This is not a
+near-miss a sharper regex could fix — the stale text and the live text are
+the SAME string, only old, so **no detector reading screen text can tell
+them apart.** Independently, Claude's own status-bar footer `Not logged in
+· Run /login` is *also* stale (the client only re-checks credentials per
+call and never updates the footer live) — a second, different-string,
+independent stale-text hazard. Since this alert is designed to page a
+human and fires on **first detection with no debounce** (nothing downstream
+filters a false positive), a false alarm here is worse than the silence it
+replaces: it trains people to ignore the alert and recreates the original
+bug with extra steps.
+
+**The authority is instead the pane's transcript, plus recency — never
+screen text, and `createLoginExpiredWatcher` (`src/login-expired-escalation.ts`)
+never reads a pane's screen at all**, not even as a pre-filter: its client
+type exposes only `agent.list()`, so it is structurally incapable of
+reading a screen or sending a key, not merely disciplined not to. Per
+Claude pane, it reads the pane's own native transcript incrementally
+(`readClaudeTranscriptTail`) and walks new records in order:
+
+- A record `classifyClaudeTranscriptRecord` recognises as the structural
+  login-expired tag (`type: "assistant"`, `isApiErrorMessage: true`,
+  `error: "authentication_failed"`) is a failure.
+- Any other genuinely successful (non-error) `type: "assistant"` completion
+  after it is proof the API call succeeded again — the real "cleared"
+  signal, not a tool result (a tool can execute locally without a live
+  model call) and never the mere absence of the string on screen.
+- Whichever of these is the pane's LATEST relevant turn decides the current
+  state. A screen or transcript record that merely QUOTES the string in
+  narration or a pasted ticket comment never matches at all: recognition is
+  structural-tag-only (`classifyClaudeTranscriptRecord` never inspects
+  prose), the same self-sustaining-loop hazard `describeUnknownDialog`
+  already guards against for `unknown` dialogs (KAN-756) — sharper here,
+  since this very doc and the story's own tickets all contain the literal
+  string.
+
+```ts
+import { createLoginExpiredWatcher } from "@brooswit/drovr";
+
+const watcher = createLoginExpiredWatcher({
+  async onLoginExpired(escalation) {
+    // { paneId, label, sessionId, cwd, herdrStatus, kind: "login-expired",
+    //   detail, episodeId }
+    // NO question, NO options, NO fingerprint framed as an answer token —
+    // there is no ANSWER that fixes an expired OAuth token, only a human
+    // doing a real browser re-login (startClaudeLogin). Never wire
+    // episodeId as something a host can echo back.
+  },
+  async onLoginExpiredResolved({ paneId, episodeId, reason }) {
+    // reason: "recovered" | "pane-gone" | "superseded" — a closed union a
+    // host must exhaustively switch on, never just "resolved". Only
+    // "recovered" means a LATER successful transcript turn was seen — the
+    // real "credential is back" signal. "pane-gone" means the pane vanished
+    // from agent.list() entirely (closed); it says NOTHING about whether
+    // the credential recovered — panes churn on their own (a daemon
+    // respawn, the reconciler replacing a pane) while the credential can
+    // still be dead. "superseded" means a NEW failure replaced this episode
+    // on the SAME still-live pane before it ever recovered (the ordinary
+    // shape of a dead credential being retried) — a new `onLoginExpired`
+    // for the replacement episode follows immediately on this same pane.
+  },
+});
+
+const outcomes = await watcher.poll(client); // once per fleet poll, like createBlockingEscalationWatcher
+```
+
+### Episode identity: `episodeId`, not a fingerprint
+
+`escalation.episodeId` is derived from the failing transcript record's own
+`uuid` (falling back to its `timestamp`) — fields Claude Code assigns once
+when it writes the record, never recomputed from scrollback, an excerpt, or
+a line position. This matters because of a **measured, unrelated defect
+this story deliberately avoided repeating**: FACTORY-146/FACTORY-356 found
+that drovr's existing `promptId` (`sha256([tool, request, question,
+options])`) becomes a function of scrollback once its recognition gate is
+relaxed without also replacing its body delimiter — the SAME dialog
+produced four different ids (`6167954f4c2e2c87` / `782555212a3c2e20` /
+`d8a6f1be5cf11a92` / `0cb0e1dbb9f66a52`) as 0/3/9/20 unrelated chatter lines
+were prepended ahead of a real capture. Because this alert fires on first
+detection with no debounce, an unstable id would not degrade gracefully —
+every poll would look like a brand-new episode, so one dead credential
+would emit an unbounded stream of "new" host-wide alerts: the same
+cry-wolf failure this story exists to prevent, arriving by a different
+road. `test/login-expired-escalation.test.ts` proves the anchor-based id is
+immune to this by the same technique — prepending 0/3/9/20 synthetic
+chatter records ahead of the real failure record and asserting the
+resulting `episodeId` (and `detail`) are identical across every N. A
+failure record carrying neither `uuid` nor `timestamp` is treated as **no
+usable evidence at all** rather than shipped with an unstable id — an
+unstable identity is worse than no identity, because a host could no longer
+tell one episode from many.
+
+### Host-wide blast radius
+
+One expired credential kills every pane on a daemon at once. This watcher
+deliberately stays **per-pane**, matching `createBlockingEscalationWatcher`'s
+own shape, rather than inventing host-grouping logic drovr has no way to
+verify (it knows panes, not which daemon or fleet owns them). A host
+collapses N simultaneous `onLoginExpired` calls into one alert the same way
+it already tracks its OWN episode state for anything else: open a
+host-level "credential dead" episode on the first `onLoginExpired` it
+receives while none is open, suppress/aggregate every `onLoginExpired` that
+arrives while it stays open, and close the host episode once it has
+received `onLoginExpiredResolved` with `reason: "recovered"` for every pane
+currently inside it.
+
+**Only `reason: "recovered"` is evidence the credential itself is back.** A
+host must not close its fleet-wide alert on an unqualified "any
+`onLoginExpiredResolved` arrived" — that event ALSO fires with
+`reason: "pane-gone"` (the pane simply vanished from `agent.list()`, which
+says nothing about the credential — panes churn on their own during exactly
+this condition) and with `reason: "superseded"` (a new failure replaced the
+episode on the same still-live pane; the credential never recovered, and a
+new `onLoginExpired` for the replacement follows immediately). Treating
+either of those as "fleet recovered" would silence a still-live
+"credential dead" alarm while the outage continues — worse than the
+13-hour silent-stall bug this whole story exists to fix, because a
+switched-off alarm actively tells a human the outage is over while it is
+still running, rather than just staying quiet. If a host's policy is "any
+single recovery signals the whole fleet is likely back", it must wait for
+`reason: "recovered"` specifically (not merely "resolved") on any one pane
+before applying that shortcut fleet-wide — or design its own policy instead.
+
+### Never answered, never resolved on a guess
+
+- This watcher's `EscalationClient` type exposes only `agent.list()` — no
+  `read`, no `sendKeys` — so it cannot press a key on a login-expired pane
+  even by accident; there is no `startClaudeLogin`-style auto-recovery
+  wired in here (that stays a human doing a real browser flow).
+- A pane with no native session identity (`sessionId`/`cwd` absent) or
+  whose transcript read fails this poll is reported `unreadable` and any
+  already-open episode on it is left OPEN, exactly like
+  `scanBlockingPrompts`'s "couldn't check" discipline — never resolved on a
+  guess.
+- A pane that disappears from `agent.list()` entirely (closed) with an open
+  episode IS resolved — there is no longer a pane to page about.
+
+### What this is not
+
+`login-expired` in `docs/background-launch.md`'s blocking-condition table
+is a *launch-time* check (`classifyBlockingText`/
+`classifyClaudeTranscriptRecord` reading a launch's own settle-window
+output before a session is handed back) — a different mechanism, answering
+a different question ("did this launch itself start into a dead
+credential?"), and it is unaffected by anything in this section.
