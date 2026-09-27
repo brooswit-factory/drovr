@@ -275,6 +275,44 @@ describe("classifyPermissionPrompt", () => {
       expect(prompt!.tool).toBe("butchr — Tell Worker Tool");
       expect(optionFor(prompt!, "once")).toBe(0);
     });
+
+    // FACTORY-365/6 criterion 3, this shape's half: the MCP-tool fallback's
+    // delimiter is the "About the … Tool:" header line, not line 0 — so its
+    // promptId/tool/request must stay stable across differing preceding
+    // scrollback too, exactly like the WebFetch shape's test above.
+    test("promptId, tool and request are stable across differing preceding scrollback", () => {
+      const chatterLine = "← butchr: [butchr] related:jira-work:FACTORY-999 was updated — re-read it.\n";
+      const base = classifyPermissionPrompt(mcpToolFixture)!;
+      for (const n of [3, 9, 20]) {
+        const withChatter = classifyPermissionPrompt(chatterLine.repeat(n) + mcpToolFixture)!;
+        expect(withChatter.promptId).toBe(base.promptId);
+        expect(withChatter.tool).toBe(base.tool);
+        expect(withChatter.request).toBe(base.request);
+      }
+    });
+
+    // FACTORY-356 correction (2026-09-27 12:41): the only MCP-tool fixture so
+    // far was the rarer case where the tool call's own header scrolled OFF
+    // the visible screen. The ORDINARY case — header/params/rule all still
+    // visible — needs its own real capture too, since testing only the
+    // rarer variant is backwards from the risk (a suite can go green while
+    // the common case still hangs). Real capture, claude 2.1.251, `claude
+    // --permission-mode default --restricted` in an isolated scratch pane,
+    // short `text` parameter so nothing scrolls, 2026-09-27. This one DOES
+    // draw a `─` rule (it's the "Tool use" frame Web Search also uses, not
+    // the "About the … Tool:" one) — so it's recognised via the EXISTING
+    // general path, not the fallback below; `tool` comes out "Tool use",
+    // not "butchr — Tell Worker Tool". Confirms FACTORY-356's own
+    // measurement that this ordinary case already worked before this PR —
+    // this test adds coverage, not a fix.
+    test("also recognised in the ordinary case, header/rule still visible (via the existing general path, not the fallback)", () => {
+      const ordinary = readFileSync(new URL("./fixtures/generic-mcp-tool-permission/pane-tell-worker-header-visible.txt", import.meta.url), "utf8");
+      expect(ordinary).toMatch(/─{10,}/);
+      const prompt = classifyPermissionPrompt(ordinary);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Tool use");
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
   });
 
   describe("the WebFetch dialog (FACTORY-365/6): no Esc to cancel footer at all", () => {
@@ -301,6 +339,27 @@ describe("classifyPermissionPrompt", () => {
       const prompt = classifyPermissionPrompt(webfetchFixture)!;
       expect(optionFor(prompt, "once")).toBe(0);
       expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+    });
+
+    // FACTORY-365/6 criterion 3: `separator` is load-bearing twice in
+    // classifyPermissionPrompt — the recognition gate AND the body delimiter
+    // that bounds `tool`/`request`, which `promptId` hashes. Any change
+    // nearby must be proven not to make the fingerprint drift as unrelated
+    // scrollback/chatter shifts. This shape's separator is untouched by the
+    // footer relaxation, so promptId/tool/request must stay IDENTICAL no
+    // matter how much preceding scrollback there is — asserted directly
+    // (FACTORY-356 measured the same property independently: promptId
+    // `82d9321c404e013b`, tool "Fetch", request length 104, identical across
+    // 0/3/9/20 prepended chatter lines).
+    test("promptId, tool and request are stable across differing preceding scrollback", () => {
+      const chatterLine = "← butchr: [butchr] related:jira-work:FACTORY-999 was updated — re-read it.\n";
+      const base = classifyPermissionPrompt(webfetchFixture)!;
+      for (const n of [3, 9, 20]) {
+        const withChatter = classifyPermissionPrompt(chatterLine.repeat(n) + webfetchFixture)!;
+        expect(withChatter.promptId).toBe(base.promptId);
+        expect(withChatter.tool).toBe(base.tool);
+        expect(withChatter.request).toBe(base.request);
+      }
     });
   });
 
@@ -348,6 +407,42 @@ describe("classifyPermissionPrompt", () => {
       const narrated = readFileSync(new URL("./fixtures/quoted-permission/synthetic-mcp-tool-narrated-not-framed.txt", import.meta.url), "utf8");
       expect(narrated).toMatch(/ctrl\+o to expand description/);
       expect(narrated).not.toMatch(/About the .+:/);
+      expect(classifyPermissionPrompt(narrated)).toBeUndefined();
+    });
+
+    // Found while hardening the WebFetch footer relaxation: the inline
+    // `(esc)` hint it accepts is verbatim option text, so a WebFetch dialog
+    // quoted inside ordinary narration (complete with its own separator
+    // line, exactly as this ticket's own diagnosis quotes it) would be
+    // wrongly recognised UNLESS the relaxation also requires the option
+    // list to be the last thing on screen — the one structural difference a
+    // narrated quote almost never has, since narration keeps going
+    // afterward. This is why that check exists (see the comment in
+    // `classifyPermissionPrompt` above `hasInlineEscHint`); this test proves
+    // it, not just documents it.
+    test("synthetic: a WebFetch dialog quoted inside narration, not drawn live, is not recognised", () => {
+      const narrated = [
+        "❯ What does the WebFetch dialog look like when it's missing its footer?",
+        "",
+        "● Here's the shape, quoted from the ticket:",
+        "",
+        "  ──────────────────────────────────────────────────────────────",
+        "   Fetch",
+        "",
+        "     url: https://example.com/",
+        "     prompt: What is the page title?",
+        "     Claude wants to fetch content from example.com",
+        "",
+        "   Do you want to allow Claude to fetch this content?",
+        "   ❯ 1. Yes",
+        "     2. Yes, and don't ask again for example.com",
+        "     3. No, and tell Claude what to do differently (esc)",
+        "",
+        "  That's the whole dialog — I never actually called the tool, so nothing is pending.",
+        "",
+        "❯",
+      ].join("\n");
+      expect(narrated).toMatch(/\(esc\)/);
       expect(classifyPermissionPrompt(narrated)).toBeUndefined();
     });
 

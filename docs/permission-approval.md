@@ -146,6 +146,15 @@ with no real frame header immediately above it, still classifies as
 `undefined` (see `test/fixtures/quoted-permission/synthetic-mcp-tool-narrated-not-framed.txt`).
 Committed at `test/fixtures/generic-mcp-tool-permission/pane-tell-worker-cropped.txt`.
 
+A second, ordinary real capture — same tool call, short enough parameters
+that nothing scrolls — is committed at
+`test/fixtures/generic-mcp-tool-permission/pane-tell-worker-header-visible.txt`.
+This one DOES draw a `─` rule (it's the "Tool use" frame, same as Web
+Search's), so it is recognised via the EXISTING general path, not this
+fallback — `tool` comes out `"Tool use"`, not `"butchr — Tell Worker Tool"`.
+Committed alongside the scrolled-off variant so the common case has its own
+regression coverage, not just the rarer one.
+
 **WebFetch — no `Esc to cancel` footer at all.** Measured on `claude
 2.1.251`, `claude --permission-mode default` in an isolated scratch pane,
 prompted "Use the WebFetch tool on https://example.com and tell me the page
@@ -170,13 +179,37 @@ exists there either):
 This one HAS the rule; what it lacks is the footer. The escape hint lives
 inline in option 3's own text as `(esc)` instead of a separate `Esc to
 cancel` line. `classifyPermissionPrompt` now also accepts a `No, …` option
-ending in `(esc)` as satisfying the footer requirement. The same gap exists
-in `classifyBlockingScreen`'s `WAITING_FOOTER` (`src/blocking-prompts.ts`):
-before this fix it matched nothing on this screen at all, so a
-WebFetch-blocked pane was invisible to the escalation scan as well as to
-the permission scan (worse than the MCP-tool shape above, which at least
-read as `"unknown"`) — `WAITING_FOOTER` now also matches a `No …(esc)`
-option. Committed at `test/fixtures/webfetch-permission/pane-fetch-example-com.txt`.
+ending in `(esc)` as satisfying the footer requirement — but ONLY when that
+option list is also the last thing on screen (nothing but blank lines
+follow it), matching exactly how the real capture ends: there is no footer
+precisely because the screen stops right there. That second condition is
+load-bearing, not cosmetic: without it, a WebFetch dialog merely quoted
+inside ordinary narration — complete with its own separator line and the
+same `(esc)`-ending option text, exactly as this ticket's own diagnosis
+quotes it — would be wrongly recognised as live, because narration almost
+always has more text following the option list while a genuinely live
+dialog does not. Proven by a regression test in
+`test/permission-approval.test.ts` ("a WebFetch dialog quoted inside
+narration, not drawn live, is not recognised").
+
+The same footer gap exists in `classifyBlockingScreen`'s `WAITING_FOOTER`
+(`src/blocking-prompts.ts`): before this fix it matched nothing on this
+screen at all, so a WebFetch-blocked pane was invisible to the escalation
+scan as well as to the permission scan (worse than the MCP-tool shape
+above, which at least read as `"unknown"`) — `WAITING_FOOTER` now also
+matches a `No …(esc)` option. Committed at
+`test/fixtures/webfetch-permission/pane-fetch-example-com.txt`.
+
+**`separator` is load-bearing twice in `classifyPermissionPrompt`** — it is
+both a recognition gate AND the delimiter `tool`/`request` are sliced from
+(for the general path), and `promptId` is a hash of `[tool, request,
+question, options]`. A fix touching this function without care could make
+`promptId` drift as unrelated scrollback shifts. Both fixes above are
+proven NOT to have this problem, directly rather than assumed:
+`test/permission-approval.test.ts`'s "promptId, tool and request are stable
+across differing preceding scrollback" tests (one per shape) prepend 3, 9
+and 20 chatter lines to each real capture and assert `promptId`, `tool` and
+`request` all come out byte-identical regardless.
 
 **Web Search is the positive control, unaffected.** It has both the rule and
 the footer and was already recognised; a regression-guard test pins it at

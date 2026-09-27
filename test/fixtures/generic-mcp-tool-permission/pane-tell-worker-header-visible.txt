@@ -1,0 +1,38 @@
+
+
+❯ Call the butchr MCP tool tell_worker with key "NONEXISTENT-ORD" and text "short capture
+  test". Nothing else.
+
+● I'll load the tool schema first, then call it.
+
+  Called butchr (ctrl+o to expand)
+
+● The call failed as expected: 404 Not Found — "Issue does not exist or you do not have
+  permission to see it." for key NONEXISTENT-ORD.
+
+✻ Churned for 1m 50s · done 12:50 PM
+
+❯ Call the butchr MCP tool tell_worker with key "NONEXISTENT-ORD2" and text "short capture
+  test 2". Nothing else.
+
+  Calling butchr… (ctrl+o to expand)
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+ Tool use
+
+   butchr — Tell Worker Tool: (MCP)
+
+   key: "NONEXISTENT-ORD2"
+   text: "short capture test 2"
+
+   About the butchr — Tell Worker Tool:
+   │ The ONLY way to speak DOWN to a worker: comments on ONE OF THE CALLER'S OWN workers'
+   │ ticket. Refuses a `key` that is not one of the caller's own workers, verified via the…
+   (ctrl+o to expand description)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for butchr — Tell Worker commands in /tmp/claude-1002/…
+   3. No
+
+ Esc to cancel · Tab to amend
