@@ -159,24 +159,42 @@ different promptIds, see FACTORY-359 comment 26578). Since `ANSWER
 drifting `promptId` makes escalations for this shape unanswerable — a worse
 failure than the original bug, which is at least loud in the journal.
 
-**The replacement delimiter**, keyed on the dialog's own frame rather than
-on position or a wider rule-character class (a real pane routinely
-interleaves butchr's own notification chatter — including a `▔▔▔▔`/U+2594
-rule — in the same frame, shifting position between reads; widening
-`SEPARATOR`'s character class or matching by screen position would let that
-chatter supply an anchor the screen never earned):
+**The replacement delimiter was originally keyed on the fixed line
+`This command requires approval`** — but FACTORY-146 (comment 26827 on
+FACTORY-359) grepped the installed `claude 2.1.251` binary directly and
+found that string, and a `too-complex` command's own security-warning
+reason (e.g. `Contains brace with quote character (expansion obfuscation)`),
+are both `reason` values the binary renders in the exact SAME slot, as
+alternatives, never together — and the string table carries several more
+reasons adjacent to both (control characters, Unicode whitespace,
+backslash-escaped whitespace, a zsh `~[` dynamic directory, a zsh `=cmd`
+expansion, a zsh `<N-M>` glob, a parser abort, a parser skip). **A
+too-complex command can therefore never render `This command requires
+approval`**, so keying the anchor on that text meant a too-complex command
+in this chrome could never be recognised — FACTORY-146's own originally
+reported symptom (a security-warning dialog not auto-answered), still
+unfixed by the fix that introduced this fallback in the first place.
+Enumerating the reason family was ruled out as an option (it is open-ended
+and will keep rotting with every Claude Code release); the anchor was moved
+onto what's actually invariant instead (FACTORY-385):
 
-1. Find the fixed `This command requires approval` line above the question
-   (only blank lines allowed in the gap, same discipline as every other gate
-   here — narration that merely mentions the wording elsewhere in scrollback
-   doesn't qualify).
-2. The title is the first non-blank line above that.
-3. The body is the contiguous run of `│`-prefixed lines directly above the
-   title — stopping at the first non-`│` line, never scanning further up.
-   This bound is what keeps `request`/`promptId` a function of the dialog's
-   own frame and never of whatever scrollback sits above it — proven by a
-   test that prepends 0/3/9/20 lines of synthetic chatter to the real capture
-   and asserts an identical `promptId` and `tool` every time.
+1. The body is the contiguous run of `│`-prefixed lines — stopping at the
+   first non-`│` line, never scanning further up. This bound is what keeps
+   `request`/`promptId` a function of the dialog's own frame and never of
+   whatever scrollback sits above it — proven by a test that prepends
+   0/3/9/20 lines of synthetic chatter to the real capture and asserts an
+   identical `promptId` and `tool` every time. **Kept exactly as before —
+   this is not what changed.**
+2. The title is the line directly below that `│`-run — found by scanning
+   upward from the question through a small bounded gap
+   (`MAX_TITLE_GAP_LINES`, currently 3) of non-blank lines, stopping at the
+   first one immediately preceded by a `│`-prefixed line.
+3. Whatever occupies that gap — `This command requires approval`, a
+   too-complex security warning, or nothing at all — is content, never the
+   anchor, and nothing here reads its text. The bound exists so unrelated
+   chatter can't manufacture a title line the screen never earned — the same
+   discipline the old "blank lines only" rule enforced, just wide enough now
+   to also admit a single reason line.
 
 A synthetic 3-option variant of this same chrome (built from the real
 capture by dropping the stored-rule option, same method FACTORY-356 used for
@@ -186,21 +204,32 @@ independent code paths.
 
 **This ticket's other fingerprint (`bc2bdb0ac67037a1`, three options: `Yes /
 Yes, and switch to auto mode / No`, no stored-rule option) was NOT confirmed
-failing.** A genuine attempt was made to obtain a real capture — asked the
-boss for an existing one (none available), then reproduced offline three
-times (`claude --permission-mode default` in an isolated scratch session, at
-two terminal widths, and with preceding same-session scrollback) — every
-attempt produced the OLDER chrome (`─` separator present, `Bash command`
-title above the body), which already classified correctly before this fix
-too; it is the same shape as the already-fixed FACTORY-318 "too-complex"
-family above. Committed at
+failing in the old chrome.** A genuine attempt was made to obtain a real
+capture — asked the boss for an existing one (none available), then
+reproduced offline three times (`claude --permission-mode default` in an
+isolated scratch session, at two terminal widths, and with preceding
+same-session scrollback) — every attempt produced the OLDER chrome (`─`
+separator present, `Bash command` title above the body), which already
+classified correctly before this fix too; it is the same shape as the
+already-fixed FACTORY-318 "too-complex" family above. Committed at
 `test/fixtures/bash-auto-mode-permission/pane-too-complex-3-option-old-chrome.txt`
 as a real, verified-passing regression fixture — not as evidence this
-fingerprint's bug reproduces. If a real capture of this fingerprint actually
-failing (e.g. the same no-separator chrome, with only 3 options) ever
-surfaces, the fix above should already handle it, since nothing in the
-body-delimiter logic depends on option count — but that is untested until
-such a capture exists.
+fingerprint's bug reproduces.
+
+**A too-complex command in the NEW (no-separator) chrome — the shape
+FACTORY-385 closes — was also never reached by a real capture**, for the
+same reason: every reachable offline repro kept producing the older chrome.
+FACTORY-146's binary-string finding establishes on a sound, verifiable basis
+(not a guess) what that dialog's reason slot carries, so
+`test/fixtures/bash-auto-mode-permission/synthetic-too-complex-new-chrome.txt`
+is a SYNTHETIC fixture, built the same way `synthetic-3-option-new-chrome.txt`
+was: the real 4-option capture's own frame
+(`pane-w29p1-4-option.txt`), with the body and reason line swapped for the
+real too-complex fixture's own command and warning text
+(`test/fixtures/too-complex-permission/brace-with-quote.txt`) and the
+stored-rule option dropped (the too-complex family never offers one). Labeled
+synthetic here and in its covering test, per the same honest-labeling
+discipline used for this chrome's other synthetic fixture.
 
 **Release-gate regression (director-mandated, FACTORY-372):** this
 relaxation must not also let FACTORY-345/347's weekly-limit
