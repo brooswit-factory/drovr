@@ -216,6 +216,118 @@ describe("classifyPermissionPrompt", () => {
       });
     }
   });
+
+  // FACTORY-365/6: the generic MCP-tool dialog and WebFetch each fail exactly
+  // one of classifyPermissionPrompt's preconditions, and a different one
+  // each — see docs/permission-approval.md for the full captured screens and
+  // exactly how they were captured.
+  describe("the generic MCP-tool dialog (FACTORY-365/6): no ─ rule anywhere on screen", () => {
+    // Real capture, claude 2.1.251, `claude --permission-mode default
+    // --restricted` in an isolated scratch pane (herdr `pane run` + `pane
+    // read --source visible`), 2026-09-27: the butchr MCP tool tell_worker
+    // was called with a long enough `text` parameter that its own header
+    // ("Tool use" / the tool-call params / the ─ rule above them) scrolled
+    // off the *visible* screen — the exact read drovr itself uses
+    // (`source: "visible"` in `readScreen`). What remains above the question
+    // is only the dialog's own "About the … Tool:" frame, with no rule at
+    // all — this is the shape a real blocked pane's visible screen shows
+    // whenever the call's displayed request is long enough, not a shape
+    // specific to Tell Worker.
+    const mcpToolFixture = readFileSync(new URL("./fixtures/generic-mcp-tool-permission/pane-tell-worker-cropped.txt", import.meta.url), "utf8");
+
+    test("recognised from its own frame, with no ─ rule anywhere on screen", () => {
+      expect(mcpToolFixture).not.toMatch(/─{10,}/);
+      const prompt = classifyPermissionPrompt(mcpToolFixture);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("butchr — Tell Worker Tool");
+      expect(prompt!.options).toEqual([
+        "Yes",
+        "Yes, and don't ask again for butchr — Tell Worker commands in /tmp/claude-1002/…",
+        "No",
+      ]);
+    });
+
+    test("answerable with option 1 (\"Yes\") under scope once", () => {
+      const prompt = classifyPermissionPrompt(mcpToolFixture)!;
+      expect(optionFor(prompt, "once")).toBe(0);
+      expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+    });
+  });
+
+  describe("the WebFetch dialog (FACTORY-365/6): no Esc to cancel footer at all", () => {
+    // Real capture, claude 2.1.251, `claude --permission-mode default` in an
+    // isolated scratch pane, prompted "Use the WebFetch tool on
+    // https://example.com and tell me the page title. Nothing else.", read
+    // with `herdr pane read --source recent --lines 60` (also verified not a
+    // viewport-truncation artefact against a 60-line window), 2026-09-27.
+    const webfetchFixture = readFileSync(new URL("./fixtures/webfetch-permission/pane-fetch-example-com.txt", import.meta.url), "utf8");
+
+    test("recognised from the inline (esc) hint on its No option, with no Esc to cancel line anywhere", () => {
+      expect(webfetchFixture).not.toMatch(/Esc to cancel/);
+      const prompt = classifyPermissionPrompt(webfetchFixture);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Fetch");
+      expect(prompt!.options).toEqual([
+        "Yes",
+        "Yes, and don't ask again for example.com",
+        "No, and tell Claude what to do differently (esc)",
+      ]);
+    });
+
+    test("answerable with option 1 (\"Yes\") under scope once", () => {
+      const prompt = classifyPermissionPrompt(webfetchFixture)!;
+      expect(optionFor(prompt, "once")).toBe(0);
+      expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+    });
+  });
+
+  // Positive control (FACTORY-356 comment 26459): Web Search already has
+  // both the rule and the footer, and stays recognised unchanged by the two
+  // relaxations above. Not incidental — an explicit regression guard.
+  describe("Web Search stays recognised (regression guard, FACTORY-365/6)", () => {
+    // Real capture, claude 2.1.251, same scratch session as the WebFetch
+    // capture above, prompted 'Use the WebSearch tool to search for "example
+    // domain rfc". Nothing else.', 2026-09-27.
+    const webSearchFixture = readFileSync(new URL("./fixtures/websearch-permission/pane-web-search-example-domain-rfc.txt", import.meta.url), "utf8");
+
+    test("recognised, with option 1 (\"Yes\") answerable under scope once", () => {
+      const prompt = classifyPermissionPrompt(webSearchFixture);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Tool use");
+      expect(optionFor(prompt!, "once")).toBe(0);
+      expect(prompt!.options[0]).toBe("Yes");
+    });
+  });
+
+  // FACTORY-365/6: both gates relaxed above exist to stop a dialog that is
+  // merely QUOTED in scrollback — never live — from being pressed. Proving
+  // that hole is not open, for the specific shape the MCP-tool relaxation
+  // touches.
+  describe("a quoted or already-answered MCP-tool dialog is never recognised (FACTORY-365/6)", () => {
+    test("a real screen where the dialog was already answered classifies as undefined", () => {
+      // Real capture, same scratch session as the MCP-tool fixture above:
+      // after pressing "1" on the tell_worker dialog and letting the call
+      // finish, the dialog itself is gone from the screen entirely (Claude
+      // Code clears it on selection) — there is no "Do you want to
+      // proceed?" line left to match at all.
+      const answered = readFileSync(new URL("./fixtures/quoted-permission/pane-mcp-tool-already-answered.txt", import.meta.url), "utf8");
+      expect(answered).not.toMatch(/Do you want to proceed\?/);
+      expect(classifyPermissionPrompt(answered)).toBeUndefined();
+    });
+
+    test("synthetic: the expand hint narrated in prose, with no About the … Tool: frame directly above it, is not recognised", () => {
+      // Synthetic (labelled): the MCP-tool relaxation requires BOTH `About
+      // the … Tool:` and `(ctrl+o to expand description)` in an unbroken,
+      // directly-adjacent run above the question — never either alone. A
+      // screen that merely mentions the expand hint in ordinary assistant
+      // narration, without the real frame's header line immediately above
+      // it, must still fail to classify as a permission prompt.
+      const narrated = readFileSync(new URL("./fixtures/quoted-permission/synthetic-mcp-tool-narrated-not-framed.txt", import.meta.url), "utf8");
+      expect(narrated).toMatch(/ctrl\+o to expand description/);
+      expect(narrated).not.toMatch(/About the .+:/);
+      expect(classifyPermissionPrompt(narrated)).toBeUndefined();
+    });
+  });
 });
 
 function fixture(screens: string[], options: { auditFails?: boolean | number; throwOnSendKeys?: boolean } = {}) {

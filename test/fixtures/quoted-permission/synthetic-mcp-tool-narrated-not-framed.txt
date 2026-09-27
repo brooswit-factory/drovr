@@ -1,0 +1,11 @@
+❯ What tool are you about to call?
+
+● I'm about to call a butchr tool — quick heads up before it prompts:
+  (ctrl+o to expand description)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for butchr — Tell Worker commands in ~/butchr-workspac…
+   3. No
+
+ Esc to cancel · Tab to amend

@@ -1,0 +1,23 @@
+Welcome to fish, the friendly interactive shell
+Type help for instructions on how to use fish
+booswrit@servyboi /t/c/-/5/s/webfetch-capture> claude --permission-mode default
+ ▐▛███▛█   Claude Code v2.1.251
+▝▜██████▀  Opus 5 (1M context) with medium effort · Claude Max
+  ▝▝ ▝▝    /…/5b2f2799-d94b-4bfe-b4cc-e76dbc7cef5c/scratchpad/webfetch-capture
+
+
+❯ Use the WebFetch tool on https://example.com and tell me the page title. Nothing else.
+
+● Fetch(https://example.com)
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+ Fetch
+
+   url: https://example.com/
+   prompt: What is the page title?
+   Claude wants to fetch content from example.com
+
+ Do you want to allow Claude to fetch this content?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for example.com
+   3. No, and tell Claude what to do differently (esc)
