@@ -2,6 +2,7 @@ import { stripTerminalEscapes } from "./blocking-conditions.js";
 import type { DrovrClient } from "./drovr-client.js";
 import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane } from "./pane-scan.js";
 import { classifyPermissionPrompt, type PermissionPrompt } from "./permission-approval.js";
+import { classifyRateLimitOptions, type RateLimitOptionsPrompt } from "./rate-limit-options.js";
 import { classifyStartupPrompt } from "./resident-host.js";
 
 export type { UnreadablePane } from "./pane-scan.js";
@@ -21,9 +22,12 @@ type ScanClient = { agent: Pick<DrovrClient["agent"], "list" | "read"> };
  * - `startup`: a prompt `hostResident` answers (trust, development channels,
  *   auto-mode setup), or reports by name (MCP approval).
  * - `permission`: a tool-permission prompt `approvePermission` answers for an operator.
+ * - `rate-limit-options`: Claude Code's `/rate-limit-options` weekly-limit menu
+ *   (FACTORY-345/FACTORY-347) — `answerRateLimitOptions` (rate-limit-options.ts)
+ *   answers it, never selecting "Stop and wait" or "Switch to usage credits".
  * - `unknown`: a waiting dialog Drovr recognises by its footer alone; a person must look.
  */
-export type BlockingPromptKind = "startup" | "permission" | "unknown";
+export type BlockingPromptKind = "startup" | "permission" | "rate-limit-options" | "unknown";
 
 export interface BlockingPrompt {
   paneId: string;
@@ -63,6 +67,14 @@ export interface BlockingPrompt {
    * assume answered.
    */
   permission?: PermissionPrompt;
+  /**
+   * Present only for `kind: "rate-limit-options"` — the full parsed prompt
+   * (`options`, `cursor`, `waitHereIndex`, `stopIndex`, `switchIndex`,
+   * `promptId`), for the same reason `permission` is exposed: a caller can
+   * decide whether its own answering pass will actually answer this dialog
+   * without re-reading the screen or re-implementing `classifyRateLimitOptions`.
+   */
+  rateLimitOptions?: RateLimitOptionsPrompt;
 }
 
 /**
@@ -227,11 +239,13 @@ function parseMarkedDialog(lines: string[]): { question: string; options: string
 }
 
 /** What one screen is waiting on, or undefined when it waits on nothing. */
-export function classifyBlockingScreen(raw: string): Pick<BlockingPrompt, "kind" | "name" | "excerpt" | "keys" | "dialog" | "permission"> | undefined {
+export function classifyBlockingScreen(raw: string): Pick<BlockingPrompt, "kind" | "name" | "excerpt" | "keys" | "dialog" | "permission" | "rateLimitOptions"> | undefined {
   const screen = stripTerminalEscapes(raw);
   if (!WAITING_FOOTER.test(screen)) return undefined;
   const permission = classifyPermissionPrompt(screen);
   if (permission) return { kind: "permission", name: permission.tool, excerpt: excerptOf(screen), permission };
+  const rateLimitOptions = classifyRateLimitOptions(screen);
+  if (rateLimitOptions) return { kind: "rate-limit-options", name: undefined, excerpt: excerptOf(screen), rateLimitOptions };
   const startup = classifyStartupPrompt(screen);
   if (startup && startup.kind !== "unknown-blocking") {
     return {

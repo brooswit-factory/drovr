@@ -236,6 +236,16 @@ export {
   type ScanBlockingPromptsResult,
 } from "./blocking-prompts.js";
 export {
+  classifyRateLimitOptions,
+  resolveRateLimitOptionsAction,
+  parseWaitHereReset,
+  answerRateLimitOptions,
+  type RateLimitOptionsPrompt,
+  type RateLimitOptionsAction,
+  type AnswerRateLimitOptionsResult,
+  type AnswerRateLimitOptionsRefusalReason,
+} from "./rate-limit-options.js";
+export {
   createBlockingEscalationWatcher,
   type BlockingEscalationHook,
   type BlockingEscalationWatcher,

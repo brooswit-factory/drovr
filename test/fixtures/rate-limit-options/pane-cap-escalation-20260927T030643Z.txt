@@ -1,0 +1,40 @@
+
+
+  Called butchr
+
+← butchr: [butchr] related:jira-work:FACTORY-328 (related to your FAC…
+
+❯ [butchr] related:jira-work:FACTORY-328 (related to your FACTORY-327) got a new comment —
+  re-read it, then act on what changed.
+
+← butchr: [butchr] Ticket FACTORY-327 got a new comment — re-read it.
+
+❯ [butchr] Ticket FACTORY-327 got a new comment — re-read it.
+
+  Called butchr, ran 1 shell command
+
+● Nothing new needs action. The new comments on FACTORY-327 and FACTORY-328 are my own: the
+  review note on 328 and my result report on 327. FACTORY-328 is Done and no other comments
+  have arrived.
+
+  FACTORY-327 has been submitted, so I'm waiting for FACTORY-146 to review the finding. If
+  FACTORY-146 posts a [review] line or asks for more, that will need my attention.
+
+✻ Crunched for 9s · done 8:04 PM
+
+← butchr: [butchr] Ticket FACTORY-327 was updated (reason not determi…
+  ⎿  You've hit your weekly limit · resets Oct 1, 8am (America/Los_Angeles)
+     Use your limit reset to reset it now: clau.de/reset
+
+✻ Cooked for 0s · done 8:06 PM
+
+❯ [butchr] Ticket FACTORY-327 was updated (reason not determinable from the poll) — re-read
+  it.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   What do you want to do?
+
+   ❯ 1. Stop and wait for limit to reset
+     2. Wait here, then continue automatically at Oct 1, 8am
+     3. Switch to usage credits
+
+   Enter to confirm · Esc to cancel
