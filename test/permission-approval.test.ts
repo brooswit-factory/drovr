@@ -321,6 +321,41 @@ describe("classifyPermissionPrompt", () => {
       expect(prompt!.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
       expect(optionFor(prompt!, "once")).toBe(0);
     });
+
+    // FACTORY-385: the capture gap this ticket closes. FACTORY-146 grepped
+    // the installed claude 2.1.251 binary directly (comment 26827 on
+    // FACTORY-359) and found `This command requires approval` and a
+    // too-complex command's security-warning text are both `reason` strings
+    // rendered in the SAME slot above the question, as alternatives, never
+    // together — so the hard-required approval line this fallback used to
+    // key on could never match a too-complex command here, and the
+    // originally reported bug (a security-warning dialog not being
+    // auto-answered) would still hang even after FACTORY-372's fix.
+    //
+    // SYNTHETIC, honestly labeled: no real capture of this exact shape (a
+    // too-complex command in the no-separator chrome) was reachable — every
+    // offline `claude --permission-mode default` repro attempted for this
+    // ticket, like every attempt before it, produced the OLDER `─`-separator
+    // chrome instead (see pane-too-complex-3-option-old-chrome.txt above).
+    // Built the same way FACTORY-356 built synthetic-3-option-new-chrome.txt:
+    // the real 4-option capture's own frame (pane-w29p1-4-option.txt), with
+    // the body swapped for the real too-complex fixture's own command and
+    // reason text (brace-with-quote.txt above) and the stored-rule option
+    // dropped, since the too-complex family never offers one. The basis for
+    // the reason-slot substitution is the binary string-table finding above,
+    // not a guess at formatting.
+    test("synthetic-too-complex-new-chrome.txt: a too-complex command's security-warning reason, in the no-separator chrome, is recognised without keying on the reason text", () => {
+      const prompt = classifyPermissionPrompt(bashAutoModeFixture("synthetic-too-complex-new-chrome.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Run shell command");
+      // The reason line sits in the gap between title and question, never
+      // in `request` — this fallback's body is still only the │-prefixed
+      // run, exactly as for the "This command requires approval" case.
+      expect(prompt!.request).toBe("echo {'a','b'}");
+      expect(prompt!.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+      expect(optionFor(prompt!, "once")).toBe(0);
+      expect(optionFor(prompt!, "always")).toBe(-1);
+    });
   });
 
   // Release-gate acceptance criterion (FACTORY-372, director comment 26645,
