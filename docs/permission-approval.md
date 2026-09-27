@@ -61,9 +61,9 @@ timeout, and more) sharing one consequence: no permission rule can be
 derived from a `too-complex` command, so Claude never builds the `"Yes, and
 don't ask again for: …"` option for it at all. The dialog still classifies
 as `permission` — recognition depends only on the three preconditions above
-(a `❯` cursor, a plain `─{10,}` separator, an `Esc to cancel` footer within
-3 lines), none of which this shape touches — but it collapses to exactly
-three options:
+(a `❯` cursor, a plain `─{10,}` separator OR the newer no-separator chrome
+below, an `Esc to cancel` footer within 3 lines), none of which this shape
+touches — but it collapses to exactly three options:
 
 ```
 ─────────────────────────────────────────────────────────────────────────
@@ -101,6 +101,116 @@ exported specifically so a caller other than `approvePermission` (namely
 `createBlockingEscalationWatcher`, see `docs/blocking-escalation.md`'s "The
 no-stored-rule shape" section) can ask "would MY scope answer this prompt?"
 without pressing anything or re-implementing the rule.
+
+### A newer chrome with no separator at all (FACTORY-372)
+
+A second, real chrome for the SAME Bash auto-mode-option dialog draws no `─`
+rule anywhere on screen. Real capture, attributed to FACTORY-356 (pane
+`w29:p1`, `claude 2.1.251`, 2026-09-27, `herdr agent read <pane> --source
+visible`, a real frozen `git commit` approval — not a reproduction; handed
+over on FACTORY-359 comment 26534/26555, measured against drovr `c6da5fc`
+before this fix: `classifyPermissionPrompt` → `undefined`,
+`classifyBlockingScreen` → `"unknown"`, zero `─{10,}` matches anywhere on
+the screen). Committed at
+`test/fixtures/bash-auto-mode-permission/pane-w29p1-4-option.txt`:
+
+```
+   │ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+   │ EOF
+   │ )"
+   │ git log --oneline -3
+   Run shell command
+
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: git commit -m ' *
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain
+```
+
+Two shape details the fix and its tests key on explicitly, not just note:
+
+1. **The title sits BELOW the `│`-prefixed body block**, not above it as on
+   the older chrome — `Run shell command`, not `Bash command`. A fix that
+   assumed the older ordering would read the wrong line as `tool`.
+2. **Option 2's apostrophe is U+2019 (curly `’`), not U+0027 (straight `'`)**
+   — `don’t ask again`. A regex matching only the literal `don't` silently
+   misses this shape; nothing in `classifyPermissionPrompt` actually keys on
+   this text (option parsing is apostrophe-agnostic), but a pinned test
+   guards against a future change that might.
+
+**Why this is not simply "drop the separator gate": the separator was doing
+two jobs.** It was the recognition precondition being fixed, but it was ALSO
+the body delimiter `tool`, `request` (and so `promptId`, which hashes
+`[tool, request, question, options]`) are sliced from. Dropping the gate
+with no replacement would make `body` start at line 0 of the screen — the
+entire visible scrollback — which breaks two things at once: `tool` becomes
+whatever the topmost visible line happens to be (not this dialog's actual
+title), and `promptId` becomes a function of scrollback, changing on every
+poll as unrelated output scrolls (FACTORY-327's "three escalations, three
+different fingerprints" — reproduced on demand by FACTORY-356 by prepending
+0/3/9/20 synthetic chatter lines to this exact capture and getting four
+different promptIds, see FACTORY-359 comment 26578). Since `ANSWER
+<n> <fingerprint>` re-checks the fingerprint against the live dialog, a
+drifting `promptId` makes escalations for this shape unanswerable — a worse
+failure than the original bug, which is at least loud in the journal.
+
+**The replacement delimiter**, keyed on the dialog's own frame rather than
+on position or a wider rule-character class (a real pane routinely
+interleaves butchr's own notification chatter — including a `▔▔▔▔`/U+2594
+rule — in the same frame, shifting position between reads; widening
+`SEPARATOR`'s character class or matching by screen position would let that
+chatter supply an anchor the screen never earned):
+
+1. Find the fixed `This command requires approval` line above the question
+   (only blank lines allowed in the gap, same discipline as every other gate
+   here — narration that merely mentions the wording elsewhere in scrollback
+   doesn't qualify).
+2. The title is the first non-blank line above that.
+3. The body is the contiguous run of `│`-prefixed lines directly above the
+   title — stopping at the first non-`│` line, never scanning further up.
+   This bound is what keeps `request`/`promptId` a function of the dialog's
+   own frame and never of whatever scrollback sits above it — proven by a
+   test that prepends 0/3/9/20 lines of synthetic chatter to the real capture
+   and asserts an identical `promptId` and `tool` every time.
+
+A synthetic 3-option variant of this same chrome (built from the real
+capture by dropping the stored-rule option, same method FACTORY-356 used for
+its own synthetic fixtures) is also recognised — proof the fix generalises
+across option count, since option parsing and the body-delimiter fix are
+independent code paths.
+
+**This ticket's other fingerprint (`bc2bdb0ac67037a1`, three options: `Yes /
+Yes, and switch to auto mode / No`, no stored-rule option) was NOT confirmed
+failing.** A genuine attempt was made to obtain a real capture — asked the
+boss for an existing one (none available), then reproduced offline three
+times (`claude --permission-mode default` in an isolated scratch session, at
+two terminal widths, and with preceding same-session scrollback) — every
+attempt produced the OLDER chrome (`─` separator present, `Bash command`
+title above the body), which already classified correctly before this fix
+too; it is the same shape as the already-fixed FACTORY-318 "too-complex"
+family above. Committed at
+`test/fixtures/bash-auto-mode-permission/pane-too-complex-3-option-old-chrome.txt`
+as a real, verified-passing regression fixture — not as evidence this
+fingerprint's bug reproduces. If a real capture of this fingerprint actually
+failing (e.g. the same no-separator chrome, with only 3 options) ever
+surfaces, the fix above should already handle it, since nothing in the
+body-delimiter logic depends on option count — but that is untested until
+such a capture exists.
+
+**Release-gate regression (director-mandated, FACTORY-372):** this
+relaxation must not also let FACTORY-345/347's weekly-limit
+`/rate-limit-options` command menu classify as a permission prompt — its
+option 1 ends the session and option 3 spends money, so auto-pressing either
+would be actively harmful, not merely wrong. That dialog asks `What do you
+want to do?`, never matching the `QUESTION` gate's `Do you want to …?`
+pattern, so it is rejected before any code this fix touches is ever reached
+— pinned by a test against a real capture attributed to FACTORY-347
+(`test/fixtures/rate-limit-options/`).
 
 ## Guarantees
 
