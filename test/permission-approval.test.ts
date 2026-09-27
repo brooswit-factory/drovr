@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvePermission, autoAnswerPermissions, classifyPermissionPrompt, listPendingPermissions, scanPendingPermissions } from "../src/permission-approval.js";
+import { approvePermission, autoAnswerPermissions, classifyPermissionPrompt, listPendingPermissions, optionFor, scanPendingPermissions } from "../src/permission-approval.js";
+
+const tooComplexFixture = (name: string) => readFileSync(new URL(`./fixtures/too-complex-permission/${name}`, import.meta.url), "utf8");
 
 // Measured on claude 2.1.277 in a herdr pane, 2026-09-18.
 const BASH_PROMPT = [
@@ -168,6 +171,50 @@ describe("classifyPermissionPrompt", () => {
     // is never reached and the dialog fails the "must offer No" check below —
     // proof the line was not silently absorbed into option 2's text.
     expect(classifyPermissionPrompt(UNINDENTED_STRAY_LINE_PROMPT)).toBeUndefined();
+  });
+
+  // FACTORY-318/FACTORY-146: Claude's static bash analyser marks a command
+  // "too-complex" (a whole family of reasons — brace-with-quote, a zsh
+  // <N-M> numeric-range glob, and more, see docs/permission-approval.md) and
+  // then never offers a stored-rule option for it at all, leaving the dialog
+  // with exactly three options: Yes / switch-to-auto-mode / No. Real
+  // captures (claude 2.1.251, `claude --permission-mode default` in an
+  // isolated scratch dir, 2026-09-26) — see test/fixtures/too-complex-permission
+  // and the PR description for exactly how these two were produced.
+  describe("the no-stored-rule 'too-complex' shape (FACTORY-318)", () => {
+    const CASES = [
+      { file: "brace-with-quote.txt", reason: "Contains brace with quote character (expansion obfuscation)" },
+      { file: "zsh-numeric-range-glob.txt", reason: "Contains zsh <N-M> numeric-range glob" },
+    ];
+
+    for (const { file, reason } of CASES) {
+      test(`${file}: recognised as a permission prompt with exactly 3 options and no stored rule`, () => {
+        const prompt = classifyPermissionPrompt(tooComplexFixture(file));
+        expect(prompt).toBeDefined();
+        expect(prompt!.tool).toBe("Bash command");
+        expect(prompt!.request).toContain(reason);
+        expect(prompt!.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+      });
+
+      test(`${file}: answerable with option 1 ("Yes") under scope once, and under no scope ever with the auto-mode option`, () => {
+        const prompt = classifyPermissionPrompt(tooComplexFixture(file))!;
+        expect(optionFor(prompt, "once")).toBe(0);
+        expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+      });
+
+      test(`${file}: scope always finds no stored-rule option at all — this shape has none to find`, () => {
+        const prompt = classifyPermissionPrompt(tooComplexFixture(file))!;
+        expect(optionFor(prompt, "always")).toBe(-1);
+      });
+
+      test(`${file}: neither scope ever targets the "switch to auto mode" option`, () => {
+        const prompt = classifyPermissionPrompt(tooComplexFixture(file))!;
+        const autoModeIndex = prompt.options.findIndex((o) => /auto mode/i.test(o));
+        expect(autoModeIndex).toBeGreaterThanOrEqual(0); // sanity: it really is on this dialog
+        expect(optionFor(prompt, "once")).not.toBe(autoModeIndex);
+        expect(optionFor(prompt, "always")).not.toBe(autoModeIndex);
+      });
+    }
   });
 });
 

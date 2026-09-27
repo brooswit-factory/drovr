@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DrovrClient } from "./drovr-client.js";
 import { scanBlockingPrompts, type BlockingPrompt, type ScanBlockingPromptsOptions, type UnreadablePane } from "./blocking-prompts.js";
+import { optionFor, type PermissionPrompt, type PermissionScope } from "./permission-approval.js";
 
 /**
  * The general mechanism: Drovr detects any dialog blocking a Claude pane,
@@ -23,7 +24,11 @@ type EscalationClient = { agent: Pick<DrovrClient["agent"], "list" | "read" | "s
  * verbatim from the screen, never paraphrased. `fingerprint` is stable
  * across polls of the SAME dialog (content-based: it does not change while
  * a cursor merely moves), so a host escalates one episode once, not every
- * poll.
+ * poll. Also used, unchanged in shape, for a `permission` dialog the
+ * caller's own `permissionScope` (see `BlockingEscalationOptions`) cannot
+ * answer (FACTORY-318) — `question`/`options` are still copied verbatim,
+ * just assembled from the permission prompt's own `tool`/`request`/
+ * `question` fields rather than from `describeUnknownDialog`.
  */
 export interface UnknownDialogEscalation {
   paneId: string;
@@ -56,7 +61,15 @@ export interface BlockingEscalationHook {
 export type AutoHandleOutcome =
   /** A known-safe startup prompt was pressed (trust, development-channels, auto-mode-onboarding, fullscreen-renderer). */
   | { paneId: string; outcome: "answered"; name: string }
-  /** Recognised but deliberately left unanswered here: an MCP-approval startup prompt, or a tool-permission prompt — both keep their own existing flow. */
+  /**
+   * Recognised but deliberately left unanswered here: an MCP-approval
+   * startup prompt (approval travels on the launch instead), or a
+   * `permission` prompt the caller's OWN `permissionScope` (see
+   * `BlockingEscalationOptions`) will actually answer — both keep their own
+   * existing flow. A `permission` prompt `permissionScope` will NOT answer
+   * escalates instead (see `outcome: "escalated"` below); it is never
+   * silently `reported`.
+   */
   | { paneId: string; outcome: "reported"; kind: BlockingPrompt["kind"]; name: string | undefined }
   /** A new (pane, fingerprint) episode; `hook.onUnknownDialog` succeeded. */
   | { paneId: string; outcome: "escalated"; fingerprint: string }
@@ -75,10 +88,47 @@ export interface BlockingEscalationWatcher {
   poll(client: EscalationClient, options?: ScanBlockingPromptsOptions): Promise<AutoHandleOutcome[]>;
 }
 
+export interface BlockingEscalationOptions {
+  /**
+   * The scope the CALLER'S OWN answering pass (its own `autoAnswerPermissions`
+   * call, wired up separately — Drovr never runs one for you) actually uses.
+   * Required, never defaulted: a default here would be a guess about a
+   * policy this module cannot see, and guessing it wrong is exactly the
+   * FACTORY-318 gap — a dialog that scope answers would be escalated for no
+   * reason, and a dialog it doesn't answer would stay silently `reported`.
+   * State the real scope and this module can tell the two cases apart.
+   */
+  permissionScope: PermissionScope;
+}
+
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 const fingerprintOf = (question: string, options: string[]): string =>
   createHash("sha256").update(JSON.stringify([question, options])).digest("hex").slice(0, 16);
+
+/**
+ * The verbatim `{question, options}` pair to escalate for `prompt`, or
+ * `undefined` when nothing needs to escalate: an `unknown` dialog escalates
+ * whenever its shape was read with confidence (`prompt.dialog` present); a
+ * `permission` dialog escalates only when `permissionScope` — the scope the
+ * CALLER'S OWN answering pass actually runs — finds no option on it
+ * (`optionFor(...) < 0`). A `permission` dialog `permissionScope` WILL
+ * answer keeps its existing flow and is never escalated here, matching the
+ * behaviour before FACTORY-318 for every dialog that flow already handled.
+ *
+ * The payload is assembled from `tool`/`request`/`question` (not just the
+ * generic "Do you want to proceed?" `question` alone) so that two different
+ * unanswerable commands — which, for the `too-complex` family, all share
+ * the exact same question text and the exact same three options — still
+ * fingerprint distinctly instead of colliding on one shared identity.
+ */
+function escalationPayload(prompt: BlockingPrompt, permissionScope: PermissionScope): { question: string; options: string[] } | undefined {
+  if (prompt.kind === "unknown") return prompt.dialog;
+  if (prompt.kind !== "permission" || !prompt.permission) return undefined;
+  const permission: PermissionPrompt = prompt.permission;
+  if (optionFor(permission, permissionScope) >= 0) return undefined; // the caller's own pass will answer this one
+  return { question: `${permission.tool}\n${permission.request}\n${permission.question}`, options: permission.options };
+}
 
 /**
  * A host-neutral escalation watcher. It carries (pane, fingerprint) episode
@@ -88,7 +138,8 @@ const fingerprintOf = (question: string, options: string[]): string =>
  * same episode's dialog clears (the pane answers it, the pane closes, or a
  * different dialog — a new fingerprint — replaces it).
  */
-export function createBlockingEscalationWatcher(hook: BlockingEscalationHook): BlockingEscalationWatcher {
+export function createBlockingEscalationWatcher(hook: BlockingEscalationHook, options: BlockingEscalationOptions): BlockingEscalationWatcher {
+  const { permissionScope } = options;
   const open = new Map<string, string>(); // paneId -> fingerprint of the open episode
 
   async function closeIfOpen(paneId: string, outcomes: AutoHandleOutcome[]): Promise<void> {
@@ -118,23 +169,25 @@ export function createBlockingEscalationWatcher(hook: BlockingEscalationHook): B
           await closeIfOpen(prompt.paneId, outcomes);
           continue;
         }
-        if (prompt.kind !== "unknown" || !prompt.dialog) {
-          // Recognised-but-unanswered (mcp-approval, permission), or truly
-          // unknown but not readable with confidence: reported, never
-          // guessed at. `describeUnknownDialog` already refused a payload
-          // it could not verify — this path must not invent one either.
+        const payload = escalationPayload(prompt, permissionScope);
+        if (!payload) {
+          // mcp-approval (approval travels on the launch), a permission
+          // dialog `permissionScope` will answer, or truly unknown but not
+          // readable with confidence: reported, never guessed at.
+          // `describeUnknownDialog` already refused a payload it could not
+          // verify — this path must not invent one either.
           outcomes.push({ paneId: prompt.paneId, outcome: "reported", kind: prompt.kind, name: prompt.name });
           await closeIfOpen(prompt.paneId, outcomes);
           continue;
         }
 
-        const fingerprint = fingerprintOf(prompt.dialog.question, prompt.dialog.options);
+        const fingerprint = fingerprintOf(payload.question, payload.options);
         if (open.get(prompt.paneId) === fingerprint) continue; // same episode already escalated
         await closeIfOpen(prompt.paneId, outcomes); // a DIFFERENT episode was open on this pane
         try {
           await hook.onUnknownDialog({
             paneId: prompt.paneId, label: prompt.label, sessionId: prompt.sessionId, cwd: prompt.cwd,
-            herdrStatus: prompt.herdrStatus, question: prompt.dialog.question, options: prompt.dialog.options, fingerprint,
+            herdrStatus: prompt.herdrStatus, question: payload.question, options: payload.options, fingerprint,
           });
           open.set(prompt.paneId, fingerprint);
           outcomes.push({ paneId: prompt.paneId, outcome: "escalated", fingerprint });

@@ -107,7 +107,14 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
  */
 export type PermissionScope = "once" | "always";
 
-function optionFor(prompt: PermissionPrompt, scope: PermissionScope): number {
+/**
+ * Which option `scope` would press on `prompt`, or -1 when it offers none —
+ * exported so a caller that only needs to know WHETHER a scope can answer a
+ * prompt (`blocking-escalation.ts`'s escalation gap) never has to
+ * re-implement this rule to ask the question without actually pressing
+ * anything.
+ */
+export function optionFor(prompt: PermissionPrompt, scope: PermissionScope): number {
   if (scope === "once") return prompt.options.indexOf("Yes");
   return prompt.options.findIndex((option) => /^Yes, and\b/.test(option) && !/auto mode/i.test(option));
 }
