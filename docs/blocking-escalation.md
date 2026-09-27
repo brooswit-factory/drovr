@@ -33,11 +33,11 @@ column right of the option list, box-drawing borders, a
 `✂ N lines hidden` marker when the preview is too tall to fit), and that
 layout used to make the function return `undefined` outright (no
 fingerprint, no `ANSWER` path, a person had to intervene on the pane). The
-plain layout, by contrast, was recognised — but its "Type something." /
-"Chat about this" trailer read as a real, numbered option, so the dialog it
-returned silently carried a phantom extra option: a boss answering by
-number could press that meta-action instead of a genuine choice, and
-nothing flagged the mismatch.
+plain layout, by contrast, was recognised — but its "Chat about this"
+trailer read as a real, numbered option, so the dialog it returned
+silently carried a phantom extra option: a boss answering by number could
+press that meta-action instead of a genuine choice, and nothing flagged
+the mismatch.
 
 Measured live (2026-09-26, claude 2.1.251) against a fresh pane, not
 reconstructed:
