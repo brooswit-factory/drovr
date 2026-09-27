@@ -321,9 +321,18 @@ const watcher = createLoginExpiredWatcher({
     // doing a real browser re-login (startClaudeLogin). Never wire
     // episodeId as something a host can echo back.
   },
-  async onLoginExpiredResolved({ paneId, episodeId }) {
-    // Fires once a LATER successful transcript turn is seen — a real clear
-    // signal, never merely "the string is no longer on screen".
+  async onLoginExpiredResolved({ paneId, episodeId, reason }) {
+    // reason: "recovered" | "pane-gone" | "superseded" — a closed union a
+    // host must exhaustively switch on, never just "resolved". Only
+    // "recovered" means a LATER successful transcript turn was seen — the
+    // real "credential is back" signal. "pane-gone" means the pane vanished
+    // from agent.list() entirely (closed); it says NOTHING about whether
+    // the credential recovered — panes churn on their own (a daemon
+    // respawn, the reconciler replacing a pane) while the credential can
+    // still be dead. "superseded" means a NEW failure replaced this episode
+    // on the SAME still-live pane before it ever recovered (the ordinary
+    // shape of a dead credential being retried) — a new `onLoginExpired`
+    // for the replacement episode follows immediately on this same pane.
   },
 });
 
@@ -367,11 +376,25 @@ it already tracks its OWN episode state for anything else: open a
 host-level "credential dead" episode on the first `onLoginExpired` it
 receives while none is open, suppress/aggregate every `onLoginExpired` that
 arrives while it stays open, and close the host episode once it has
-received `onLoginExpiredResolved` for every pane currently inside it (or,
-more simply, once ANY `onLoginExpiredResolved` arrives, if the host's
-policy is "any recovery signals the credential itself is likely restored
-fleet-wide" — a host-specific judgement call this package does not make
-for you).
+received `onLoginExpiredResolved` with `reason: "recovered"` for every pane
+currently inside it.
+
+**Only `reason: "recovered"` is evidence the credential itself is back.** A
+host must not close its fleet-wide alert on an unqualified "any
+`onLoginExpiredResolved` arrived" — that event ALSO fires with
+`reason: "pane-gone"` (the pane simply vanished from `agent.list()`, which
+says nothing about the credential — panes churn on their own during exactly
+this condition) and with `reason: "superseded"` (a new failure replaced the
+episode on the same still-live pane; the credential never recovered, and a
+new `onLoginExpired` for the replacement follows immediately). Treating
+either of those as "fleet recovered" would silence a still-live
+"credential dead" alarm while the outage continues — worse than the
+13-hour silent-stall bug this whole story exists to fix, because a
+switched-off alarm actively tells a human the outage is over while it is
+still running, rather than just staying quiet. If a host's policy is "any
+single recovery signals the whole fleet is likely back", it must wait for
+`reason: "recovered"` specifically (not merely "resolved") on any one pane
+before applying that shortcut fleet-wide — or design its own policy instead.
 
 ### Never answered, never resolved on a guess
 

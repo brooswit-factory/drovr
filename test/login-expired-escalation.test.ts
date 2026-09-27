@@ -156,7 +156,7 @@ describe("createLoginExpiredWatcher", () => {
     const second = await watcher.poll(client([AGENT]));
     const escalatedId = (hook.escalations[0] as { episodeId: string }).episodeId;
     expect(second).toEqual([{ paneId: "w1:p1", outcome: "resolved", episodeId: escalatedId }]);
-    expect(hook.resolutions).toEqual([{ paneId: "w1:p1", episodeId: escalatedId }]);
+    expect(hook.resolutions).toEqual([{ paneId: "w1:p1", episodeId: escalatedId, reason: "recovered" }]);
   });
 
   test("a superseding distinct episode resolves the prior one before escalating the new one (no permanently-open leak)", async () => {
@@ -178,6 +178,10 @@ describe("createLoginExpiredWatcher", () => {
     const resolvedIds = (hook.resolutions as { episodeId: string }[]).map((r) => r.episodeId);
     expect(new Set(escalatedIds).size).toBe(3); // three genuinely distinct episode ids
     expect(resolvedIds).toEqual([escalatedIds[0]!, escalatedIds[1]!]); // resolved in supersession order, the final one left open
+    expect(hook.resolutions).toEqual([
+      { paneId: "w1:p1", episodeId: escalatedIds[0]!, reason: "superseded" },
+      { paneId: "w1:p1", episodeId: escalatedIds[1]!, reason: "superseded" },
+    ]); // superseded, never "recovered" — no genuine completion occurred, a new failure replaced each
   });
 
   test("the same open episode is not re-escalated on a later poll with no new evidence", async () => {
@@ -228,6 +232,7 @@ describe("createLoginExpiredWatcher", () => {
     await watcher.poll(client([AGENT]));
     const outcomes = await watcher.poll(client([])); // pane gone
     expect(outcomes).toEqual([{ paneId: "w1:p1", outcome: "resolved", episodeId: expect.any(String) }]);
+    expect(hook.resolutions).toEqual([{ paneId: "w1:p1", episodeId: expect.any(String), reason: "pane-gone" }]);
   });
 
   test("never calls agent.sendKeys for a login-expired pane — the client mock has no sendKeys at all", async () => {
