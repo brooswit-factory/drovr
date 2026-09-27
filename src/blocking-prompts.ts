@@ -1,7 +1,7 @@
 import { stripTerminalEscapes } from "./blocking-conditions.js";
 import type { DrovrClient } from "./drovr-client.js";
 import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane } from "./pane-scan.js";
-import { classifyPermissionPrompt } from "./permission-approval.js";
+import { classifyPermissionPrompt, type PermissionPrompt } from "./permission-approval.js";
 import { classifyStartupPrompt } from "./resident-host.js";
 
 export type { UnreadablePane } from "./pane-scan.js";
@@ -52,6 +52,17 @@ export interface BlockingPrompt {
    * Absent, never a guess, when the shape is ambiguous.
    */
   dialog?: { question: string; options: string[] };
+  /**
+   * Present only for `kind: "permission"` — the full parsed prompt
+   * (`tool`, `request`, `question`, `options`, `cursor`, `promptId`), so a
+   * caller can decide for itself whether ITS OWN answering pass (running at
+   * a `PermissionScope` only the caller knows) will actually answer this
+   * dialog, without re-reading the screen or re-implementing
+   * `classifyPermissionPrompt`. See `blocking-escalation.ts`'s escalation
+   * gap for why this exists: a `permission` dialog is not always safe to
+   * assume answered.
+   */
+  permission?: PermissionPrompt;
 }
 
 /**
@@ -216,11 +227,11 @@ function parseMarkedDialog(lines: string[]): { question: string; options: string
 }
 
 /** What one screen is waiting on, or undefined when it waits on nothing. */
-export function classifyBlockingScreen(raw: string): Pick<BlockingPrompt, "kind" | "name" | "excerpt" | "keys" | "dialog"> | undefined {
+export function classifyBlockingScreen(raw: string): Pick<BlockingPrompt, "kind" | "name" | "excerpt" | "keys" | "dialog" | "permission"> | undefined {
   const screen = stripTerminalEscapes(raw);
   if (!WAITING_FOOTER.test(screen)) return undefined;
   const permission = classifyPermissionPrompt(screen);
-  if (permission) return { kind: "permission", name: permission.tool, excerpt: excerptOf(screen) };
+  if (permission) return { kind: "permission", name: permission.tool, excerpt: excerptOf(screen), permission };
   const startup = classifyStartupPrompt(screen);
   if (startup && startup.kind !== "unknown-blocking") {
     return {

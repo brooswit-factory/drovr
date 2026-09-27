@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { classifyBlockingScreen, describeUnknownDialog, listBlockingPrompts, scanBlockingPrompts } from "../src/blocking-prompts.js";
 
 // Screens measured on this host, 2026-09-18.
@@ -134,6 +135,22 @@ describe("classifyBlockingScreen", () => {
       const unknown = classifyBlockingScreen(screen)!;
       expect(unknown.kind).toBe("unknown");
       expect(unknown.dialog).toBeDefined();
+    }
+  });
+
+  // FACTORY-318/FACTORY-146: a "too-complex" Bash command (real captures, see
+  // test/fixtures/too-complex-permission) still classifies as `permission`,
+  // not `unknown` — the missing stored-rule option does not defeat
+  // recognition — and carries the full parsed prompt so a caller can decide
+  // for itself (via `optionFor` from permission-approval.js) whether its own
+  // answering scope will actually answer it.
+  test("a too-complex Bash dialog with no stored-rule option is still 'permission', with the full prompt attached", () => {
+    for (const file of ["brace-with-quote.txt", "zsh-numeric-range-glob.txt"]) {
+      const raw = readFileSync(new URL(`./fixtures/too-complex-permission/${file}`, import.meta.url), "utf8");
+      const classified = classifyBlockingScreen(raw)!;
+      expect(classified.kind).toBe("permission");
+      expect(classified.name).toBe("Bash command");
+      expect(classified.permission?.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
     }
   });
 });

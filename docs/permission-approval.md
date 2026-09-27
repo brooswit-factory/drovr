@@ -51,6 +51,57 @@ An **auto-mode classifier denial** is not a prompt. The tool call is refused
 outright and nothing waits on screen, so nothing here can approve it. Only a
 permission rule that the session reads at start changes that outcome.
 
+### The "too-complex" shape: no stored-rule option at all (FACTORY-146/FACTORY-318)
+
+Claude's static bash analyser marks some commands `{kind: "too-complex"}` —
+a family of reasons (a brace containing a quote character, a zsh `<N-M>`
+numeric-range glob, a lone surrogate, control characters, Unicode
+whitespace, backslash-escaped whitespace, a zsh `=cmd` expansion, a parser
+timeout, and more) sharing one consequence: no permission rule can be
+derived from a `too-complex` command, so Claude never builds the `"Yes, and
+don't ask again for: …"` option for it at all. The dialog still classifies
+as `permission` — recognition depends only on the three preconditions above
+(a `❯` cursor, a plain `─{10,}` separator, an `Esc to cancel` footer within
+3 lines), none of which this shape touches — but it collapses to exactly
+three options:
+
+```
+─────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+
+   echo {'a','b'}
+   Echo brace expansion
+
+ Contains brace with quote character (expansion obfuscation)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and switch to auto mode · auto mode handles these prompts for you
+   3. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain
+```
+
+Real capture, `claude 2.1.251`, `claude --permission-mode default` in an
+isolated scratch directory, 2026-09-26 — committed at
+`test/fixtures/too-complex-permission/brace-with-quote.txt`, alongside a
+second real capture of a different `too-complex` reason
+(`zsh-numeric-range-glob.txt`, "Contains zsh `<N-M>` numeric-range glob")
+proving the fix is keyed on the dialog's SHAPE, not the warning's wording.
+
+**`optionFor(prompt, "once")` answers this shape** (plain `"Yes"` sits at
+index 0 on every dialog this family produces) — that is the scope butchr's
+permission-answer loop passes (FACTORY-93). **`optionFor(prompt, "always")`
+finds nothing** (there is no `"Yes, and …"` stored-rule option to find,
+never mind the auto-mode one, which is excluded from both scopes exactly as
+it already was for every other dialog) — `autoAnswerPermissions`'s own
+default scope when a caller doesn't request `"once"`. `optionFor` is
+exported specifically so a caller other than `approvePermission` (namely
+`createBlockingEscalationWatcher`, see `docs/blocking-escalation.md`'s "The
+no-stored-rule shape" section) can ask "would MY scope answer this prompt?"
+without pressing anything or re-implementing the rule.
+
 ## Guarantees
 
 - **Only the prompt the operator saw.** The screen is re-read before any key
