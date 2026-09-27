@@ -152,21 +152,54 @@ describe("resolveRateLimitOptionsAction (AC2, AC3, AC5)", () => {
     expect(action).toEqual({ kind: "wait", targetIndex: 1 });
   });
 
-  test("NEVER resolves to an action that targets stopIndex or switchIndex, for any label/time combination", () => {
+  // Director's binding review requirement on PR #61 (FACTORY-347 comment
+  // 26702, safety-critical): a DEDICATED test for each of the two "never"
+  // cases, not one combined assertion -- split out explicitly here.
+
+  // NEVER case 1 of 2: option 1 ("Stop and wait for limit to reset") ends
+  // the session and must never be the target, under any reset-time/label
+  // combination this module can be handed.
+  test('NEVER targets option 1 ("Stop and wait for limit to reset", which ends the session), for any reset-time combination', () => {
     const now = new Date(2026, 8, 27, 12, 0, 0);
     for (const label of [
-      "Wait here, then continue automatically at Oct 1, 8am",
+      "Wait here, then continue automatically at Oct 1, 8am", // future
       "Wait here, then continue automatically at Sep 1, 8am", // already past
       "Wait here, then continue automatically", // unparseable
     ]) {
       const prompt = promptWith(label);
       const action = resolveRateLimitOptionsAction(prompt, now);
-      if (action.kind === "wait") {
-        expect(action.targetIndex).not.toBe(prompt.stopIndex);
-        expect(action.targetIndex).not.toBe(prompt.switchIndex);
-        expect(action.targetIndex).toBe(prompt.waitHereIndex);
-      }
-      // "escape" never targets any option index at all -- it presses Escape.
+      if (action.kind === "wait") expect(action.targetIndex).not.toBe(prompt.stopIndex);
+      // "escape" targets no option index at all -- it presses Escape, never option 1.
+    }
+  });
+
+  // NEVER case 2 of 2: option 3 ("Switch to usage credits") spends real
+  // money and must never be the target, under any reset-time/label
+  // combination this module can be handed.
+  test('NEVER targets option 3 ("Switch to usage credits", which spends money), for any reset-time combination', () => {
+    const now = new Date(2026, 8, 27, 12, 0, 0);
+    for (const label of [
+      "Wait here, then continue automatically at Oct 1, 8am", // future
+      "Wait here, then continue automatically at Sep 1, 8am", // already past
+      "Wait here, then continue automatically", // unparseable
+    ]) {
+      const prompt = promptWith(label);
+      const action = resolveRateLimitOptionsAction(prompt, now);
+      if (action.kind === "wait") expect(action.targetIndex).not.toBe(prompt.switchIndex);
+      // "escape" targets no option index at all -- it presses Escape, never option 3.
+    }
+  });
+
+  test("the only non-escape action targets waitHereIndex, for any label/time combination", () => {
+    const now = new Date(2026, 8, 27, 12, 0, 0);
+    for (const label of [
+      "Wait here, then continue automatically at Oct 1, 8am",
+      "Wait here, then continue automatically at Sep 1, 8am",
+      "Wait here, then continue automatically",
+    ]) {
+      const prompt = promptWith(label);
+      const action = resolveRateLimitOptionsAction(prompt, now);
+      if (action.kind === "wait") expect(action.targetIndex).toBe(prompt.waitHereIndex);
     }
   });
 
@@ -220,6 +253,42 @@ describe("answerRateLimitOptions (fake client)", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.action).toEqual({ kind: "wait", targetIndex: 1 });
     expect(sent).toEqual([["down", "enter"]]);
+  });
+
+  // Director's binding review requirement on PR #61 (FACTORY-347 comment
+  // 26702): dedicated tests, at the ACTUAL keystroke level (what
+  // answerRateLimitOptions really presses), for each "never" case -- not
+  // just at resolveRateLimitOptionsAction's decision level above.
+
+  // NEVER case 1 of 2, at the keystroke level: option 1 ("Stop and wait")
+  // is never the option the keys land on, even when the cursor already
+  // starts there (the real, observed capture shape).
+  test("keystroke-level: never sends keys that land on option 1 (ends the session)", async () => {
+    // CLEAN_DIALOG's real captured cursor position is already on option 1
+    // (index 0) -- this is the actual production shape, not a contrived one.
+    const { client, sent } = fakeClient([CLEAN_DIALOG]);
+    const prompt = classifyRateLimitOptions(CLEAN_DIALOG)!;
+    expect(prompt.cursor).toBe(prompt.stopIndex); // sanity: this IS the risky starting position
+    await answerRateLimitOptions(client, "pane-1", prompt.promptId, new Date(2026, 8, 27));
+    // The only key sequence sent must move AWAY from option 1 before Enter;
+    // Enter must never be sent while still on option 1 (i.e. never a bare
+    // ["enter"] from this starting cursor).
+    expect(sent).toEqual([["down", "enter"]]);
+    expect(sent[0]).not.toEqual(["enter"]);
+  });
+
+  // NEVER case 2 of 2, at the keystroke level: option 3 ("Switch to usage
+  // credits") is never the option the keys land on, even from a dialog
+  // whose cursor starts on it (a shape this module must still handle safely
+  // even though it hasn't been observed live).
+  test("keystroke-level: never sends keys that land on option 3 (spends money)", async () => {
+    const cursorOnSwitch = CLEAN_DIALOG.replace("❯ 1.", "  1.").replace("3. Switch", "❯ 3. Switch");
+    const { client, sent } = fakeClient([cursorOnSwitch]);
+    const prompt = classifyRateLimitOptions(cursorOnSwitch)!;
+    expect(prompt.cursor).toBe(prompt.switchIndex); // sanity: this IS the risky starting position
+    await answerRateLimitOptions(client, "pane-1", prompt.promptId, new Date(2026, 8, 27));
+    // Must move UP once to reach waitHereIndex (1) from switchIndex (2), then Enter.
+    expect(sent).toEqual([["up", "enter"]]);
   });
 
   test("refuses when the prompt has changed since classification", async () => {
