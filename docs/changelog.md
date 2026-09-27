@@ -60,17 +60,22 @@ Two changes ship together: FACTORY-113's dialog-recognition fix, merged to
 approval-sound asset.
 
 - **`describeUnknownDialog` recognises Claude Code's `AskUserQuestion`
-  dialog** (`src/blocking-prompts.ts`) in all three shapes — plain, a
-  side-by-side preview, and a truncated (`✂ N lines hidden`) preview —
-  instead of returning `undefined` for every one of them, so
-  `classifyBlockingScreen` reports `kind: "unknown"` with `dialog` populated
-  and the escalation watcher gets a stable fingerprint and `ANSWER` path.
-  Fixes the FACTORY-111 hang. The old footer gate required pure-blank lines
-  between the last option and the footer; every `AskUserQuestion` dialog —
-  plain included — draws a "Chat about this" meta-action past a full-width
-  separator (and, with a preview, a `Notes: press n to add notes` line)
-  that violated it, so this was never a preview-only bug. Fixtures are real
-  captures against a live Claude Code pane (2.1.251). See
+  dialog** (`src/blocking-prompts.ts`) correctly in all three shapes — plain,
+  a side-by-side preview, and a truncated (`✂ N lines hidden`) preview.
+  Before this fix, the side-by-side and truncated-preview layouts made the
+  function return `undefined` outright (no fingerprint, no `ANSWER` path);
+  the plain layout, by contrast, was already recognised, but its "Chat about
+  this" trailer read as a real, numbered option, so the dialog it returned
+  silently carried a phantom extra option. Fixing both means
+  `classifyBlockingScreen` now reports `kind: "unknown"` with an accurate
+  `dialog` populated for all three, and the escalation watcher gets a stable
+  fingerprint and `ANSWER` path. Fixes the FACTORY-111 hang. The old footer
+  gate required pure-blank lines between the last option and the footer;
+  every `AskUserQuestion` dialog — plain included — draws a "Chat about
+  this" meta-action past a full-width separator (and, with a preview, a
+  `Notes: press n to add notes` line) that violated it, so this was never a
+  preview-only bug. Fixtures are real captures against a live Claude Code
+  pane (2.1.251). See
   [`docs/blocking-escalation.md`](blocking-escalation.md) for the full
   measured writeup. (FACTORY-113/FACTORY-114)
 - **Bundles `assets/sounds/lizard-button.mp3`** (30,940 bytes) in the
