@@ -1,0 +1,39 @@
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› Use the shell tool to run `curl -sS -o /tmp/drovr-codex-probe-fixtures-net.html
+  https://example.com`. If it fails or you are sandboxed without network access, you MUST
+  request escalated permissions to retry with network access rather than giving up. Do not
+  explain in chat, just do it.
+
+
+• Ran curl -sS -o /tmp/drovr-codex-probe-fixtures-net.html https://example.com
+  └ curl: (6) Could not resolve host: example.com
+
+✔ You approved codex to run curl -sS -o /tmp/drovr-codex-probe-fixtures-net.html
+  https://example.com this time
+
+• Ran curl -sS -o /tmp/drovr-codex-probe-fixtures-net.html https://example.com
+  └ (no output)
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› Using your file edit / apply_patch tool (not the shell tool), create a new file at ~/drovr-
+  codex-probe-edit.txt containing the single line: hello from codex edit. Do not explain in
+  chat, just do it.
+
+
+• Added ~/drovr-codex-probe-edit.txt (+1 -0)
+    1 +hello from codex edit
+
+
+  Would you like to make the following edits?
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for these files (a)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

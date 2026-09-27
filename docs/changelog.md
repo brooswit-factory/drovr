@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.16.1
+
+FACTORY-128 (FACTORY-106): the combined release. Merges drovr main (which
+carries 0.15.2 below) into the FACTORY-106 story branch (which carries 0.16.0
+below), so this one release contains all three changes that had been split
+across two lines: Codex lizard mode (0.16.0's content), the `AskUserQuestion`
+dialog-recognition fix, and the bundled approval-sound asset (both from
+0.15.2's content). No behaviour from either side is changed by the merge
+itself — see the two entries below for what each contributed.
+
+## 0.16.0
+
+FACTORY-107 (FACTORY-106): Codex lizard mode, drovr half. New
+`src/codex-permission-approval.ts` (exported from `src/index.ts`), the
+Codex-vendor twin of `permission-approval.ts`'s Claude support — for a Codex
+session launched WITHOUT `--dangerously-bypass-approvals-and-sandbox`
+(`buildAgentStartParams`'s `bypassApprovalsAndSandbox: false`).
+
+- **`classifyCodexApprovalScreen`**: recognises three on-screen shapes,
+  measured live on codex-cli 0.145.0 (2026-09-26; fixtures under
+  `test/fixtures/codex-approval/`) — `"command"` (a shell command needing
+  approval; a network-access escalation renders the IDENTICAL shape, only
+  the `Reason:` text differs — Codex has no separate dialog for it),
+  `"file-edit"` (an apply_patch edit outside the sandbox), and `"mcp-tool"`
+  (an MCP server tool call). See `docs/codex-permission-approval.md` for the
+  full wording table. A screen that is approval-shaped (one of the two known
+  footers, or a `Would you like to …`/`Field N/M` phrase) but fails to parse
+  into one of those three is `{ kind: "unrecognised", excerpt }` — **never**
+  silently `undefined` — the same DROVR-41 class of gap the Claude classifier
+  already closed, structured out by construction here instead.
+- **`onceOptionIndex`**: the plain approve-once option and nothing else —
+  `"Yes, proceed"` / `"Allow"` — never a stored-rule, session, or "always"
+  variant. There is no `"always"` scope for Codex; approve-once is the only
+  behaviour this module offers, by design.
+- **`scanPendingCodexApprovals`**: filtered to `agent.agent === "codex"`
+  only, mirroring `scanPendingPermissions`'s shape, plus a third bucket
+  (`unrecognised`) alongside `pending`/`unreadable`.
+- **`approveCodexApproval`** / **`autoAnswerCodexApprovals`**: reuse
+  `permission-approval.ts`'s exported `defaultDeps`/`PermissionApprovalDeps`
+  and write to the SAME audit file Claude lizard mode does (records carry
+  `vendor: "codex"`). An `"unrecognised"` pane is never answered — logged to
+  the audit trail (`outcome: "unrecognised"`) and reported back for a human,
+  never skipped silently.
+- A Codex agent still launched with `--dangerously-bypass-approvals-and-sandbox`
+  (today's default) never shows any of these dialogs, so scanning or
+  auto-answering it is a harmless no-op — enabling Codex lizard mode is
+  entirely a launch-flag decision the host makes (Butchr's FACTORY-108), and
+  a non-lizard Codex agent is structurally unaffected by this release.
+
+Additive; no existing export's behaviour changes. `permission-approval.ts`
+gains one new export, `defaultDeps`, for the reuse above; its value and
+default behaviour are unchanged.
+
 ## 0.15.2
 
 Two changes ship together: FACTORY-113's dialog-recognition fix, merged to
@@ -7,17 +60,22 @@ Two changes ship together: FACTORY-113's dialog-recognition fix, merged to
 approval-sound asset.
 
 - **`describeUnknownDialog` recognises Claude Code's `AskUserQuestion`
-  dialog** (`src/blocking-prompts.ts`) in all three shapes — plain, a
-  side-by-side preview, and a truncated (`✂ N lines hidden`) preview —
-  instead of returning `undefined` for every one of them, so
-  `classifyBlockingScreen` reports `kind: "unknown"` with `dialog` populated
-  and the escalation watcher gets a stable fingerprint and `ANSWER` path.
-  Fixes the FACTORY-111 hang. The old footer gate required pure-blank lines
-  between the last option and the footer; every `AskUserQuestion` dialog —
-  plain included — draws a "Chat about this" meta-action past a full-width
-  separator (and, with a preview, a `Notes: press n to add notes` line)
-  that violated it, so this was never a preview-only bug. Fixtures are real
-  captures against a live Claude Code pane (2.1.251). See
+  dialog** (`src/blocking-prompts.ts`) correctly in all three shapes — plain,
+  a side-by-side preview, and a truncated (`✂ N lines hidden`) preview.
+  Before this fix, the side-by-side and truncated-preview layouts made the
+  function return `undefined` outright (no fingerprint, no `ANSWER` path);
+  the plain layout, by contrast, was already recognised, but its "Chat about
+  this" trailer read as a real, numbered option, so the dialog it returned
+  silently carried a phantom extra option. Fixing both means
+  `classifyBlockingScreen` now reports `kind: "unknown"` with an accurate
+  `dialog` populated for all three, and the escalation watcher gets a stable
+  fingerprint and `ANSWER` path. Fixes the FACTORY-111 hang. The old footer
+  gate required pure-blank lines between the last option and the footer;
+  every `AskUserQuestion` dialog — plain included — draws a "Chat about
+  this" meta-action past a full-width separator (and, with a preview, a
+  `Notes: press n to add notes` line) that violated it, so this was never a
+  preview-only bug. Fixtures are real captures against a live Claude Code
+  pane (2.1.251). See
   [`docs/blocking-escalation.md`](blocking-escalation.md) for the full
   measured writeup. (FACTORY-113/FACTORY-114)
 - **Bundles `assets/sounds/lizard-button.mp3`** (30,940 bytes) in the
