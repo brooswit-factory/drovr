@@ -87,8 +87,15 @@ const DESCRIPTION_LINE_PREFIX = /^\s*│\s?/;
 /**
  * A `No, …` option carrying its own inline `(esc)` hint — WebFetch's stand-in
  * for a footer `Esc to cancel` line, which it never draws at all.
+ *
+ * Not anchored to end-of-string (FACTORY-386): an indented trailing line
+ * after the option list (e.g. butchr's own notification chatter landing on
+ * a still-live pane) folds onto this option via `CONTINUATION`, pushing
+ * `(esc)` away from the end. The end-anchor used to carry anti-spoof
+ * weight, but `WEBFETCH_BODY_MARKER` carries that instead — see its check
+ * below.
  */
-const INLINE_ESC_OPTION = /^No\b.*\(esc\)\s*$/;
+const INLINE_ESC_OPTION = /^No\b.*\(esc\)/;
 /** WebFetch's own body always carries this verbatim — the shape anchor for the inline-`(esc)` relaxation, so it can't be spoofed by a quoted option list alone. */
 const WEBFETCH_BODY_MARKER = /Claude wants to fetch content from/;
 
