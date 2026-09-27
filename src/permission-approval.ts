@@ -27,6 +27,55 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  *
  *    Esc to cancel · Tab to amend
  *
+ * A second, newer chrome for the same Bash dialog (FACTORY-372, claude
+ * 2.1.251, real capture attributed to FACTORY-356/FACTORY-359 comment
+ * 26534, pane `w29:p1`, 2026-09-27) draws no `─` rule at all. Its body
+ * block (the command, `│`-prefixed) sits ABOVE the title line instead of
+ * below it, followed by a reason line — `This command requires approval`
+ * on this capture:
+ *
+ *      │ git commit -m "$(cat <<'EOF'
+ *      │ ...
+ *      │ EOF
+ *      │ )"
+ *      │ git log --oneline -3
+ *    Run shell command
+ *
+ *    This command requires approval
+ *
+ *    Do you want to proceed?
+ *    ❯ 1. Yes
+ *      2. Yes, and don't ask again for: git commit -m ' *
+ *      3. Yes, and switch to auto mode · auto mode handles these prompts for you
+ *      4. No
+ *
+ *    Esc to cancel · Tab to amend · ctrl+e to explain
+ *
+ * FACTORY-146 (comment 26827 on FACTORY-359) grepped the installed binary
+ * directly and found that `This command requires approval` and a
+ * `too-complex` command's security-warning text (e.g. `Contains brace with
+ * quote character (expansion obfuscation)`) are both `reason` strings
+ * rendered in that SAME slot, as alternatives, never together — so a
+ * too-complex command in this chrome carries a warning line there instead,
+ * and the family of possible reason strings is open-ended (confirmed
+ * adjacent in the binary's own string table). Recognition is therefore keyed
+ * on the two lines that are actually invariant regardless of which reason
+ * (or none) occupies that slot: the contiguous `│`-prefixed body run, and
+ * the title line directly below it — never on any reason line's text.
+ * Whatever sits between the title and the question is bounded to a small
+ * fixed number of non-blank lines (`MAX_TITLE_GAP_LINES`) and otherwise
+ * ignored, rather than required to match specific wording. Real panes
+ * interleave butchr's own notification chatter (including a `▔▔▔▔`/U+2594
+ * rule) in the same frame, with its position shifting between reads; a fix
+ * keyed on screen position or a wider rule-character class would let that
+ * chatter supply a separator/anchor the screen never earned. Anchoring on
+ * the `│`-prefixed run touching the title, and nothing above that run, also
+ * keeps `promptId` stable across differing scrollback — the SEPARATOR line
+ * was previously both the recognition gate AND the body delimiter that
+ * `tool`/`request`/`promptId` derive from, so a fix that merely dropped the
+ * gate without a bounded replacement delimiter would make `promptId` drift
+ * with scrollback (FACTORY-327, FACTORY-356 comment 26576 on FACTORY-359).
+ *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
  * permission rule the session reads at start can change it.
@@ -57,6 +106,20 @@ const QUESTION = /^\s*(Do you want to .+\?)\s*$/;
 const OPTION = /^\s*(❯\s*)?\d+\.\s+(.+?)\s*$/;
 /** A wrapped option's continuation line: indented text with no number of its own. */
 const CONTINUATION = /^\s+\S/;
+/** A body line's own `│` (U+2502) prefix in that same chrome, stripped before joining into `request`. */
+const BASH_BODY_LINE_PREFIX = /^\s*│\s?/;
+/**
+ * How many non-blank lines are tolerated between the title line and the
+ * question in the newer no-separator chrome (FACTORY-385). That gap holds
+ * whatever reason line Claude renders there — `This command requires
+ * approval`, a too-complex security warning, or (per the binary's own string
+ * table, FACTORY-146 comment 26827) any of an open-ended family of others —
+ * never both, and never something this code keys on by text. A small fixed
+ * bound, not "blank lines only" and not unbounded, is what keeps that
+ * flexibility from also letting unrelated chatter manufacture a title line
+ * the screen never earned.
+ */
+const MAX_TITLE_GAP_LINES = 3;
 
 /** Claude's tool-permission dialog on a screen, or undefined for anything else. */
 export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefined {
@@ -90,11 +153,49 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   if (!lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line))) return undefined;
   let separator = -1;
   for (let i = q - 1; i >= 0; i--) if (SEPARATOR.test(lines[i]!)) { separator = i; break; }
-  if (separator < 0) return undefined;
-  const body = lines.slice(separator + 1, q).map((line) => line.trim()).filter((line) => line !== "" && !/^Tip:/.test(line));
-  const tool = body[0];
-  if (tool === undefined) return undefined;
-  const request = body.slice(1).join("\n");
+  let tool: string | undefined;
+  let request: string;
+  if (separator >= 0) {
+    const body = lines.slice(separator + 1, q).map((line) => line.trim()).filter((line) => line !== "" && !/^Tip:/.test(line));
+    tool = body[0];
+    if (tool === undefined) return undefined;
+    request = body.slice(1).join("\n");
+  } else {
+    // The newer Bash-dialog chrome draws no `─` rule at all (FACTORY-372).
+    // FACTORY-146 found (grepping the installed binary directly, comment
+    // 26827 on FACTORY-359) that the line this fallback used to hard-require
+    // there (`This command requires approval`) is only ONE of a family of
+    // `reason` strings Claude renders in that same slot — a too-complex
+    // security warning is another, and there are more — as alternatives,
+    // never together. Keying recognition on that text therefore missed the
+    // exact shape this ticket was filed about. The anchor instead is the
+    // title line itself: the first non-blank line, within a small bounded
+    // gap below the question, that sits directly below the contiguous
+    // `│`-prefixed body run — whatever reason (or nothing) occupies the gap
+    // is content, never the anchor.
+    let titleLine = -1;
+    let gapNonBlankLines = 0;
+    for (let i = q - 1; i >= 0; i--) {
+      const line = lines[i]!;
+      if (line.trim() === "") continue;
+      if (i > 0 && BASH_BODY_LINE_PREFIX.test(lines[i - 1]!)) { titleLine = i; break; }
+      if (++gapNonBlankLines > MAX_TITLE_GAP_LINES) break;
+    }
+    if (titleLine < 0) return undefined;
+    tool = lines[titleLine]!.trim();
+    // The body is the contiguous run of `│`-prefixed lines directly above
+    // the title — nothing else. Stopping at the first non-`│` line, rather
+    // than scanning further up, is what keeps `request` (and so `promptId`)
+    // a function of the dialog's own frame and never of whatever scrollback
+    // happens to sit above it.
+    const bodyLines: string[] = [];
+    for (let i = titleLine - 1; i >= 0; i--) {
+      const line = lines[i]!;
+      if (!BASH_BODY_LINE_PREFIX.test(line)) break;
+      bodyLines.unshift(line.replace(BASH_BODY_LINE_PREFIX, "").trim());
+    }
+    request = bodyLines.join("\n");
+  }
   const question = QUESTION.exec(lines[q]!)![1]!;
   const promptId = createHash("sha256").update(JSON.stringify([tool, request, question, options])).digest("hex").slice(0, 16);
   return { tool, request, question, options, cursor, promptId };

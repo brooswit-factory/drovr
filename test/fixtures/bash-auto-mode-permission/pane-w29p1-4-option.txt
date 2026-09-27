@@ -1,0 +1,15 @@
+   │ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+   │ EOF
+   │ )"
+   │ git log --oneline -3
+   Run shell command
+
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: git commit -m ' *
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain

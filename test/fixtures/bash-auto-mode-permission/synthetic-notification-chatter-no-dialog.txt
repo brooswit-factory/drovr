@@ -1,0 +1,7 @@
+← butchr: [butchr] Ticket FACTORY-327 was updated (reason not determinable from the poll) — re-read
+  it.
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+This command requires approval
+
+Some unrelated narration that happens to mention Do you want to proceed some day, but this line is
+not the dialog's own question and there is no cursor or option list below it at all.

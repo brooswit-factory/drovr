@@ -1,0 +1,22 @@
+❯ Run exactly this Bash command using the Bash tool and do not modify it or ask
+  questions, just run it: echo {"a","b"}
+
+● Bash(echo {"a","b"})
+  ⎿  Waiting…
+
+────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode"
+ below
+
+   echo {"a","b"}
+   Echo brace expansion
+
+ Contains brace with quote character (expansion obfuscation)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and switch to auto mode · auto mode handles these prompts for you
+   3. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain

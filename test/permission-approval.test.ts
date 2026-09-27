@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { approvePermission, autoAnswerPermissions, classifyPermissionPrompt, listPendingPermissions, optionFor, scanPendingPermissions } from "../src/permission-approval.js";
 
 const tooComplexFixture = (name: string) => readFileSync(new URL(`./fixtures/too-complex-permission/${name}`, import.meta.url), "utf8");
+const bashAutoModeFixture = (name: string) => readFileSync(new URL(`./fixtures/bash-auto-mode-permission/${name}`, import.meta.url), "utf8");
+const rateLimitFixture = (name: string) => readFileSync(new URL(`./fixtures/rate-limit-options/${name}`, import.meta.url), "utf8");
 
 // Measured on claude 2.1.277 in a herdr pane, 2026-09-18.
 const BASH_PROMPT = [
@@ -215,6 +217,160 @@ describe("classifyPermissionPrompt", () => {
         expect(optionFor(prompt, "always")).not.toBe(autoModeIndex);
       });
     }
+  });
+
+  // FACTORY-372: a newer Bash-dialog chrome (claude 2.1.251) draws no `─`
+  // separator at all. The separator was previously both the recognition
+  // gate AND the body delimiter tool/request/promptId derive from, so this
+  // isn't just "relax the gate" — a replacement delimiter had to be found
+  // and bounded (docs/permission-approval.md and the module docstring have
+  // the full account).
+  describe("the newer no-separator Bash-dialog chrome (FACTORY-372)", () => {
+    // Real capture: FACTORY-356, pane w29:p1, claude 2.1.251, 2026-09-27,
+    // `herdr agent read <pane> --source visible`, a real frozen `git commit`
+    // approval — attributed, not reconstructed. Handed over on FACTORY-359
+    // comment 26534/26555. Fingerprint a5901e30415b417e.
+    const FOUR_OPTION = "pane-w29p1-4-option.txt";
+
+    test("recognised where it previously returned undefined: title, request and options read correctly, including the curly apostrophe", () => {
+      const prompt = classifyPermissionPrompt(bashAutoModeFixture(FOUR_OPTION));
+      expect(prompt).toBeDefined();
+      // The title sits BELOW the │-prefixed body block on this chrome, not
+      // above it as on the older one — proof the ordering is handled, not
+      // just the presence of the two anchor lines.
+      expect(prompt!.tool).toBe("Run shell command");
+      expect(prompt!.request).toBe('Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\nEOF\n)"\ngit log --oneline -3');
+      expect(prompt!.options).toHaveLength(4);
+      // U+2019 RIGHT SINGLE QUOTATION MARK, not a straight apostrophe (U+0027).
+      expect(prompt!.options[1]).toBe("Yes, and don’t ask again for: git commit -m ' *");
+      expect(prompt!.options[1]).not.toContain("don't");
+      expect(prompt!.cursor).toBe(0);
+      expect(prompt!.promptId).toMatch(/^[0-9a-f]{16}$/);
+    });
+
+    test("scope once answers option 1 (\"Yes\"); no scope ever selects the auto-mode option", () => {
+      const prompt = classifyPermissionPrompt(bashAutoModeFixture(FOUR_OPTION))!;
+      expect(optionFor(prompt, "once")).toBe(0);
+      expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+      const autoModeIndex = prompt.options.findIndex((o) => /auto mode/i.test(o));
+      expect(autoModeIndex).toBeGreaterThanOrEqual(0);
+      expect(optionFor(prompt, "once")).not.toBe(autoModeIndex);
+      expect(optionFor(prompt, "always")).not.toBe(autoModeIndex);
+    });
+
+    // Hard acceptance bar (FACTORY-372, empirically reproduced independently
+    // by FACTORY-356 on FACTORY-359 comment 26578 with 0/3/9/20 synthetic
+    // chatter lines, four different promptIds before this fix): the same
+    // dialog must produce the SAME promptId (and the same tool) regardless
+    // of how much unrelated scrollback sits above it. The old separator-gated
+    // logic made `body` — and so `promptId` — start wherever the SEPARATOR
+    // happened to be (or line 0 with the gate merely dropped), so this is the
+    // property that made the ANSWER-fingerprint protocol unreliable across
+    // polls before this fix, not a hypothetical.
+    test("promptId and tool are stable across differing amounts of preceding scrollback", () => {
+      const base = bashAutoModeFixture(FOUR_OPTION);
+      const baseline = classifyPermissionPrompt(base)!;
+      for (const chatterLines of [0, 3, 9, 20]) {
+        const chatter = Array.from({ length: chatterLines }, (_, i) => `unrelated scrollback line ${i}`).join("\n");
+        const screen = chatterLines === 0 ? base : `${chatter}\n${base}`;
+        const prompt = classifyPermissionPrompt(screen);
+        expect(prompt).toBeDefined();
+        expect(prompt!.tool).toBe(baseline.tool);
+        expect(prompt!.promptId).toBe(baseline.promptId);
+      }
+    });
+
+    // Synthetic (built from the real 4-option capture above, per FACTORY-356's
+    // own method for this same chrome): the fix must generalise across option
+    // count, since option parsing and the body-delimiter fix are independent
+    // — proof it isn't narrowly keyed to exactly 4 options.
+    test("a synthetic 3-option variant of the same chrome is recognised the same way", () => {
+      const prompt = classifyPermissionPrompt(bashAutoModeFixture("synthetic-3-option-new-chrome.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Run shell command");
+      expect(prompt!.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
+
+    // Negative control, same discipline as the older chrome's chatter guard:
+    // butchr's own notification chatter and a ▔▔▔▔ (U+2594) status-bar rule
+    // — never widened into by SEPARATOR or this fallback — with NO live
+    // dialog at all must not classify as a permission prompt.
+    test("notification chatter with a ▔▔▔▔ rule but no live dialog is not classified", () => {
+      expect(classifyPermissionPrompt(bashAutoModeFixture("synthetic-notification-chatter-no-dialog.txt"))).toBeUndefined();
+    });
+
+    // Real capture: this task's own offline repro (`claude --permission-mode
+    // default` in an isolated scratch session, 2026-09-27, a Bash command
+    // whose brace contains a quote — the FACTORY-318 "too-complex" shape,
+    // which also matches this ticket's 3-option fingerprint
+    // bc2bdb0ac67037a1's option shape). Reproduced with the OLDER chrome
+    // (the `─` separator IS present, "Bash command" title above the body) —
+    // it already classifies correctly on both current main and this fix, so
+    // it is NOT a failing case. Despite a genuine attempt (ask_boss relay,
+    // three separate offline-repro variants at different terminal widths and
+    // with preceding scrollback), no REAL capture of this fingerprint's
+    // shape actually failing to classify was obtained — recorded here as a
+    // real, verified-passing capture (regression protection), not as
+    // evidence the bug reproduces for this fingerprint. See FACTORY-372's
+    // ticket comments for the full account.
+    test("the too-complex 3-option shape (older chrome, real repro) already classifies correctly — not a failing case", () => {
+      const prompt = classifyPermissionPrompt(bashAutoModeFixture("pane-too-complex-3-option-old-chrome.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Bash command");
+      expect(prompt!.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
+
+    // FACTORY-385: the capture gap this ticket closes. FACTORY-146 grepped
+    // the installed claude 2.1.251 binary directly (comment 26827 on
+    // FACTORY-359) and found `This command requires approval` and a
+    // too-complex command's security-warning text are both `reason` strings
+    // rendered in the SAME slot above the question, as alternatives, never
+    // together — so the hard-required approval line this fallback used to
+    // key on could never match a too-complex command here, and the
+    // originally reported bug (a security-warning dialog not being
+    // auto-answered) would still hang even after FACTORY-372's fix.
+    //
+    // SYNTHETIC, honestly labeled: no real capture of this exact shape (a
+    // too-complex command in the no-separator chrome) was reachable — every
+    // offline `claude --permission-mode default` repro attempted for this
+    // ticket, like every attempt before it, produced the OLDER `─`-separator
+    // chrome instead (see pane-too-complex-3-option-old-chrome.txt above).
+    // Built the same way FACTORY-356 built synthetic-3-option-new-chrome.txt:
+    // the real 4-option capture's own frame (pane-w29p1-4-option.txt), with
+    // the body swapped for the real too-complex fixture's own command and
+    // reason text (brace-with-quote.txt above) and the stored-rule option
+    // dropped, since the too-complex family never offers one. The basis for
+    // the reason-slot substitution is the binary string-table finding above,
+    // not a guess at formatting.
+    test("synthetic-too-complex-new-chrome.txt: a too-complex command's security-warning reason, in the no-separator chrome, is recognised without keying on the reason text", () => {
+      const prompt = classifyPermissionPrompt(bashAutoModeFixture("synthetic-too-complex-new-chrome.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Run shell command");
+      // The reason line sits in the gap between title and question, never
+      // in `request` — this fallback's body is still only the │-prefixed
+      // run, exactly as for the "This command requires approval" case.
+      expect(prompt!.request).toBe("echo {'a','b'}");
+      expect(prompt!.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+      expect(optionFor(prompt!, "once")).toBe(0);
+      expect(optionFor(prompt!, "always")).toBe(-1);
+    });
+  });
+
+  // Release-gate acceptance criterion (FACTORY-372, director comment 26645,
+  // safety-critical): the separator-gate relaxation above must not also let
+  // FACTORY-345/347's weekly-limit/rate-limit-options command menu through —
+  // its option 1 ends the session, option 3 spends money, and it must never
+  // be auto-pressed. Real capture, attributed to FACTORY-347 (PR #59/#61's
+  // sibling fix), `test/fixtures/rate-limit-options/`. This dialog asks "What
+  // do you want to do?", not "Do you want to …?", so it already fails the
+  // QUESTION gate before any of this ticket's changes are ever reached —
+  // this test pins that as a regression guard, not a new gate.
+  test("the weekly-limit /rate-limit-options command menu is never classified as a permission prompt (FACTORY-345/347, release-gate)", () => {
+    const raw = rateLimitFixture("pane-cap-escalation-20260927T030643Z.txt");
+    expect(raw).toContain("What do you want to do?");
+    expect(classifyPermissionPrompt(raw)).toBeUndefined();
   });
 });
 
