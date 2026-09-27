@@ -252,6 +252,29 @@ describe("classifyPermissionPrompt", () => {
       expect(optionFor(prompt, "once")).toBe(0);
       expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
     });
+
+    // FACTORY-356 comment 26459 (relayed via FACTORY-146/FACTORY-327): a real
+    // blocked pane's screen routinely carries butchr's own notification
+    // lines and a `▔▔▔▔` (U+2594) status-bar rule interleaved in the SAME
+    // frame as the dialog, shifting between reads. Recognition must key on
+    // the dialog's own frame, never on screen position or a widened
+    // box-drawing character class — `▔` must never satisfy `SEPARATOR`
+    // (which only matches `─`, U+2500), and chatter above the frame must
+    // not defeat the fallback that looks for it. Synthetic (labelled):
+    // composited from the real chatter line shape (see
+    // `test/fixtures/session-limit/pane-cap-a.txt`) and the real `▔` rule
+    // (see `test/resident-host.test.ts`) around the real MCP-tool dialog
+    // frame captured above — reproducing the reported interleaving rather
+    // than a from-scratch guess.
+    test("still recognised with butchr notification chatter and a ▔▔▔▔ rule interleaved above the dialog's own frame", () => {
+      const chatterFixture = readFileSync(new URL("./fixtures/generic-mcp-tool-permission/synthetic-tell-worker-with-notification-chatter.txt", import.meta.url), "utf8");
+      expect(chatterFixture).toMatch(/▔{10,}/);
+      expect(chatterFixture).toMatch(/\[butchr\]/);
+      const prompt = classifyPermissionPrompt(chatterFixture);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("butchr — Tell Worker Tool");
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
   });
 
   describe("the WebFetch dialog (FACTORY-365/6): no Esc to cancel footer at all", () => {
@@ -326,6 +349,19 @@ describe("classifyPermissionPrompt", () => {
       expect(narrated).toMatch(/ctrl\+o to expand description/);
       expect(narrated).not.toMatch(/About the .+:/);
       expect(classifyPermissionPrompt(narrated)).toBeUndefined();
+    });
+
+    // FACTORY-356 comment 26459 (relayed): the flip side of the chatter test
+    // above — a screen carrying the SAME notification chatter and `▔▔▔▔`
+    // rule but with NO live dialog at all must still classify as undefined.
+    // Proves the fallback isn't triggered by chatter alone, only by the
+    // dialog's own frame actually being present.
+    test("synthetic: notification chatter and a ▔▔▔▔ rule with no live dialog at all is not recognised", () => {
+      const chatterOnly = readFileSync(new URL("./fixtures/quoted-permission/synthetic-notification-chatter-no-dialog.txt", import.meta.url), "utf8");
+      expect(chatterOnly).toMatch(/▔{10,}/);
+      expect(chatterOnly).toMatch(/\[butchr\]/);
+      expect(chatterOnly).not.toMatch(/Do you want to/);
+      expect(classifyPermissionPrompt(chatterOnly)).toBeUndefined();
     });
   });
 });

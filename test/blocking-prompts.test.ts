@@ -191,6 +191,13 @@ describe("classifyBlockingScreen", () => {
     const raw = readFileSync(new URL("./fixtures/quoted-permission/pane-mcp-tool-already-answered.txt", import.meta.url), "utf8");
     expect(classifyBlockingScreen(raw)).toBeUndefined();
   });
+
+  test("a real dialog survives interleaved butchr notification chatter and a ▔▔▔▔ rule, but chatter alone is not reported (FACTORY-356/365/6)", () => {
+    const withDialog = readFileSync(new URL("./fixtures/generic-mcp-tool-permission/synthetic-tell-worker-with-notification-chatter.txt", import.meta.url), "utf8");
+    expect(classifyBlockingScreen(withDialog)?.kind).toBe("permission");
+    const chatterOnly = readFileSync(new URL("./fixtures/quoted-permission/synthetic-notification-chatter-no-dialog.txt", import.meta.url), "utf8");
+    expect(classifyBlockingScreen(chatterOnly)).toBeUndefined();
+  });
 });
 
 describe("describeUnknownDialog", () => {

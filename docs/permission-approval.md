@@ -190,6 +190,22 @@ an already-answered MCP-tool dialog (`quoted-permission/pane-mcp-tool-already-an
 classifies as `undefined`, because Claude Code clears the dialog itself once
 answered — there is no "Do you want to proceed?" line left on screen at all.
 
+**A real blocked pane's screen also routinely carries butchr's own
+notification lines and a `▔▔▔▔` (U+2594) status-bar rule interleaved in the
+SAME frame as the dialog, shifting between reads** (FACTORY-356 comment
+26459, relayed via FACTORY-146/FACTORY-327's three-consecutive-capture
+finding). Two things this fix deliberately does NOT do, because either would
+turn the chatter into a false-positive vector: widen `SEPARATOR`'s character
+class to also match `▔` (it stays `─`-only, U+2500), or key recognition on
+screen position/line number/distance from the top. The MCP-tool fallback
+still keys on the dialog's own frame regardless of what chatter sits above
+it — see `test/fixtures/generic-mcp-tool-permission/synthetic-tell-worker-with-notification-chatter.txt`
+(dialog still recognised, chatter and `▔▔▔▔` above it, synthetic: composited
+from the real chatter line shape in `test/fixtures/session-limit/pane-cap-a.txt`
+and the real `▔▔▔▔` rule in `test/resident-host.test.ts` around the real
+dialog frame captured above) and `test/fixtures/quoted-permission/synthetic-notification-chatter-no-dialog.txt`
+(same chatter and rule, no live dialog at all, still `undefined`).
+
 ## Guarantees
 
 - **Only the prompt the operator saw.** The screen is re-read before any key
