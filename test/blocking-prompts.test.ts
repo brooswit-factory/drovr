@@ -153,6 +153,30 @@ describe("classifyBlockingScreen", () => {
       expect(classified.permission?.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
     }
   });
+
+  // FACTORY-372: FACTORY-356 measured this exact real capture reading as
+  // `classifyBlockingScreen` -> "unknown" against drovr c6da5fc (this is the
+  // `[managed-escalation] blocked on an unrecognized dialog` journal line's
+  // actual source, reproduced locally rather than relayed) — the fix must
+  // turn it into "permission" with the full parsed prompt attached, not just
+  // fix `classifyPermissionPrompt` in isolation, since it's this function
+  // the escalation path actually polls.
+  test("the newer no-separator Bash-dialog chrome is 'permission', not 'unknown' (FACTORY-372)", () => {
+    const raw = readFileSync(new URL("./fixtures/bash-auto-mode-permission/pane-w29p1-4-option.txt", import.meta.url), "utf8");
+    const classified = classifyBlockingScreen(raw)!;
+    expect(classified.kind).toBe("permission");
+    expect(classified.name).toBe("Run shell command");
+    expect(classified.permission?.options[0]).toBe("Yes");
+  });
+
+  // Escalation-path-still-fires requirement: a dialog this fix does not
+  // teach the recognizer about must still surface loudly as "unknown" (or
+  // refuse outright, for a non-permission menu), never silently drop.
+  test("the weekly-limit /rate-limit-options command menu is not silently swallowed: still classified, never as 'permission' (FACTORY-372 release gate)", () => {
+    const raw = readFileSync(new URL("./fixtures/rate-limit-options/pane-cap-escalation-20260927T030643Z.txt", import.meta.url), "utf8");
+    const classified = classifyBlockingScreen(raw);
+    expect(classified?.kind).not.toBe("permission");
+  });
 });
 
 describe("describeUnknownDialog", () => {

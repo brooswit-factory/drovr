@@ -27,6 +27,45 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  *
  *    Esc to cancel · Tab to amend
  *
+ * A second, newer chrome for the same Bash dialog (FACTORY-372, claude
+ * 2.1.251, real capture attributed to FACTORY-356/FACTORY-359 comment
+ * 26534, pane `w29:p1`, 2026-09-27) draws no `─` rule at all. Its body
+ * block (the command, `│`-prefixed) sits ABOVE the title line instead of
+ * below it, followed by a fixed `This command requires approval` line:
+ *
+ *      │ git commit -m "$(cat <<'EOF'
+ *      │ ...
+ *      │ EOF
+ *      │ )"
+ *      │ git log --oneline -3
+ *    Run shell command
+ *
+ *    This command requires approval
+ *
+ *    Do you want to proceed?
+ *    ❯ 1. Yes
+ *      2. Yes, and don't ask again for: git commit -m ' *
+ *      3. Yes, and switch to auto mode · auto mode handles these prompts for you
+ *      4. No
+ *
+ *    Esc to cancel · Tab to amend · ctrl+e to explain
+ *
+ * Recognised by a narrow fallback keyed on that frame's own two fixed lines
+ * (`This command requires approval`, and the `│`-prefixed body run directly
+ * above the title) — never by widening `SEPARATOR`'s character class or
+ * accepting any long run of box-drawing characters. Real panes interleave
+ * butchr's own notification chatter (including a `▔▔▔▔`/U+2594 rule) in the
+ * same frame, with its position shifting between reads; a fix keyed on
+ * screen position or a wider rule-character class would let that chatter
+ * supply a separator/anchor the screen never earned. Keying on the `This
+ * command requires approval` line and the contiguous `│`-prefixed run
+ * touching the title, and nothing above that run, also keeps `promptId`
+ * stable across differing scrollback — the SEPARATOR line was previously
+ * both the recognition gate AND the body delimiter that `tool`/`request`/
+ * `promptId` derive from, so a fix that merely dropped the gate without a
+ * bounded replacement delimiter would make `promptId` drift with scrollback
+ * (FACTORY-327, FACTORY-356 comment 26576 on FACTORY-359).
+ *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
  * permission rule the session reads at start can change it.
@@ -57,6 +96,14 @@ const QUESTION = /^\s*(Do you want to .+\?)\s*$/;
 const OPTION = /^\s*(❯\s*)?\d+\.\s+(.+?)\s*$/;
 /** A wrapped option's continuation line: indented text with no number of its own. */
 const CONTINUATION = /^\s+\S/;
+/**
+ * The fixed line the newer Bash-dialog chrome draws in place of a `─` rule
+ * (FACTORY-372) — the body delimiter's replacement anchor, not just a
+ * relaxed gate.
+ */
+const BASH_APPROVAL_LINE = /^\s*This command requires approval\s*$/;
+/** A body line's own `│` (U+2502) prefix in that same chrome, stripped before joining into `request`. */
+const BASH_BODY_LINE_PREFIX = /^\s*│\s?/;
 
 /** Claude's tool-permission dialog on a screen, or undefined for anything else. */
 export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefined {
@@ -90,11 +137,50 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   if (!lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line))) return undefined;
   let separator = -1;
   for (let i = q - 1; i >= 0; i--) if (SEPARATOR.test(lines[i]!)) { separator = i; break; }
-  if (separator < 0) return undefined;
-  const body = lines.slice(separator + 1, q).map((line) => line.trim()).filter((line) => line !== "" && !/^Tip:/.test(line));
-  const tool = body[0];
-  if (tool === undefined) return undefined;
-  const request = body.slice(1).join("\n");
+  let tool: string | undefined;
+  let request: string;
+  if (separator >= 0) {
+    const body = lines.slice(separator + 1, q).map((line) => line.trim()).filter((line) => line !== "" && !/^Tip:/.test(line));
+    tool = body[0];
+    if (tool === undefined) return undefined;
+    request = body.slice(1).join("\n");
+  } else {
+    // The newer Bash-dialog chrome draws no `─` rule at all (FACTORY-372):
+    // its own fixed `This command requires approval` line stands in for the
+    // separator, with only blank lines between it and the question — same
+    // "nothing but blank lines in the gap" discipline as the gate above, so
+    // narration that merely mentions this wording further up a transcript
+    // doesn't qualify.
+    let approvalLine = -1;
+    for (let i = q - 1; i >= 0; i--) {
+      if (BASH_APPROVAL_LINE.test(lines[i]!)) { approvalLine = i; break; }
+      if (lines[i]!.trim() !== "") break;
+    }
+    // The title sits directly above the approval line (blank lines only in
+    // between) — below the body block, not above it, unlike the older chrome.
+    let titleLine = -1;
+    if (approvalLine >= 0) {
+      for (let i = approvalLine - 1; i >= 0; i--) {
+        if (lines[i]!.trim() === "") continue;
+        titleLine = i;
+        break;
+      }
+    }
+    if (titleLine < 0) return undefined;
+    tool = lines[titleLine]!.trim();
+    // The body is the contiguous run of `│`-prefixed lines directly above
+    // the title — nothing else. Stopping at the first non-`│` line, rather
+    // than scanning further up, is what keeps `request` (and so `promptId`)
+    // a function of the dialog's own frame and never of whatever scrollback
+    // happens to sit above it.
+    const bodyLines: string[] = [];
+    for (let i = titleLine - 1; i >= 0; i--) {
+      const line = lines[i]!;
+      if (!BASH_BODY_LINE_PREFIX.test(line)) break;
+      bodyLines.unshift(line.replace(BASH_BODY_LINE_PREFIX, "").trim());
+    }
+    request = bodyLines.join("\n");
+  }
   const question = QUESTION.exec(lines[q]!)![1]!;
   const promptId = createHash("sha256").update(JSON.stringify([tool, request, question, options])).digest("hex").slice(0, 16);
   return { tool, request, question, options, cursor, promptId };
