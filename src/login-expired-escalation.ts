@@ -128,9 +128,37 @@ export interface LoginExpiredEscalation {
    episodeId: string;
 }
 
+/**
+ * Why THIS episode resolved — a closed union a host can exhaustively switch
+ * on, never a loose string:
+ * - `"recovered"`: a later genuine (non-error) transcript turn proved the
+ *   credential itself works again. The ONLY reason a host should read as
+ *   "the credential is back" — see `docs/blocking-escalation.md`'s
+ *   host-wide section for why the other two reasons must not be read that
+ *   way.
+ * - `"pane-gone"`: the pane vanished from `agent.list()` entirely (closed).
+ *   There is no pane left to page about, but this says NOTHING about
+ *   whether the credential recovered — panes churn (a daemon respawn, the
+ *   reconciler tearing down and replacing a pane) while the credential can
+ *   still be completely dead.
+ * - `"superseded"`: a NEW failure record replaced this episode on the SAME
+ *   still-live pane before this one ever saw a genuine completion (the
+ *   ordinary shape of a dead credential being retried: consecutive
+ *   `authentication_failed` records with nothing successful between them).
+ *   The credential did NOT recover — a new `onLoginExpired` for the
+ *   replacement episode fires on this same pane immediately after. Without
+ *   this reason a host would have to fall back to guessing "recovered" or
+ *   "pane-gone" for a resolve that is neither, and "recovered" is exactly
+ *   the wrong guess: it is the same false-recovery-signal danger this
+ *   discriminator exists to prevent, just occurring one episode later than
+ *   the shortcut this ticket also removes from the docs.
+ */
+export type LoginExpiredResolvedReason = "recovered" | "pane-gone" | "superseded";
+
 export interface LoginExpiredResolved {
   paneId: string;
   episodeId: string;
+  reason: LoginExpiredResolvedReason;
 }
 
 /**
@@ -203,11 +231,11 @@ export interface LoginExpiredWatcher {
 export function createLoginExpiredWatcher(hook: LoginExpiredEscalationHook, deps: LoginExpiredWatcherDeps = defaultDeps): LoginExpiredWatcher {
   const panes = new Map<string, PaneState>();
 
-  async function resolvePane(paneId: string, state: PaneState, outcomes: LoginExpiredOutcome[]): Promise<void> {
+  async function resolvePane(paneId: string, state: PaneState, outcomes: LoginExpiredOutcome[], reason: LoginExpiredResolvedReason): Promise<void> {
     if (state.escalated === undefined) return;
     const episodeId = state.escalated;
     try {
-      await hook.onLoginExpiredResolved({ paneId, episodeId });
+      await hook.onLoginExpiredResolved({ paneId, episodeId, reason });
       state.escalated = undefined;
       outcomes.push({ paneId, outcome: "resolved", episodeId });
     } catch (error) {
@@ -268,7 +296,7 @@ export function createLoginExpiredWatcher(hook: LoginExpiredEscalationHook, deps
           // Otherwise every retry would leak a permanently-open episode and
           // one dead credential would emit an unbounded "new episode"
           // stream instead of escalated/resolved staying balanced.
-          await resolvePane(paneId, state, outcomes);
+          await resolvePane(paneId, state, outcomes, "superseded");
           const { episodeId, detail } = state.live;
           try {
             await hook.onLoginExpired({
@@ -281,7 +309,7 @@ export function createLoginExpiredWatcher(hook: LoginExpiredEscalationHook, deps
             outcomes.push({ paneId, outcome: "hook-failed", phase: "escalate", detail: message(error) });
           }
         } else if (!state.live) {
-          await resolvePane(paneId, state, outcomes);
+          await resolvePane(paneId, state, outcomes, "recovered");
         }
       }
 
@@ -289,7 +317,7 @@ export function createLoginExpiredWatcher(hook: LoginExpiredEscalationHook, deps
       // episode: resolve it — there is no pane left to page about.
       for (const [paneId, state] of panes) {
         if (!seen.has(paneId)) {
-          await resolvePane(paneId, state, outcomes);
+          await resolvePane(paneId, state, outcomes, "pane-gone");
           panes.delete(paneId);
         }
       }

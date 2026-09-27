@@ -31,9 +31,20 @@ login-expired pane (no dialog, no footer).
 - The escalation payload has no `question`, no `options`, no
   fingerprint-shaped-as-answer-token — there is no `ANSWER` that fixes an
   expired OAuth token, only a human doing a real browser re-login
-  (`startClaudeLogin`). `onLoginExpiredResolved` fires only on a real later
-  successful transcript turn, never merely because the string left the
-  screen (this watcher never looked at the screen to begin with).
+  (`startClaudeLogin`).
+- **`LoginExpiredResolved` carries a `reason: "recovered" | "pane-gone" |
+  "superseded"` discriminator** — a closed union, not a loose string.
+  `onLoginExpiredResolved` fires for three structurally different causes
+  and nothing else in the payload lets a caller tell them apart: a real
+  later successful transcript turn (`"recovered"`), the pane vanishing
+  from `agent.list()` entirely (`"pane-gone"` — pane churn, says nothing
+  about the credential), or a new failure superseding an already-open
+  episode on the same still-live pane (`"superseded"` — the ordinary
+  shape of a dead credential being retried, never a recovery). Only
+  `"recovered"` is safe for a host to read as "the credential is back";
+  see `docs/blocking-escalation.md`'s host-wide blast-radius section,
+  corrected in this same release to remove the "any resolved signals
+  fleet recovery" shortcut it used to (wrongly) offer.
 - See `docs/blocking-escalation.md`'s "The login-expired condition"
   section for the full design, the 41-minute measurement, host-wide
   blast-radius guidance (deliberately per-pane, matching

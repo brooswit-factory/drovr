@@ -255,6 +255,7 @@ export {
   deriveLoginExpiredCondition,
   type LoginExpiredEscalation,
   type LoginExpiredResolved,
+  type LoginExpiredResolvedReason,
   type LoginExpiredEscalationHook,
   type LoginExpiredOutcome,
   type LoginExpiredWatcher,
