@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.16.2
+
+FACTORY-318 (FACTORY-146): closes a fleet-wide silent-stall gap. A `Bash`
+permission dialog for a command Claude Code's own static analyser calls
+`too-complex` (e.g. "Contains brace with quote character (expansion
+obfuscation)", and sibling reasons — lone surrogate, control characters,
+zsh `<N-M>` glob, etc.) has no stored-rule option at all, so `"always"`
+scope never answers it and it used to be silently `reported`, never
+escalated. This release also folds in everything `v0.16.1` shipped
+(Codex lizard mode, `AskUserQuestion` recognition, the bundled approval
+sound), merged into this branch from the `v0.16.1` tag.
+
+- **`createBlockingEscalationWatcher(hook, options)`** — `options` (with a
+  required `permissionScope: PermissionScope`) is now a **required second
+  argument**; there is no default. A recognised `permission` dialog that
+  the caller's own `permissionScope` cannot answer (`optionFor(...) < 0`)
+  now escalates with a fingerprint and `ANSWER` path instead of being
+  silently `reported`. The fingerprint folds in the tool/request text, not
+  just `{question, options}`, so two distinct unanswerable commands don't
+  collapse into one already-escalated episode. **BREAKING CHANGE for
+  callers of `createBlockingEscalationWatcher`** — pass the scope your own
+  answering pass actually uses.
+- The no-stored-rule shape is keyed on dialog SHAPE (a proceed-prompt with
+  no stored-rule option), not on warning text, so any sibling
+  `too-complex` reason is handled the same way. Answerable with option 1
+  (`Yes`) only; no scope ever targets a `/auto mode/i` option (tested).
+- Fixtures are real captures (two `too-complex` reasons: brace-with-quote
+  "expansion obfuscation" and a zsh `<N-M>` glob), not hand-written.
+- Note (established during review, not a code change here): under
+  `scope: "once"` — what butchr's permission-answer loop actually passes
+  — this dialog shape was already answerable before this fix. The
+  escalation-gap fix above only fires for a caller on `scope: "always"`.
+  This release does not by itself prove any specific previously-reported
+  stalled pane is fixed; see FACTORY-146 for that investigation.
+
 ## 0.16.1
 
 FACTORY-128 (FACTORY-106): the combined release. Merges drovr main (which
