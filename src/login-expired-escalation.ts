@@ -260,6 +260,15 @@ export function createLoginExpiredWatcher(hook: LoginExpiredEscalationHook, deps
         }
 
         if (state.live && state.escalated !== state.live.episodeId) {
+          // A DIFFERENT episode was already open on this pane (a dead
+          // credential being retried produces consecutive failure records
+          // with no successful completion between them — the ordinary
+          // shape, not a rarity): resolve it before treating the new one as
+          // live, mirroring createBlockingEscalationWatcher's closeIfOpen.
+          // Otherwise every retry would leak a permanently-open episode and
+          // one dead credential would emit an unbounded "new episode"
+          // stream instead of escalated/resolved staying balanced.
+          await resolvePane(paneId, state, outcomes);
           const { episodeId, detail } = state.live;
           try {
             await hook.onLoginExpired({

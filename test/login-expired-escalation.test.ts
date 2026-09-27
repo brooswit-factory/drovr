@@ -159,6 +159,27 @@ describe("createLoginExpiredWatcher", () => {
     expect(hook.resolutions).toEqual([{ paneId: "w1:p1", episodeId: escalatedId }]);
   });
 
+  test("a superseding distinct episode resolves the prior one before escalating the new one (no permanently-open leak)", async () => {
+    // A dead credential being retried produces exactly this shape:
+    // consecutive authentication_failed records with no successful
+    // completion between them — the ordinary behavior of a session
+    // hammering a dead token, not a rarity.
+    const secondFailure = { ...AUTH_FAILURE_RECORD, uuid: "bbbbbbbb-2222-3333-4444-555555555555", timestamp: "2026-09-27T16:41:10.000Z" };
+    const thirdFailure = { ...AUTH_FAILURE_RECORD, uuid: "cccccccc-3333-4444-5555-666666666666", timestamp: "2026-09-27T16:41:45.000Z" };
+    const hook = recordingHook();
+    const deps = transcriptDeps({ "sess-1": [[AUTH_FAILURE_RECORD], [secondFailure], [thirdFailure]] });
+    const watcher = createLoginExpiredWatcher(hook, deps);
+    await watcher.poll(client([AGENT]));
+    await watcher.poll(client([AGENT]));
+    await watcher.poll(client([AGENT]));
+    expect(hook.escalations.length).toBe(3); // one per distinct episode
+    expect(hook.resolutions.length).toBe(2); // the two superseded episodes, never left permanently open
+    const escalatedIds = (hook.escalations as { episodeId: string }[]).map((e) => e.episodeId);
+    const resolvedIds = (hook.resolutions as { episodeId: string }[]).map((r) => r.episodeId);
+    expect(new Set(escalatedIds).size).toBe(3); // three genuinely distinct episode ids
+    expect(resolvedIds).toEqual([escalatedIds[0]!, escalatedIds[1]!]); // resolved in supersession order, the final one left open
+  });
+
   test("the same open episode is not re-escalated on a later poll with no new evidence", async () => {
     const hook = recordingHook();
     const deps = transcriptDeps({ "sess-1": [[AUTH_FAILURE_RECORD], []] });
