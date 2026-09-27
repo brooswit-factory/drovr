@@ -411,16 +411,23 @@ describe("classifyPermissionPrompt", () => {
     });
 
     // Found while hardening the WebFetch footer relaxation: the inline
-    // `(esc)` hint it accepts is verbatim option text, so a WebFetch dialog
-    // quoted inside ordinary narration (complete with its own separator
-    // line, exactly as this ticket's own diagnosis quotes it) would be
-    // wrongly recognised UNLESS the relaxation also requires the option
-    // list to be the last thing on screen — the one structural difference a
-    // narrated quote almost never has, since narration keeps going
-    // afterward. This is why that check exists (see the comment in
-    // `classifyPermissionPrompt` above `hasInlineEscHint`); this test proves
-    // it, not just documents it.
-    test("synthetic: a WebFetch dialog quoted inside narration, not drawn live, is not recognised", () => {
+    // `(esc)` hint it accepts is verbatim option text, so a bare quoted
+    // option list — a WebFetch dialog's question and options, reproduced in
+    // narration, WITHOUT the framed request body around them — would be
+    // wrongly recognised unless the relaxation is anchored to the dialog's
+    // own body content (`WEBFETCH_BODY_MARKER`, "Claude wants to fetch
+    // content from …") rather than screen position. An earlier version of
+    // this fix anchored to position instead ("the option list is the last
+    // thing on screen") and broke on real trailing chatter — see the
+    // "still recognised with a butchr notification line landing on the pane
+    // AFTER the dialog" test below for that regression.
+    //
+    // A FULL byte-for-byte quote of the dialog, body included, is NOT
+    // something this anchor (or the SEPARATOR-based general path, for any
+    // other shape) can distinguish from a live screen — that limitation is
+    // the same pre-existing baseline every shape already accepts, not a new
+    // hole. What this closes is a bare quote of just the question/options.
+    test("synthetic: a bare quoted WebFetch option list, without the dialog's own body, is not recognised", () => {
       const narrated = [
         "❯ What does the WebFetch dialog look like when it's missing its footer?",
         "",
@@ -428,10 +435,6 @@ describe("classifyPermissionPrompt", () => {
         "",
         "  ──────────────────────────────────────────────────────────────",
         "   Fetch",
-        "",
-        "     url: https://example.com/",
-        "     prompt: What is the page title?",
-        "     Claude wants to fetch content from example.com",
         "",
         "   Do you want to allow Claude to fetch this content?",
         "   ❯ 1. Yes",
@@ -443,7 +446,26 @@ describe("classifyPermissionPrompt", () => {
         "❯",
       ].join("\n");
       expect(narrated).toMatch(/\(esc\)/);
+      expect(narrated).not.toMatch(/Claude wants to fetch content from/);
       expect(classifyPermissionPrompt(narrated)).toBeUndefined();
+    });
+
+    // The regression this shape-anchor exists to avoid (FACTORY-356's
+    // finding against the position-based version of this fix): a live
+    // WebFetch dialog with a real butchr notification line landing on the
+    // pane AFTER it appeared — an ordinary real-fleet event, not
+    // hypothetical (two of the real MCP-tool captures in this PR have
+    // `← butchr: […]` lines below their own dialog too) — must still be
+    // recognised. Position-based anchoring broke this; content-based
+    // anchoring does not, because nothing about the dialog's own body
+    // changed.
+    test("still recognised with a butchr notification line landing on the pane AFTER the dialog", () => {
+      const webfetchFixture = readFileSync(new URL("./fixtures/webfetch-permission/pane-fetch-example-com.txt", import.meta.url), "utf8");
+      const withTrailingChatter = webfetchFixture + "\n← butchr: [butchr] FACTORY-999 was updated — re-read it.\n";
+      const prompt = classifyPermissionPrompt(withTrailingChatter);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Fetch");
+      expect(optionFor(prompt!, "once")).toBe(0);
     });
 
     // FACTORY-356 comment 26459 (relayed): the flip side of the chatter test

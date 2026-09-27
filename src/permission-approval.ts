@@ -39,9 +39,9 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  *   the question — still recognised, from the description frame alone.
  * - WebFetch draws the rule but no `Esc to cancel` footer at all; its escape
  *   hint lives inline in the "No, …" option's own text as `(esc)`, accepted
- *   only when that option list is also the last thing on screen (a quoted
- *   reproduction almost always has more text following it; a live one does
- *   not, which is why it draws no footer in the first place).
+ *   only when the dialog's own body also carries "Claude wants to fetch
+ *   content from …" verbatim — never based on screen position, which broke
+ *   on ordinary trailing chatter landing on a still-live pane.
  *
  * See `docs/permission-approval.md` for the full captured screens.
  *
@@ -89,6 +89,8 @@ const DESCRIPTION_LINE_PREFIX = /^\s*│\s?/;
  * for a footer `Esc to cancel` line, which it never draws at all.
  */
 const INLINE_ESC_OPTION = /^No\b.*\(esc\)\s*$/;
+/** WebFetch's own body always carries this verbatim — the shape anchor for the inline-`(esc)` relaxation, so it can't be spoofed by a quoted option list alone. */
+const WEBFETCH_BODY_MARKER = /Claude wants to fetch content from/;
 
 /** Claude's tool-permission dialog on a screen, or undefined for anything else. */
 export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefined {
@@ -121,18 +123,17 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   if (options.length < 2 || cursor < 0 || options[0] !== "Yes" || !options.some((option) => /^No\b/.test(option))) return undefined;
   const hasFooterLine = lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line));
   // WebFetch draws no `Esc to cancel` footer at all; its escape hint lives
-  // inline in the "No, …" option's own text instead (FACTORY-365/6). Real
-  // captures show the option list is the LAST thing on screen in this shape
-  // — there is no footer precisely because nothing else is drawn after it.
-  // Require that here too: a quoted/narrated reproduction of this dialog
-  // (e.g. this exact ticket's own example text, echoed back mid-conversation)
-  // almost always has more content following the option list, so this
-  // closes a false positive the inline-hint relaxation would otherwise open
-  // on scrollback that merely quotes the option text alongside its own
-  // separator line.
-  const hasInlineEscHint = options.some((option) => INLINE_ESC_OPTION.test(option))
-    && lines.slice(end).every((line) => line.trim() === "");
-  if (!hasFooterLine && !hasInlineEscHint) return undefined;
+  // inline in the "No, …" option's own text instead (FACTORY-365/6). Whether
+  // that inline hint counts is decided below, once `request` is known — it
+  // must be anchored to THIS shape's own body content (`WEBFETCH_BODY_MARKER`),
+  // never to screen position: an earlier version of this fix required the
+  // option list to be the last thing on screen, which broke on the ordinary
+  // case of butchr's own notification chatter landing on a still-live pane
+  // AFTER the dialog appeared (a routine real-fleet event, not hypothetical —
+  // see FACTORY-356's measurement). Position also violates criterion 7
+  // ("never screen position, line number, or distance from anywhere").
+  const hasInlineEscHintOption = options.some((option) => INLINE_ESC_OPTION.test(option));
+  if (!hasFooterLine && !hasInlineEscHintOption) return undefined;
   let separator = -1;
   for (let i = q - 1; i >= 0; i--) if (SEPARATOR.test(lines[i]!)) { separator = i; break; }
   let tool: string | undefined;
@@ -172,6 +173,16 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
       .filter((line) => line !== "" && !MCP_EXPAND_HINT.test(line))
       .join("\n");
   }
+  // The inline-`(esc)` hint alone is just verbatim option text, so a quoted
+  // narration of this dialog — complete with its own separator line and the
+  // same option wording — would otherwise be wrongly recognised (measured:
+  // this exact ticket's own diagnosis quotes the WebFetch shape verbatim).
+  // Anchor to the dialog's own body content instead of screen position:
+  // WebFetch's body always carries "Claude wants to fetch content from
+  // <host>" verbatim, which narration reproducing only the option text (not
+  // the framed request body) won't have. Unlike a position check, this
+  // survives real trailing chatter landing on a still-live pane.
+  if (!hasFooterLine && hasInlineEscHintOption && !WEBFETCH_BODY_MARKER.test(request)) return undefined;
   const question = QUESTION.exec(lines[q]!)![1]!;
   const promptId = createHash("sha256").update(JSON.stringify([tool, request, question, options])).digest("hex").slice(0, 16);
   return { tool, request, question, options, cursor, promptId };

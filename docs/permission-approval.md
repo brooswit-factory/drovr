@@ -179,18 +179,32 @@ exists there either):
 This one HAS the rule; what it lacks is the footer. The escape hint lives
 inline in option 3's own text as `(esc)` instead of a separate `Esc to
 cancel` line. `classifyPermissionPrompt` now also accepts a `No, …` option
-ending in `(esc)` as satisfying the footer requirement — but ONLY when that
-option list is also the last thing on screen (nothing but blank lines
-follow it), matching exactly how the real capture ends: there is no footer
-precisely because the screen stops right there. That second condition is
-load-bearing, not cosmetic: without it, a WebFetch dialog merely quoted
-inside ordinary narration — complete with its own separator line and the
-same `(esc)`-ending option text, exactly as this ticket's own diagnosis
-quotes it — would be wrongly recognised as live, because narration almost
-always has more text following the option list while a genuinely live
-dialog does not. Proven by a regression test in
-`test/permission-approval.test.ts` ("a WebFetch dialog quoted inside
-narration, not drawn live, is not recognised").
+ending in `(esc)` as satisfying the footer requirement — but ONLY when the
+dialog's own body also carries "Claude wants to fetch content from …"
+verbatim. That second condition is load-bearing, not cosmetic: without it,
+a BARE quoted option list — this dialog's question and options reproduced
+in narration, without the framed request body around them — would be
+wrongly recognised as live, since the inline `(esc)` hint alone is just
+verbatim option text.
+
+An earlier version of this fix anchored the second condition to screen
+POSITION instead ("the option list must be the last thing on screen") — that
+broke on an ordinary real-fleet event: a butchr notification line landing
+on a still-live WebFetch pane AFTER the dialog appeared (two of this PR's
+own real MCP-tool captures have exactly this kind of trailing `← butchr:
+[…]` line below their dialog too), and it violated the "never key on screen
+position" rule this fix is supposed to follow for the same reason the
+MCP-tool fallback above does. Anchoring to the dialog's own body content
+instead survives trailing chatter, because nothing about the dialog's body
+changes when something is appended after it. Both properties are covered by
+regression tests in `test/permission-approval.test.ts`: "a bare quoted
+WebFetch option list, without the dialog's own body, is not recognised" and
+"still recognised with a butchr notification line landing on the pane AFTER
+the dialog." A FULL byte-for-byte quote of the dialog, body included, is
+NOT something this anchor (or the SEPARATOR-based general path, for any
+other shape) can distinguish from a live screen — that limitation is the
+same pre-existing baseline every shape already accepts, not a new hole this
+fix opens.
 
 The same footer gap exists in `classifyBlockingScreen`'s `WAITING_FOOTER`
 (`src/blocking-prompts.ts`): before this fix it matched nothing on this
