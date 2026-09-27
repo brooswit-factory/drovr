@@ -468,6 +468,42 @@ describe("classifyPermissionPrompt", () => {
       expect(optionFor(prompt!, "once")).toBe(0);
     });
 
+    // FACTORY-386: the case the test above does NOT cover. That chatter line
+    // starts at column 0 (`←`), which `CONTINUATION` never folds — it already
+    // ends the option loop on its own, which is why that case passed even
+    // before this fix. A REAL trailing chatter line is INDENTED instead (two
+    // spaces, measured on real captures — see the ticket's own diagnosis),
+    // which `CONTINUATION` (built for wrapped options, DROVR-41) folds onto
+    // the last option, pushing "(esc)" away from end-of-string and breaking
+    // the old end-anchored `INLINE_ESC_OPTION`. This is the shape that was
+    // actually broken.
+    test("still recognised with an INDENTED butchr notification line landing on the pane AFTER the dialog", () => {
+      const webfetchFixture = readFileSync(new URL("./fixtures/webfetch-permission/pane-fetch-example-com.txt", import.meta.url), "utf8");
+      const withIndentedTrailingChatter = webfetchFixture + "  ← butchr: [butchr] FACTORY-999 was updated — re-read it.\n";
+      const prompt = classifyPermissionPrompt(withIndentedTrailingChatter);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Fetch");
+      expect(prompt!.options).toEqual([
+        "Yes",
+        "Yes, and don't ask again for example.com",
+        "No, and tell Claude what to do differently (esc) ← butchr: [butchr] FACTORY-999 was updated — re-read it.",
+      ]);
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
+
+    // FACTORY-386: two indented trailing lines, matching the ticket's own
+    // measured table (both real captures, `pane-mcp-tool-new-worker.txt` and
+    // `pane-mcp-tool-tell-worker.txt`, carry exactly this shape).
+    test("still recognised with TWO indented trailing chatter lines", () => {
+      const webfetchFixture = readFileSync(new URL("./fixtures/webfetch-permission/pane-fetch-example-com.txt", import.meta.url), "utf8");
+      const withTwoIndentedLines =
+        webfetchFixture + "  ← butchr: [butchr] FACTORY-999 was updated — re-read it.\n  Opus 5 (1M context) · ✻ AgentCost…\n";
+      const prompt = classifyPermissionPrompt(withTwoIndentedLines);
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Fetch");
+      expect(optionFor(prompt!, "once")).toBe(0);
+    });
+
     // FACTORY-356 comment 26459 (relayed): the flip side of the chatter test
     // above — a screen carrying the SAME notification chatter and `▔▔▔▔`
     // rule but with NO live dialog at all must still classify as undefined.
