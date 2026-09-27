@@ -1,0 +1,1 @@
+{"type":"assistant","error":"authentication_failed","isApiErrorMessage":true,"uuid":"9f6c9e5a-0f1b-4b3e-9c2b-6a5d2a5e7c11","timestamp":"2026-09-27T16:40:35.000Z","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"Login expired · Please run /login"}],"stop_reason":"stop_sequence"}}

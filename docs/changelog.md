@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+FACTORY-373 (FACTORY-360, FACTORY-357): closes the 13-hour silent
+credential-expiry gap — a whole daemon's worth of Claude panes hit Claude
+Code's own OAuth expiry at once and nothing escalated, because
+`classifyBlockingScreen`'s `WAITING_FOOTER` gate structurally cannot see a
+login-expired pane (no dialog, no footer).
+
+- **New: `createLoginExpiredWatcher(hook, deps?)`** (`src/login-expired-escalation.ts`,
+  exported from the package root) — a host-neutral watcher for this
+  condition, deliberately separate from `createBlockingEscalationWatcher`.
+  Its authority is the pane's own Claude transcript plus a RECENCY rule
+  (the auth failure must be the pane's LATEST relevant turn), never screen
+  text: measured on the incident host, the authentic error string sat
+  byte-identical in a healthy pane's scrollback for 41+ minutes after the
+  condition cleared, while the pane was successfully doing real work — no
+  regex over screen text can tell that apart from a live failure. This
+  watcher never reads a pane's screen at all (its client type exposes only
+  `agent.list()`), so it is structurally incapable of reading a stale
+  screen or of sending a key to answer a condition that has no answer.
+- `escalation.episodeId` is a content hash of the failing transcript
+  record's own `uuid` (falling back to `timestamp`) — never anything
+  screen- or scrollback-derived. FACTORY-146/FACTORY-356 measured that
+  drovr's existing `promptId` becomes a function of scrollback once its
+  gate is relaxed without replacing its delimiter (the same dialog
+  produced 4 different ids as 0/3/9/20 chatter lines were prepended); this
+  watcher's stability across the same N = 0/3/9/20 test is asserted in
+  `test/login-expired-escalation.test.ts`.
+- The escalation payload has no `question`, no `options`, no
+  fingerprint-shaped-as-answer-token — there is no `ANSWER` that fixes an
+  expired OAuth token, only a human doing a real browser re-login
+  (`startClaudeLogin`). `onLoginExpiredResolved` fires only on a real later
+  successful transcript turn, never merely because the string left the
+  screen (this watcher never looked at the screen to begin with).
+- See `docs/blocking-escalation.md`'s "The login-expired condition"
+  section for the full design, the 41-minute measurement, host-wide
+  blast-radius guidance (deliberately per-pane, matching
+  `createBlockingEscalationWatcher`'s own shape — a host composes its own
+  host-wide dedup the same way it already tracks any other episode state),
+  and why this is a different mechanism from the *launch-time*
+  `login-expired` `BlockingCondition` in `docs/background-launch.md`.
+- No existing behaviour changed: `classifyBlockingScreen`,
+  `scanBlockingPrompts`, `createBlockingEscalationWatcher`, and the
+  `unknown`/`permission`/`startup` classifications are untouched by this
+  release — full existing suite still passes.
+
 ## 0.16.2
 
 FACTORY-318 (FACTORY-146): closes a fleet-wide silent-stall gap. A `Bash`
