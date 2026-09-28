@@ -80,9 +80,11 @@ export interface BlockingPrompt {
 /**
  * The footers Claude draws under a dialog that waits for an answer. A menu is
  * only counted when its footer is on screen, so a transcript that merely
- * quotes a prompt's text is never reported.
+ * quotes a prompt's text is never reported. Includes WebFetch's stand-in for
+ * a footer (FACTORY-365/6): it draws no `Esc to cancel` line at all, only an
+ * inline `(esc)` hint on its "No, …" option.
  */
-const WAITING_FOOTER = /(Enter to confirm|Enter to continue|Enter to select|Esc to cancel)/;
+const WAITING_FOOTER = /(Enter to confirm|Enter to continue|Enter to select|Esc to cancel|No\b[^\n]*\(esc\))/;
 
 const excerptOf = (screen: string): string => screen.trim().split("\n").slice(-16).join("\n");
 
