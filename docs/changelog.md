@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.3
 
 FACTORY-373 (FACTORY-360, FACTORY-357): closes the 13-hour silent
 credential-expiry gap — a whole daemon's worth of Claude panes hit Claude
