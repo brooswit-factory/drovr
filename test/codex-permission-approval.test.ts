@@ -117,6 +117,30 @@ describe("classifyCodexApprovalScreen", () => {
     const result = classifyCodexApprovalScreen("Something unexpected\n\n  Press enter to confirm or esc to cancel");
     expect(result).toMatchObject({ kind: "unrecognised" });
   });
+
+  // Sighting counts per fingerprint (FACTORY-388) need a fingerprint stable
+  // across polls of the SAME unrecognised dialog even while its cursor
+  // moves — otherwise every poll would mint a "new" fingerprint and a host
+  // could never count sightings of one shape.
+  test("an unrecognised dialog's fingerprint names its shape, not where the cursor sits", async () => {
+    const raw = await fixture("pane-mcp-tool.txt");
+    const badMcp = raw.replace("    4. Cancel                  Cancel this tool call\n", "");
+    const moved = badMcp
+      .replace("  › 1. Allow", "    1. Allow")
+      .replace("    2. Allow for this session", "  › 2. Allow for this session");
+    const a = classifyCodexApprovalScreen(badMcp) as { kind: "unrecognised"; fingerprint: string };
+    const b = classifyCodexApprovalScreen(moved) as { kind: "unrecognised"; fingerprint: string };
+    expect(a.kind).toBe("unrecognised");
+    expect(a.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+    expect(b.fingerprint).toBe(a.fingerprint);
+  });
+
+  test("two differently-shaped unrecognised dialogs fingerprint distinctly", async () => {
+    const badMcp = (await fixture("pane-mcp-tool.txt")).replace("    4. Cancel                  Cancel this tool call\n", "");
+    const bareFooter = classifyCodexApprovalScreen("Something unexpected\n\n  Press enter to confirm or esc to cancel") as { fingerprint: string };
+    const badMcpResult = classifyCodexApprovalScreen(badMcp) as { fingerprint: string };
+    expect(bareFooter.fingerprint).not.toBe(badMcpResult.fingerprint);
+  });
 });
 
 describe("onceOptionIndex", () => {
@@ -310,11 +334,11 @@ describe("autoAnswerCodexApprovals", () => {
     const path = await freshAuditPath();
     const { client, keysSent } = codexClient({ "w1:p1": { reads: [badMcp] } });
     const results = await autoAnswerCodexApprovals(client, { auditPath: path });
-    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "unrecognised" }]);
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "unrecognised", fingerprint: expect.stringMatching(/^[0-9a-f]{16}$/) }]);
     expect(keysSent["w1:p1"]).toBeUndefined();
     const audit = await readAudit(path);
     expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ outcome: "unrecognised", vendor: "codex", operator: "drovr-auto" });
+    expect(audit[0]).toMatchObject({ outcome: "unrecognised", vendor: "codex", operator: "drovr-auto", fingerprint: expect.stringMatching(/^[0-9a-f]{16}$/) });
   });
 
   // `classifyCodexApprovalScreen` itself requires the plain approve-once

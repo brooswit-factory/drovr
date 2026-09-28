@@ -103,6 +103,15 @@ export interface CodexPermissionPrompt {
 export interface UnrecognisedCodexPrompt {
   kind: "unrecognised";
   excerpt: string;
+  /**
+   * A hash of the excerpt with cursor glyphs stripped: names this SHAPE of
+   * unrecognised dialog, not the individual sighting, so a host can count
+   * sightings per fingerprint the same way `blocking-escalation.ts`'s
+   * `fingerprint` does for Claude's `unknown` dialogs (FACTORY-388) — stable
+   * across polls of the same dialog even while the cursor moves between its
+   * options.
+   */
+  fingerprint: string;
 }
 
 export type CodexApprovalScreen = CodexPermissionPrompt | UnrecognisedCodexPrompt;
@@ -150,6 +159,21 @@ const excerptOf = (screen: string): string => screen.trim().split("\n").slice(-1
 const flatten = (lines: readonly string[]): string => lines.join(" ").replace(/\s+/g, " ").trim();
 const hashOf = (parts: unknown): string => createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
 
+/**
+ * A cursor glyph (`›`, `❯`), replaced with a space rather than stripped —
+ * Codex pads a non-cursor option line with a leading space in the glyph's
+ * place (see `pane-mcp-tool.txt`), so an in-place swap is what keeps
+ * `fingerprintOf` identical when the cursor moves to a DIFFERENT option, not
+ * just when it sits still: stripping the glyph entirely would leave the
+ * cursor's own line shorter than every other option line, changing the hash.
+ */
+const CURSOR_GLYPH = /[›❯]/g;
+const fingerprintOf = (excerpt: string): string => hashOf(excerpt.replace(CURSOR_GLYPH, " "));
+function unrecognisedOf(text: string): UnrecognisedCodexPrompt {
+  const excerpt = excerptOf(text);
+  return { kind: "unrecognised", excerpt, fingerprint: fingerprintOf(excerpt) };
+}
+
 /** The short option label before its padded inline description, e.g. `"Allow for this session  Run the tool…"` -> `"Allow for this session"`. Codex's MCP-tool dialog is the only shape that pads a description onto the option line. */
 function mcpLabel(option: string): string {
   return option.split(/ {2,}/)[0]!.trim();
@@ -166,7 +190,7 @@ export function classifyCodexApprovalScreen(raw: string): CodexApprovalScreen | 
     const scan = optionsStart >= 0 ? scanOptions(lines, optionsStart, FOOTER_RUN) : undefined;
     const footerNearby = scan && lines.slice(scan.end, scan.end + 3).some((line) => FOOTER_RUN.test(line));
     if (!scan || !footerNearby || !/^Yes, proceed\b/.test(scan.options[0]!) || !scan.options.some((option) => /^No\b/.test(option))) {
-      return { kind: "unrecognised", excerpt: excerptOf(text) };
+      return unrecognisedOf(text);
     }
     const between = flatten(lines.slice(commandQ + 1, optionsStart));
     const reason = /Reason:\s*(.+?)(?:\s*\$\s|$)/.exec(between)?.[1]?.trim();
@@ -181,7 +205,7 @@ export function classifyCodexApprovalScreen(raw: string): CodexApprovalScreen | 
     const scan = optionsStart >= 0 ? scanOptions(lines, optionsStart, FOOTER_RUN) : undefined;
     const footerNearby = scan && lines.slice(scan.end, scan.end + 3).some((line) => FOOTER_RUN.test(line));
     if (!scan || !footerNearby || !/^Yes, proceed\b/.test(scan.options[0]!) || !scan.options.some((option) => /^No\b/.test(option))) {
-      return { kind: "unrecognised", excerpt: excerptOf(text) };
+      return unrecognisedOf(text);
     }
     // The diff summary is Codex's own tool-call cell ("• Added/Updated/Deleted
     // …"), not the whole preceding user turn — walk back from the question to
@@ -201,13 +225,13 @@ export function classifyCodexApprovalScreen(raw: string): CodexApprovalScreen | 
     const scan = optionsStart >= 0 ? scanOptions(lines, optionsStart, FOOTER_MCP) : undefined;
     const footerNearby = scan && lines.slice(scan.end, scan.end + 2).some((line) => FOOTER_MCP.test(line));
     if (!scan || !footerNearby || mcpLabel(scan.options[0]!) !== "Allow" || !scan.options.some((option) => mcpLabel(option) === "Cancel")) {
-      return { kind: "unrecognised", excerpt: excerptOf(text) };
+      return unrecognisedOf(text);
     }
     const detail = `${match[1]!.trim()}.${match[2]!.trim()}`;
     return { kind: "mcp-tool", detail, options: scan.options, cursor: scan.cursor, promptId: hashOf(["mcp-tool", detail, scan.options]) };
   }
 
-  return APPROVAL_TRIPWIRE.test(text) ? { kind: "unrecognised", excerpt: excerptOf(text) } : undefined;
+  return APPROVAL_TRIPWIRE.test(text) ? unrecognisedOf(text) : undefined;
 }
 
 /** The option index that approves once and nothing more — never a stored-rule, session, or "always" option. -1 when the dialog has none, which the caller must treat as unanswerable, not as "press option 1 anyway". */
@@ -335,7 +359,11 @@ export async function approveCodexApproval(
   const refuse = async (reason: ApproveCodexApprovalRefusalReason, detail: string, screen?: CodexApprovalScreen): Promise<ApproveCodexApprovalResult> => {
     await deps.appendAudit(request.auditPath, record({
       outcome: reason, detail,
-      ...(screen ? { kind: screen.kind, screenDetail: screen.kind === "unrecognised" ? screen.excerpt.slice(0, AUDIT_DETAIL_CHARS) : screen.detail.slice(0, AUDIT_DETAIL_CHARS) } : {}),
+      ...(screen ? {
+        kind: screen.kind,
+        screenDetail: screen.kind === "unrecognised" ? screen.excerpt.slice(0, AUDIT_DETAIL_CHARS) : screen.detail.slice(0, AUDIT_DETAIL_CHARS),
+        ...(screen.kind === "unrecognised" ? { fingerprint: screen.fingerprint } : {}),
+      } : {}),
     })).catch(() => undefined);
     return { ok: false, attemptId, reason, detail };
   };
@@ -404,8 +432,8 @@ interface AutoAnswerBase {
 export type AutoAnswerCodexApprovalResult =
   | (AutoAnswerBase & { outcome: "answered"; kind: CodexPermissionKind; detail: string })
   | (AutoAnswerBase & { outcome: "skipped"; reason: string })
-  /** Logged to the audit trail (outcome `"unrecognised"`), never answered — a human must look at this pane. */
-  | (AutoAnswerBase & { outcome: "unrecognised"; excerpt: string })
+  /** Logged to the audit trail (outcome `"unrecognised"`), never answered — a human must look at this pane. `fingerprint` names the dialog's shape, for sighting counts (FACTORY-388). */
+  | (AutoAnswerBase & { outcome: "unrecognised"; excerpt: string; fingerprint: string })
   | (AutoAnswerBase & { outcome: "failed"; reason: string; detail: string });
 
 const DEFAULT_AUTO_OPERATOR = "drovr-auto";
@@ -441,10 +469,11 @@ export async function autoAnswerCodexApprovals(
       sessionId: pane.sessionId,
       scope: "once",
       outcome: "unrecognised",
+      fingerprint: pane.fingerprint,
       detail: pane.excerpt.slice(0, AUDIT_DETAIL_CHARS),
     }) + "\n";
     await deps.appendAudit(options.auditPath, line).catch(() => undefined);
-    return { paneId: pane.paneId, label: pane.label, outcome: "unrecognised", excerpt: pane.excerpt };
+    return { paneId: pane.paneId, label: pane.label, outcome: "unrecognised", excerpt: pane.excerpt, fingerprint: pane.fingerprint };
   });
 
   const pending = scan.pending.map(async (approval): Promise<AutoAnswerCodexApprovalResult> => {
