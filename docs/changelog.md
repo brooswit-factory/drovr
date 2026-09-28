@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.16.4
+
+FACTORY-388: fingerprint unrecognised Codex approval dialogs for sighting
+counts. Codex's unrecognised-dialog reporting (`autoAnswerCodexApprovals`,
+`scanPendingCodexApprovals`) logged each sighting with only a free-text
+excerpt, giving a host nothing stable to group repeated sightings of the
+same dialog shape by.
+
+- **`UnrecognisedCodexPrompt` gains `fingerprint`**: a hash of the excerpt
+  with cursor glyphs (`›`, `❯`) normalised to a space rather than stripped,
+  so the hash stays stable both while the cursor sits still and while it
+  moves to a different option line. Present everywhere an unrecognised
+  Codex screen is reported — `classifyCodexApprovalScreen`'s
+  `unrecognised` result, `approveCodexApproval`'s refusal audit record,
+  and `autoAnswerCodexApprovalResult`'s `"unrecognised"` outcome — so a
+  host can build the same sighting-count-per-fingerprint monitoring
+  already used for Claude's `unknown` dialogs (`blocking-escalation.ts`),
+  scoped to Codex. Not a new Codex dialog recognizer, and no new detection
+  surface beyond what FACTORY-107 already measured live.
+
 ## 0.16.3
 
 FACTORY-373 (FACTORY-360, FACTORY-357): closes the 13-hour silent
