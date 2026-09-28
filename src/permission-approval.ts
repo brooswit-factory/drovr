@@ -76,6 +76,20 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  * gate without a bounded replacement delimiter would make `promptId` drift
  * with scrollback (FACTORY-327, FACTORY-356 comment 26576 on FACTORY-359).
  *
+ * That title-below-the-body-run anchor is TOO PERMISSIVE on its own
+ * (FACTORY-392): a generic MCP-tool dialog's own description block is ALSO
+ * a contiguous `│`-prefixed run, with `(ctrl+o to expand description)`
+ * sitting directly below it — so, unguarded, this Bash arm read that hint
+ * line itself as `tool`, corrupting `promptId` (and the audited `tool`) for
+ * every MCP-tool dialog fleet-wide, the moment before this fix. Main has no
+ * MCP arm of its own yet (FACTORY-365, unmerged), so the fix here is a
+ * narrow negative condition: a candidate title line that IS that hint line
+ * is not a title at all, and the whole screen is reported as not a Bash
+ * prompt (`undefined`), not a false-positive one. This guard reuses the
+ * exact `MCP_EXPAND_HINT` pattern FACTORY-365 anchors its own MCP arm on, so
+ * the two arms' eventual merge-order agreement (FACTORY-365's job, not this
+ * fix's) has one shape-anchor to agree on, not two that could drift apart.
+ *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
  * permission rule the session reads at start can change it.
@@ -108,6 +122,15 @@ const OPTION = /^\s*(❯\s*)?\d+\.\s+(.+?)\s*$/;
 const CONTINUATION = /^\s+\S/;
 /** A body line's own `│` (U+2502) prefix in that same chrome, stripped before joining into `request`. */
 const BASH_BODY_LINE_PREFIX = /^\s*│\s?/;
+/**
+ * The line a generic MCP-tool dialog's own frame always sits directly below
+ * its `│`-prefixed description block (FACTORY-365/6's own anchor for that
+ * shape). This Bash arm has no MCP arm of its own — main has not merged one
+ * yet — so it must never mistake that line for a Bash title (FACTORY-392):
+ * without this guard, `(ctrl+o to expand description)` itself was read as
+ * `tool`, corrupting `promptId` for every MCP-tool dialog fleet-wide.
+ */
+const MCP_EXPAND_HINT = /^\s*\(ctrl\+o to expand description\)\s*$/;
 /**
  * How many non-blank lines are tolerated between the title line and the
  * question in the newer no-separator chrome (FACTORY-385). That gap holds
@@ -178,7 +201,16 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
     for (let i = q - 1; i >= 0; i--) {
       const line = lines[i]!;
       if (line.trim() === "") continue;
-      if (i > 0 && BASH_BODY_LINE_PREFIX.test(lines[i - 1]!)) { titleLine = i; break; }
+      if (i > 0 && BASH_BODY_LINE_PREFIX.test(lines[i - 1]!)) {
+        // A generic MCP-tool dialog's description block is ALSO a contiguous
+        // `│`-prefixed run, with this exact hint line sitting directly below
+        // it instead of a Bash title (FACTORY-392) — main has no MCP arm to
+        // hand this shape to yet, so it must read as "not a Bash prompt",
+        // never as a false-positive title, until one lands (FACTORY-365).
+        if (MCP_EXPAND_HINT.test(line)) return undefined;
+        titleLine = i;
+        break;
+      }
       if (++gapNonBlankLines > MAX_TITLE_GAP_LINES) break;
     }
     if (titleLine < 0) return undefined;

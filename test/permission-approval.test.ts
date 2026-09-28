@@ -8,6 +8,7 @@ import { approvePermission, autoAnswerPermissions, classifyPermissionPrompt, lis
 const tooComplexFixture = (name: string) => readFileSync(new URL(`./fixtures/too-complex-permission/${name}`, import.meta.url), "utf8");
 const bashAutoModeFixture = (name: string) => readFileSync(new URL(`./fixtures/bash-auto-mode-permission/${name}`, import.meta.url), "utf8");
 const rateLimitFixture = (name: string) => readFileSync(new URL(`./fixtures/rate-limit-options/${name}`, import.meta.url), "utf8");
+const genericMcpToolFixture = (name: string) => readFileSync(new URL(`./fixtures/generic-mcp-tool-permission/${name}`, import.meta.url), "utf8");
 
 // Measured on claude 2.1.277 in a herdr pane, 2026-09-18.
 const BASH_PROMPT = [
@@ -355,6 +356,50 @@ describe("classifyPermissionPrompt", () => {
       expect(prompt!.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
       expect(optionFor(prompt!, "once")).toBe(0);
       expect(optionFor(prompt!, "always")).toBe(-1);
+    });
+  });
+
+  // FACTORY-392: the newer no-separator Bash arm's title anchor (the first
+  // non-blank line directly below a contiguous `│`-prefixed run) is ALSO
+  // exactly where a generic MCP-tool dialog's own frame puts
+  // `(ctrl+o to expand description)`, right below its `│`-prefixed
+  // description block. Before this fix, this Bash arm misread that hint
+  // line as `tool` — a wrong `tool` on every MCP-tool dialog fleet-wide,
+  // since `promptId = sha256([tool, request, question, options])`. Main has
+  // no MCP arm of its own yet (FACTORY-365, unmerged), so the fix is a
+  // narrow negative condition: this shape must classify as `undefined`
+  // (not a Bash prompt), not a Bash-shaped false positive.
+  describe("a generic MCP-tool dialog must not be misread as this Bash arm's title (FACTORY-392)", () => {
+    // Real capture, attributed to FACTORY-365/6 (fingerprint family this
+    // ticket names: bc2bdb0ac67037a1 / a5901e30415b417e's sibling shapes) —
+    // a "Tell Worker" MCP-tool dialog whose description block is long
+    // enough to scroll the frame's own header off a real pane's visible
+    // screen, leaving only the `│`-prefixed description and the
+    // `(ctrl+o to expand description)` hint above the question.
+    const TELL_WORKER = "pane-tell-worker-cropped.txt";
+
+    test("classifies as undefined, never as a Bash prompt with tool '(ctrl+o to expand description)'", () => {
+      const raw = genericMcpToolFixture(TELL_WORKER);
+      expect(raw).toContain("(ctrl+o to expand description)");
+      expect(classifyPermissionPrompt(raw)).toBeUndefined();
+    });
+
+    // The regression this fixture pins directly: without the guard, the
+    // no-separator arm's title scan found this hint line immediately below
+    // a `│`-prefixed line (the description's last row) and took it as `tool`.
+    test("synthetic: the hint line sitting directly below a │-run is never taken as a title, even outside the real MCP frame", () => {
+      const screen = [
+        "   │ some MCP tool's description, wrapped across lines",
+        "   │ more description",
+        " (ctrl+o to expand description)",
+        "",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        "   2. No",
+        "",
+        " Esc to cancel · Tab to amend",
+      ].join("\n");
+      expect(classifyPermissionPrompt(screen)).toBeUndefined();
     });
   });
 
