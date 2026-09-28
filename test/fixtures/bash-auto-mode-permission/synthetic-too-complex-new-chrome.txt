@@ -1,0 +1,11 @@
+   │ echo {'a','b'}
+   Run shell command
+
+ Contains brace with quote character (expansion obfuscation)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and switch to auto mode · auto mode handles these prompts for you
+   3. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain

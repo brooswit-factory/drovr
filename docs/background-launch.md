@@ -70,6 +70,17 @@ Drovr never stops the daemon for a caller. `claude daemon stop --any
 --keep-workers` was measured NOT to preserve sessions through the next
 takeover (adopt reported `dead=7`), so the remedy stays an operator's decision.
 
+**`login-expired` in the table above is a LAUNCH-time check only** —
+`classifyBlockingText`/`classifyClaudeTranscriptRecord` reading a launch's
+own settle-window output before a session is even handed back. It says
+nothing about a session that started fine and later hits Claude's OWN OAuth
+expiry mid-conversation, potentially hours in: that is a *pane-scan*
+problem, not a launch problem, and it needs its own detector for a reason
+specific to this condition — see `docs/blocking-escalation.md`'s "The
+login-expired condition" section for why a screen-text check (the same kind
+this table's row uses) is provably wrong for that case, and what
+`createLoginExpiredWatcher` does instead.
+
 ## Headless re-authentication
 
 ```ts

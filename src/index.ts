@@ -261,6 +261,17 @@ export {
   type PaneReadOutcome,
 } from "./pane-scan.js";
 export {
+  createLoginExpiredWatcher,
+  deriveLoginExpiredCondition,
+  type LoginExpiredEscalation,
+  type LoginExpiredResolved,
+  type LoginExpiredResolvedReason,
+  type LoginExpiredEscalationHook,
+  type LoginExpiredOutcome,
+  type LoginExpiredWatcher,
+  type LoginExpiredWatcherDeps,
+} from "./login-expired-escalation.js";
+export {
   InboxRelay,
   connectChannelSource,
   keepChannelSource,
