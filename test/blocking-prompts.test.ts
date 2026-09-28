@@ -154,6 +154,51 @@ describe("classifyBlockingScreen", () => {
     }
   });
 
+  // FACTORY-365/6: before this fix, the MCP-tool shape read as "unknown"
+  // (WAITING_FOOTER matched its own "Esc to cancel" line, but
+  // classifyPermissionPrompt failed on the missing rule) and the WebFetch
+  // shape read as undefined outright (WAITING_FOOTER matched nothing at
+  // all, since its escape hint is inline rather than a footer line) — a
+  // WebFetch-blocked pane was invisible to this scan as well as to
+  // classifyPermissionPrompt. Both must now be "permission", with the full
+  // prompt attached, same as Web Search already is.
+  test("the generic MCP-tool, WebFetch and Web Search dialogs are all 'permission', not 'unknown' or undefined (FACTORY-365/6)", () => {
+    const cases = [
+      { file: "generic-mcp-tool-permission/pane-tell-worker-cropped.txt", tool: "butchr — Tell Worker Tool" },
+      { file: "webfetch-permission/pane-fetch-example-com.txt", tool: "Fetch" },
+      { file: "websearch-permission/pane-web-search-example-domain-rfc.txt", tool: "Tool use" },
+    ];
+    for (const { file, tool } of cases) {
+      const raw = readFileSync(new URL(`./fixtures/${file}`, import.meta.url), "utf8");
+      const classified = classifyBlockingScreen(raw);
+      expect(classified?.kind).toBe("permission");
+      expect(classified?.name).toBe(tool);
+      expect(classified?.permission?.options[0]).toBe("Yes");
+    }
+  });
+
+  test("a WebFetch-blocked pane classified as undefined before this fix", () => {
+    // Documents the regression this closes: before WAITING_FOOTER learned
+    // the inline (esc) hint, this screen matched no footer at all, so
+    // classifyBlockingScreen returned undefined rather than even "unknown" —
+    // invisible to the escalation scan, not merely unanswered.
+    const raw = readFileSync(new URL("./fixtures/webfetch-permission/pane-fetch-example-com.txt", import.meta.url), "utf8");
+    expect(raw).not.toMatch(/Esc to cancel/);
+    expect(classifyBlockingScreen(raw)?.kind).toBe("permission");
+  });
+
+  test("a real already-answered MCP-tool screen is still not reported waiting on anything (FACTORY-365/6)", () => {
+    const raw = readFileSync(new URL("./fixtures/quoted-permission/pane-mcp-tool-already-answered.txt", import.meta.url), "utf8");
+    expect(classifyBlockingScreen(raw)).toBeUndefined();
+  });
+
+  test("a real dialog survives interleaved butchr notification chatter and a ▔▔▔▔ rule, but chatter alone is not reported (FACTORY-356/365/6)", () => {
+    const withDialog = readFileSync(new URL("./fixtures/generic-mcp-tool-permission/synthetic-tell-worker-with-notification-chatter.txt", import.meta.url), "utf8");
+    expect(classifyBlockingScreen(withDialog)?.kind).toBe("permission");
+    const chatterOnly = readFileSync(new URL("./fixtures/quoted-permission/synthetic-notification-chatter-no-dialog.txt", import.meta.url), "utf8");
+    expect(classifyBlockingScreen(chatterOnly)).toBeUndefined();
+  });
+
   // FACTORY-372: FACTORY-356 measured this exact real capture reading as
   // `classifyBlockingScreen` -> "unknown" against drovr c6da5fc (this is the
   // `[managed-escalation] blocked on an unrecognized dialog` journal line's

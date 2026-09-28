@@ -27,12 +27,30 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  *
  *    Esc to cancel · Tab to amend
  *
- * A second, newer chrome for the same Bash dialog (FACTORY-372, claude
- * 2.1.251, real capture attributed to FACTORY-356/FACTORY-359 comment
- * 26534, pane `w29:p1`, 2026-09-27) draws no `─` rule at all. Its body
- * block (the command, `│`-prefixed) sits ABOVE the title line instead of
- * below it, followed by a reason line — `This command requires approval`
- * on this capture:
+ * Three more measured shapes, each missing one of the preconditions above
+ * and each recognised by a narrow, shape-specific fallback rather than by
+ * loosening the general rule — the no-separator ones are tried as siblings
+ * in the same fallback arm, never as a shared implementation:
+ *
+ * - A generic MCP-tool dialog (FACTORY-365/6, claude 2.1.251) draws no `─`
+ *   rule anywhere on screen, framing its body instead with `About the
+ *   <server> — <Tool> Tool:` and `(ctrl+o to expand description)`. A tool
+ *   call whose displayed parameters are long enough scrolls that frame's
+ *   header line off a real pane's *visible* screen too, leaving only the
+ *   description onward above the question — still recognised, from the
+ *   description frame alone.
+ * - WebFetch (FACTORY-365/6) draws the rule but no `Esc to cancel` footer at
+ *   all; its escape hint lives inline in the "No, …" option's own text as
+ *   `(esc)`, accepted only when the dialog's own body also carries "Claude
+ *   wants to fetch content from …" verbatim — never based on screen
+ *   position, which broke on ordinary trailing chatter landing on a
+ *   still-live pane.
+ * - A second, newer chrome for the same Bash dialog (FACTORY-372, claude
+ *   2.1.251, real capture attributed to FACTORY-356/FACTORY-359 comment
+ *   26534, pane `w29:p1`, 2026-09-27) also draws no `─` rule at all. Its
+ *   body block (the command, `│`-prefixed) sits ABOVE the title line
+ *   instead of below it, followed by a reason line — `This command requires
+ *   approval` on this capture:
  *
  *      │ git commit -m "$(cat <<'EOF'
  *      │ ...
@@ -51,30 +69,33 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  *
  *    Esc to cancel · Tab to amend · ctrl+e to explain
  *
- * FACTORY-146 (comment 26827 on FACTORY-359) grepped the installed binary
- * directly and found that `This command requires approval` and a
- * `too-complex` command's security-warning text (e.g. `Contains brace with
- * quote character (expansion obfuscation)`) are both `reason` strings
- * rendered in that SAME slot, as alternatives, never together — so a
- * too-complex command in this chrome carries a warning line there instead,
- * and the family of possible reason strings is open-ended (confirmed
- * adjacent in the binary's own string table). Recognition is therefore keyed
- * on the two lines that are actually invariant regardless of which reason
- * (or none) occupies that slot: the contiguous `│`-prefixed body run, and
- * the title line directly below it — never on any reason line's text.
- * Whatever sits between the title and the question is bounded to a small
- * fixed number of non-blank lines (`MAX_TITLE_GAP_LINES`) and otherwise
- * ignored, rather than required to match specific wording. Real panes
- * interleave butchr's own notification chatter (including a `▔▔▔▔`/U+2594
- * rule) in the same frame, with its position shifting between reads; a fix
- * keyed on screen position or a wider rule-character class would let that
- * chatter supply a separator/anchor the screen never earned. Anchoring on
- * the `│`-prefixed run touching the title, and nothing above that run, also
+ *   FACTORY-146 (comment 26827 on FACTORY-359) grepped the installed binary
+ *   directly and found that `This command requires approval` and a
+ *   `too-complex` command's security-warning text (e.g. `Contains brace with
+ *   quote character (expansion obfuscation)`) are both `reason` strings
+ *   rendered in that SAME slot, as alternatives, never together — so a
+ *   too-complex command in this chrome carries a warning line there instead,
+ *   and the family of possible reason strings is open-ended (confirmed
+ *   adjacent in the binary's own string table). Recognition is therefore
+ *   keyed on the two lines that are actually invariant regardless of which
+ *   reason (or none) occupies that slot: the contiguous `│`-prefixed body
+ *   run, and the title line directly below it — never on any reason line's
+ *   text. Whatever sits between the title and the question is bounded to a
+ *   small fixed number of non-blank lines (`MAX_TITLE_GAP_LINES`) and
+ *   otherwise ignored, rather than required to match specific wording.
+ *
+ * Real panes interleave butchr's own notification chatter (including a
+ * `▔▔▔▔`/U+2594 rule) in the same frame, with its position shifting between
+ * reads; a fix keyed on screen position or a wider rule-character class
+ * would let that chatter supply a separator/anchor the screen never earned.
+ * Each fallback above anchors on the dialog's own frame instead, which also
  * keeps `promptId` stable across differing scrollback — the SEPARATOR line
  * was previously both the recognition gate AND the body delimiter that
  * `tool`/`request`/`promptId` derive from, so a fix that merely dropped the
  * gate without a bounded replacement delimiter would make `promptId` drift
  * with scrollback (FACTORY-327, FACTORY-356 comment 26576 on FACTORY-359).
+ *
+ * See `docs/permission-approval.md` for the full captured screens.
  *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
@@ -106,12 +127,35 @@ const QUESTION = /^\s*(Do you want to .+\?)\s*$/;
 const OPTION = /^\s*(❯\s*)?\d+\.\s+(.+?)\s*$/;
 /** A wrapped option's continuation line: indented text with no number of its own. */
 const CONTINUATION = /^\s+\S/;
-/** A body line's own `│` (U+2502) prefix in that same chrome, stripped before joining into `request`. */
+/**
+ * A generic MCP-tool dialog's own header, e.g. `About the butchr — Tell
+ * Worker Tool:` — the body delimiter it draws instead of a `─` rule.
+ */
+const MCP_ABOUT = /^\s*About the (.+):\s*$/;
+/** The line the MCP-tool frame always ends its description on, right before the blank line and the question. */
+const MCP_EXPAND_HINT = /^\s*\(ctrl\+o to expand description\)\s*$/;
+/** A description line's own `│` (U+2502) prefix, stripped before joining into `request`. Identical to `BASH_BODY_LINE_PREFIX` below — kept as two names since each fallback owns its own capture/vocabulary, not because the pattern differs. */
+const DESCRIPTION_LINE_PREFIX = /^\s*│\s?/;
+/**
+ * A `No, …` option carrying its own inline `(esc)` hint — WebFetch's stand-in
+ * for a footer `Esc to cancel` line, which it never draws at all.
+ *
+ * Not anchored to end-of-string (FACTORY-386): an indented trailing line
+ * after the option list (e.g. butchr's own notification chatter landing on
+ * a still-live pane) folds onto this option via `CONTINUATION`, pushing
+ * `(esc)` away from the end. The end-anchor used to carry anti-spoof
+ * weight, but `WEBFETCH_BODY_MARKER` carries that instead — see its check
+ * below.
+ */
+const INLINE_ESC_OPTION = /^No\b.*\(esc\)/;
+/** WebFetch's own body always carries this verbatim — the shape anchor for the inline-`(esc)` relaxation, so it can't be spoofed by a quoted option list alone. */
+const WEBFETCH_BODY_MARKER = /Claude wants to fetch content from/;
+/** A body line's own `│` (U+2502) prefix in the newer no-separator Bash chrome, stripped before joining into `request`. */
 const BASH_BODY_LINE_PREFIX = /^\s*│\s?/;
 /**
  * How many non-blank lines are tolerated between the title line and the
- * question in the newer no-separator chrome (FACTORY-385). That gap holds
- * whatever reason line Claude renders there — `This command requires
+ * question in the newer no-separator Bash chrome (FACTORY-385). That gap
+ * holds whatever reason line Claude renders there — `This command requires
  * approval`, a too-complex security warning, or (per the binary's own string
  * table, FACTORY-146 comment 26827) any of an open-ended family of others —
  * never both, and never something this code keys on by text. A small fixed
@@ -150,7 +194,19 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
     options[options.length - 1] = `${options[options.length - 1]} ${line.trim()}`;
   }
   if (options.length < 2 || cursor < 0 || options[0] !== "Yes" || !options.some((option) => /^No\b/.test(option))) return undefined;
-  if (!lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line))) return undefined;
+  const hasFooterLine = lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line));
+  // WebFetch draws no `Esc to cancel` footer at all; its escape hint lives
+  // inline in the "No, …" option's own text instead (FACTORY-365/6). Whether
+  // that inline hint counts is decided below, once `request` is known — it
+  // must be anchored to THIS shape's own body content (`WEBFETCH_BODY_MARKER`),
+  // never to screen position: an earlier version of this fix required the
+  // option list to be the last thing on screen, which broke on the ordinary
+  // case of butchr's own notification chatter landing on a still-live pane
+  // AFTER the dialog appeared (a routine real-fleet event, not hypothetical —
+  // see FACTORY-356's measurement). Position also violates criterion 7
+  // ("never screen position, line number, or distance from anywhere").
+  const hasInlineEscHintOption = options.some((option) => INLINE_ESC_OPTION.test(option));
+  if (!hasFooterLine && !hasInlineEscHintOption) return undefined;
   let separator = -1;
   for (let i = q - 1; i >= 0; i--) if (SEPARATOR.test(lines[i]!)) { separator = i; break; }
   let tool: string | undefined;
@@ -161,41 +217,86 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
     if (tool === undefined) return undefined;
     request = body.slice(1).join("\n");
   } else {
-    // The newer Bash-dialog chrome draws no `─` rule at all (FACTORY-372).
-    // FACTORY-146 found (grepping the installed binary directly, comment
-    // 26827 on FACTORY-359) that the line this fallback used to hard-require
-    // there (`This command requires approval`) is only ONE of a family of
-    // `reason` strings Claude renders in that same slot — a too-complex
-    // security warning is another, and there are more — as alternatives,
-    // never together. Keying recognition on that text therefore missed the
-    // exact shape this ticket was filed about. The anchor instead is the
-    // title line itself: the first non-blank line, within a small bounded
-    // gap below the question, that sits directly below the contiguous
-    // `│`-prefixed body run — whatever reason (or nothing) occupies the gap
-    // is content, never the anchor.
-    let titleLine = -1;
-    let gapNonBlankLines = 0;
+    // Try the generic MCP-tool frame first (FACTORY-365/6): it draws no `─`
+    // rule anywhere on screen, framing its body with `About the <server> —
+    // <Tool> Tool:` and `(ctrl+o to expand description)` instead. Both must
+    // be found, in an unbroken run of non-blank lines, or this isn't that
+    // shape.
+    let mcpTool: string | undefined;
+    let expandLine = -1;
     for (let i = q - 1; i >= 0; i--) {
-      const line = lines[i]!;
-      if (line.trim() === "") continue;
-      if (i > 0 && BASH_BODY_LINE_PREFIX.test(lines[i - 1]!)) { titleLine = i; break; }
-      if (++gapNonBlankLines > MAX_TITLE_GAP_LINES) break;
+      if (MCP_EXPAND_HINT.test(lines[i]!)) { expandLine = i; break; }
+      if (QUESTION.test(lines[i]!)) break;
     }
-    if (titleLine < 0) return undefined;
-    tool = lines[titleLine]!.trim();
-    // The body is the contiguous run of `│`-prefixed lines directly above
-    // the title — nothing else. Stopping at the first non-`│` line, rather
-    // than scanning further up, is what keeps `request` (and so `promptId`)
-    // a function of the dialog's own frame and never of whatever scrollback
-    // happens to sit above it.
-    const bodyLines: string[] = [];
-    for (let i = titleLine - 1; i >= 0; i--) {
-      const line = lines[i]!;
-      if (!BASH_BODY_LINE_PREFIX.test(line)) break;
-      bodyLines.unshift(line.replace(BASH_BODY_LINE_PREFIX, "").trim());
+    // The measured shape has nothing but blank lines between the expand hint
+    // and the question — anything else in that gap (narration, a fresh code
+    // fence, more conversation) means this isn't the live frame, only text
+    // that happens to contain its wording somewhere further up the scrollback.
+    if (expandLine >= 0 && !lines.slice(expandLine + 1, q).every((line) => line.trim() === "")) expandLine = -1;
+    let aboutLine = -1;
+    if (expandLine >= 0) {
+      for (let i = expandLine - 1; i >= 0; i--) {
+        const line = lines[i]!;
+        const match = MCP_ABOUT.exec(line);
+        if (match) { aboutLine = i; mcpTool = match[1]; break; }
+        if (line.trim() === "" || SEPARATOR.test(line) || QUESTION.test(line)) break;
+      }
     }
-    request = bodyLines.join("\n");
+    if (aboutLine >= 0 && mcpTool !== undefined) {
+      tool = mcpTool;
+      request = lines.slice(aboutLine + 1, q)
+        .map((line) => line.replace(DESCRIPTION_LINE_PREFIX, "").trim())
+        .filter((line) => line !== "" && !MCP_EXPAND_HINT.test(line))
+        .join("\n");
+    } else {
+      // Not the MCP-tool shape — try the newer Bash-dialog chrome (FACTORY-372),
+      // a sibling fallback in this same no-separator arm, never a shared
+      // implementation with the MCP-tool shape above. It also draws no `─`
+      // rule at all. FACTORY-146 found (grepping the installed binary
+      // directly, comment 26827 on FACTORY-359) that the line this fallback
+      // used to hard-require there (`This command requires approval`) is
+      // only ONE of a family of `reason` strings Claude renders in that same
+      // slot — a too-complex security warning is another, and there are
+      // more — as alternatives, never together. Keying recognition on that
+      // text therefore missed the exact shape this ticket was filed about.
+      // The anchor instead is the title line itself: the first non-blank
+      // line, within a small bounded gap below the question, that sits
+      // directly below the contiguous `│`-prefixed body run — whatever
+      // reason (or nothing) occupies the gap is content, never the anchor.
+      let titleLine = -1;
+      let gapNonBlankLines = 0;
+      for (let i = q - 1; i >= 0; i--) {
+        const line = lines[i]!;
+        if (line.trim() === "") continue;
+        if (i > 0 && BASH_BODY_LINE_PREFIX.test(lines[i - 1]!)) { titleLine = i; break; }
+        if (++gapNonBlankLines > MAX_TITLE_GAP_LINES) break;
+      }
+      if (titleLine < 0) return undefined;
+      tool = lines[titleLine]!.trim();
+      // The body is the contiguous run of `│`-prefixed lines directly above
+      // the title — nothing else. Stopping at the first non-`│` line, rather
+      // than scanning further up, is what keeps `request` (and so `promptId`)
+      // a function of the dialog's own frame and never of whatever scrollback
+      // happens to sit above it.
+      const bodyLines: string[] = [];
+      for (let i = titleLine - 1; i >= 0; i--) {
+        const line = lines[i]!;
+        if (!BASH_BODY_LINE_PREFIX.test(line)) break;
+        bodyLines.unshift(line.replace(BASH_BODY_LINE_PREFIX, "").trim());
+      }
+      request = bodyLines.join("\n");
+    }
   }
+  // The inline-`(esc)` hint alone is just verbatim option text, so a quoted
+  // narration of this dialog — complete with its own separator line and the
+  // same option wording — would otherwise be wrongly recognised (measured:
+  // this exact ticket's own diagnosis quotes the WebFetch shape verbatim).
+  // Anchor to the dialog's own body content instead of screen position:
+  // WebFetch's body always carries "Claude wants to fetch content from
+  // <host>" verbatim, which narration reproducing only the option text (not
+  // the framed request body) won't have. Unlike a position check, this
+  // survives real trailing chatter landing on a still-live pane.
+  if (!hasFooterLine && hasInlineEscHintOption && !WEBFETCH_BODY_MARKER.test(request)) return undefined;
   const question = QUESTION.exec(lines[q]!)![1]!;
   const promptId = createHash("sha256").update(JSON.stringify([tool, request, question, options])).digest("hex").slice(0, 16);
   return { tool, request, question, options, cursor, promptId };
