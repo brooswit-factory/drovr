@@ -156,6 +156,25 @@ presses a key at one: it writes an audit record (`outcome: "unrecognised"`,
 the pane's excerpt as `detail`) and returns `outcome: "unrecognised"` in its
 result — logged loudly, left for a human, never a guess.
 
+### `fingerprint`: sighting counts, not a Codex recognizer (FACTORY-388)
+
+Every `unrecognised` dialog also carries a `fingerprint` — a hash of the
+excerpt with cursor glyphs (`›`/`❯`) normalised out, so it names the
+dialog's *shape* and stays stable across polls of the SAME episode even
+while the cursor moves between options (same idea as
+`blocking-escalation.ts`'s `fingerprint` for Claude's `unknown` dialogs, and
+`promptId` above for a recognised Codex prompt). It is on `UnrecognisedCodexPane`
+(from `scanPendingCodexApprovals`), on the `unrecognised` outcome of
+`autoAnswerCodexApprovals`'s result, and on the `unrecognised`/`prompt-changed`-
+adjacent audit line `approveCodexApproval` writes for an unrecognised screen.
+
+This exists so a host can count sightings per fingerprint — the same
+monitoring shape already used for Claude's dialogs before any fix existed for
+them — scoped to Codex specifically, without drovr guessing at what an
+unrecognised Codex dialog's known shape or fix should be. Building an actual
+Codex recognizer for a new shape belongs to a future ticket informed by real
+sighting counts, not to this module speculatively.
+
 ## Guarantees
 
 Same shape as `permission-approval.md`'s Claude guarantees, reusing
@@ -199,7 +218,7 @@ const results = await autoAnswerCodexApprovals(client, {
 });
 // [{ paneId: "w1:p1", label, outcome: "answered", kind, detail }
 //  { paneId: "w2:p1", label, outcome: "skipped", reason }
-//  { paneId: "w3:p1", label, outcome: "unrecognised", excerpt }
+//  { paneId: "w3:p1", label, outcome: "unrecognised", excerpt, fingerprint }
 //  { paneId: "w4:p1", label, outcome: "failed", reason, detail }]
 ```
 
