@@ -97,6 +97,19 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  *
  * See `docs/permission-approval.md` for the full captured screens.
  *
+ * FACTORY-392 measured (against `origin/main` at `e63b7a3`, before the MCP
+ * arm above existed) that this title-below-the-body-run anchor was TOO
+ * PERMISSIVE on its own: a generic MCP-tool dialog's own description block
+ * is ALSO a contiguous `│`-prefixed run, with `(ctrl+o to expand
+ * description)` sitting directly below it, so the Bash arm alone — with no
+ * MCP arm ahead of it to claim that shape first — read that hint line
+ * itself as `tool`, corrupting `promptId` for every MCP-tool dialog
+ * fleet-wide. The MCP-tool arm above, and its ordering ahead of the Bash
+ * arm (tried first, in this same no-separator branch), is what actually
+ * closes that gap: an MCP-tool dialog is claimed by its own, more specific
+ * frame before the general Bash anchor ever sees it, so no separate guard
+ * on the Bash arm is needed once both arms exist together.
+ *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
  * permission rule the session reads at start can change it.

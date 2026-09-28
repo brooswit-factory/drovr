@@ -392,6 +392,57 @@ pattern, so it is rejected before any code this fix touches is ever reached
 — pinned by a test against a real capture attributed to FACTORY-347
 (`test/fixtures/rate-limit-options/`).
 
+### The title-below-the-body-run anchor was too permissive on MCP-tool dialogs (FACTORY-392)
+
+FACTORY-356 measured (comment 26934 on FACTORY-359, against `origin/main` at
+`e63b7a3`) that the anchor above — the first non-blank line directly below a
+contiguous `│`-prefixed run — also matches a generic MCP-tool dialog's own
+frame. That dialog's description is itself a `│`-prefixed block, and Claude
+draws `(ctrl+o to expand description)` directly below it, so this arm read
+that hint line as `tool` instead of `undefined`:
+
+```
+   About the butchr — Tell Worker Tool:
+   │ The ONLY way to speak DOWN to a worker: comments on ONE OF THE CALLER'S OWN workers'
+   │ ticket. Refuses a `key` that is not one of the caller's own workers, verified via the…
+   (ctrl+o to expand description)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for butchr — Tell Worker commands in /tmp/claude-1002/…
+   3. No
+
+ Esc to cancel · Tab to amend
+```
+
+Real capture attributed to FACTORY-365/6 (fingerprint family
+`bc2bdb0ac67037a1`/`a5901e30415b417e`), committed at
+`test/fixtures/generic-mcp-tool-permission/pane-tell-worker-cropped.txt`.
+`tool` came back `"(ctrl+o to expand description)"` — not merely wrong
+cosmetically: `promptId = sha256([tool, request, question, options])`, so
+every MCP-tool dialog on the fleet got a wrong fingerprint, and
+`approvePermission`'s audit record logged the wrong tool name. It was
+invisible to a naive check too — `classifyPermissionPrompt` still returned a
+prompt, and `optionFor(once)` still resolved to option 1, so both "is it
+recognised?" and "would it press Yes?" passed; only asserting the expected
+`tool` value catches it.
+
+**FACTORY-392's own fix was a narrow negative condition on this Bash arm
+alone** (reject a candidate title line matching `(ctrl+o to expand
+description)` rather than accept it, so this arm reported `undefined` for
+the shape instead of a false positive) — written and reviewed while
+FACTORY-365's MCP-tool arm was still unmerged. **By the time FACTORY-392's
+PR was ready to merge, FACTORY-365 had already landed on `main`** with the
+MCP-tool arm ABOVE ordered ahead of this Bash arm in the same no-separator
+branch, which closes this exact gap more completely: an MCP-tool dialog is
+now claimed by its own frame (`MCP_ABOUT`/`MCP_EXPAND_HINT`) and correctly
+returns the real tool name, never reaching this Bash arm at all — a
+strictly better outcome than the narrower `undefined` FACTORY-392's own
+guard would have produced. FACTORY-392's guard was therefore dropped at
+merge time as redundant dead code rather than carried forward; this
+section is kept as a record of the measurement and the race, not as a
+description of code still in `classifyPermissionPrompt`.
+
 ## Guarantees
 
 - **Only the prompt the operator saw.** The screen is re-read before any key
