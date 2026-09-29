@@ -443,6 +443,54 @@ merge time as redundant dead code rather than carried forward; this
 section is kept as a record of the measurement and the race, not as a
 description of code still in `classifyPermissionPrompt`.
 
+### The MCP-tool arm's own header can scroll off screen too (FACTORY-396)
+
+"Redundant" above only held for the ordinary case, where the MCP-tool arm's
+header search (`MCP_ABOUT`, scanning up from the expand hint) actually finds
+`About the … Tool:`. FACTORY-396 is the case that section's own FACTORY-392
+guard would have still caught and this one did not: a description long
+enough that the header line itself is *also* scrolled off the visible
+screen, not just the outer tool-call header/params/rule FACTORY-365's own
+`pane-tell-worker-cropped.txt` fixture already covers. `aboutLine` stays -1,
+and control falls through to the Bash arm below exactly as it did before
+FACTORY-365 existed — misreading the expand hint (or, once that line alone
+is excluded, an arbitrary `│`-prefixed description line still sitting
+directly above another one) as `tool`.
+
+Fixture (synthetic, labelled — no live pane with a description long enough
+to scroll its own header off too was obtained; this ticket was filed and
+worked unconfirmed by a real capture. Built by deleting this section's own
+real capture's header line and everything above it, i.e. exactly what one
+more line of scroll would remove, rather than a from-scratch guess):
+`test/fixtures/generic-mcp-tool-permission/synthetic-tell-worker-about-line-scrolled-off.txt`.
+
+```
+   │ The ONLY way to speak DOWN to a worker: comments on ONE OF THE CALLER'S OWN workers'
+   │ ticket. Refuses a `key` that is not one of the caller's own workers, verified via the…
+   (ctrl+o to expand description)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for butchr — Tell Worker commands in /tmp/claude-1002/…
+   3. No
+
+ Esc to cancel · Tab to amend
+```
+
+The fix is not a smarter header search — the header is genuinely off
+screen, not merely hard to find, so there is no real tool name left to
+return. Instead: whenever the expand hint's own frame is found (directly
+above the question, nothing but blank lines between), that alone commits
+the screen to being an MCP-tool dialog, whether or not its header was also
+found. If the header wasn't found, `classifyPermissionPrompt` now returns
+`undefined` rather than falling through to the Bash arm — never a guessed
+`tool`. This subsumes FACTORY-392's narrower guard (which only excluded the
+hint line itself as a candidate Bash title) rather than resurrecting it
+verbatim: gating on `expandLine` also refuses the second-order case
+FACTORY-392's own guard would have missed, where the Bash arm's title-scan,
+having rejected the hint line, would otherwise keep scanning upward and
+accept a `│`-prefixed description line as the title instead.
+
 ## Guarantees
 
 - **Only the prompt the operator saw.** The screen is re-read before any key

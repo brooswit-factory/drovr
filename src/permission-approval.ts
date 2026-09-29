@@ -105,10 +105,24 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  * MCP arm ahead of it to claim that shape first — read that hint line
  * itself as `tool`, corrupting `promptId` for every MCP-tool dialog
  * fleet-wide. The MCP-tool arm above, and its ordering ahead of the Bash
- * arm (tried first, in this same no-separator branch), is what actually
- * closes that gap: an MCP-tool dialog is claimed by its own, more specific
- * frame before the general Bash anchor ever sees it, so no separate guard
- * on the Bash arm is needed once both arms exist together.
+ * arm (tried first, in this same no-separator branch), is what closes that
+ * gap for the ordinary case: an MCP-tool dialog is claimed by its own, more
+ * specific frame before the general Bash anchor ever sees it.
+ *
+ * FACTORY-396: that ordering alone is NOT sufficient — it only helps once
+ * the MCP-tool arm's OWN header search succeeds. If the dialog's
+ * description is long enough that `About the … Tool:` is *also* scrolled
+ * off the visible screen (not just the outer tool-call header/params/rule
+ * FACTORY-365's own fixture already covers), `aboutLine` stays -1 and
+ * control still falls through to the Bash arm below, which is exactly the
+ * FACTORY-392 false-positive again, just gated on a longer description.
+ * The fix is not a smarter header search (the header is genuinely gone, not
+ * merely hard to find) but a refusal to fall through at all: whenever the
+ * expand hint's own frame is present — found directly above the question,
+ * with nothing but blank lines between — this is decisively an
+ * (unrecognisable) MCP-tool dialog and never a Bash one, so the code
+ * returns undefined instead of letting the Bash arm guess a `tool` out of
+ * the hint line or an arbitrary description line above it.
  *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
@@ -261,6 +275,22 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
         .map((line) => line.replace(DESCRIPTION_LINE_PREFIX, "").trim())
         .filter((line) => line !== "" && !MCP_EXPAND_HINT.test(line))
         .join("\n");
+    } else if (expandLine >= 0) {
+      // FACTORY-396: the expand hint's own frame is present (only blank
+      // lines between it and the question) but its `About the … Tool:`
+      // header could not be found above it — most likely scrolled off the
+      // visible screen too, on a long enough description. That hint line is
+      // never a legitimate Bash dialog title on any known shape, so this is
+      // decisively an (unrecognisable) MCP-tool frame, not a Bash dialog.
+      // Falling through to the Bash arm below would let its title-scan
+      // misread the hint line itself — or, once that's excluded, an
+      // arbitrary description line still sitting directly above another
+      // │-prefixed line — as `tool`, corrupting `promptId`. Refuse instead
+      // of guessing; returning undefined here has the same effect as "we
+      // don't recognise this specific screen (yet)", not "this isn't a
+      // prompt at all" — a caller that reads again after the pane scrolls
+      // further (or the description collapses) gets another chance.
+      return undefined;
     } else {
       // Not the MCP-tool shape — try the newer Bash-dialog chrome (FACTORY-372),
       // a sibling fallback in this same no-separator arm, never a shared
