@@ -315,6 +315,34 @@ describe("classifyPermissionPrompt", () => {
       expect(prompt!.tool).toBe("Tool use");
       expect(optionFor(prompt!, "once")).toBe(0);
     });
+
+    // FACTORY-396. Synthetic (labelled), NOT a real capture — no live pane
+    // with a description long enough to scroll its own `About the … Tool:`
+    // header off screen too was obtained (this ticket was explicitly filed
+    // "unconfirmed by a real capture", and this environment has no way to
+    // drive a live drovr/herdr pane to attempt one). Built by taking the
+    // REAL capture above (`pane-tell-worker-cropped.txt`) and deleting its
+    // header line and everything above it — i.e. exactly what one more line
+    // of scroll would remove — rather than inventing a screen shape from
+    // scratch: every remaining line is byte-for-byte the real capture's own
+    // tail.
+    //
+    // Against `origin/main` this returned `tool: "(ctrl+o to expand
+    // description)"` (verified directly, not just asserted here) — the
+    // MCP arm's header search finds no `About the …:` line (it's gone) and
+    // falls through to the Bash no-separator arm, which misreads the expand
+    // hint itself as the Bash dialog's title, exactly the FACTORY-392
+    // symptom. The fix must refuse to guess a wrong `tool`/`promptId`
+    // rather than accept this shape under either arm's assumptions.
+    test("FACTORY-396: an MCP-tool frame whose own About the … Tool: header is scrolled off too is not recognised (not guessed as Bash)", () => {
+      const aboutLineScrolledOff = readFileSync(
+        new URL("./fixtures/generic-mcp-tool-permission/synthetic-tell-worker-about-line-scrolled-off.txt", import.meta.url),
+        "utf8",
+      );
+      expect(aboutLineScrolledOff).not.toMatch(/About the .+:/);
+      expect(aboutLineScrolledOff).toMatch(/ctrl\+o to expand description/);
+      expect(classifyPermissionPrompt(aboutLineScrolledOff)).toBeUndefined();
+    });
   });
 
   describe("the WebFetch dialog (FACTORY-365/6): no Esc to cancel footer at all", () => {
