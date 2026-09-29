@@ -23,19 +23,35 @@ describe("classifyBlockingText", () => {
 
   // FACTORY-393. Claude Code's binary (build 2.1.251, per FACTORY-393's ticket text, confirmed
   // against this checkout's own `readlink -f "$(command -v claude)"`) carries these as separate
-  // constants; read the bundle's classification function directly (search it for `authentication_failed`)
-  // rather than reconstructing from the rendered text alone — that is how the below was settled.
-  test("recognises every credential-death message sharing the authentication_failed tag", () => {
+  // constants; read the bundle's auth-error dispatcher function directly (search its extracted
+  // strings for `authentication_failed` to find it) rather than reconstructing from rendered text
+  // alone — that is how the below was settled, including which of them share Claude's own
+  // `error: "authentication_failed"` tag (all four here do) and which of THOSE this classifier
+  // still recognises (see the LOGIN_EXPIRED comment: text-matching trusts what the message itself
+  // says to do, not the invisible tag).
+  test("recognises every credential-death message whose own text says to run /login", () => {
     expect(classifyBlockingText("claude", "Login expired · Please run /login")?.kind).toBe("login-expired");
     expect(classifyBlockingText("claude", "OAuth token revoked · Please run /login")?.kind).toBe("login-expired");
     expect(classifyBlockingText("claude", "Not logged in · Please run /login")?.kind).toBe("login-expired");
+    expect(classifyBlockingText(
+      "claude",
+      "Your organization has disabled API key authentication · Run /login to sign in with your claude.ai account",
+    )?.kind).toBe("login-expired");
     expect(classifyBlockingText("claude", 'Failed to authenticate. API Error: 401 {"type":"error"}')?.kind).toBe("login-expired");
   });
 
-  // This message reads like a credential death but the binary tags it `error: "server_error"`,
-  // not `authentication_failed` — it is a transient refresh race between two Claude Code
-  // processes, not a dead credential, and its own text says to retry, never to run /login.
-  test("does not treat a transient refresh race as a login expiry", () => {
+  // These three all carry the SAME `error: "authentication_failed"` tag as the messages above, but
+  // are deliberately NOT matched: each one's own text names a fix other than /login, and text
+  // matching (unlike classifyClaudeTranscriptRecord, which reads the tag directly) has no way to
+  // see the tag — only the text, which is what it must trust.
+  test("does not treat a same-tag message as login-expired when its own text names a different fix", () => {
+    // Remedy is an env var, not a login: running startClaudeLogin would not fix this.
+    expect(classifyBlockingText("claude", "Invalid API key · Fix external API key")).toBeUndefined();
+    // Own text says this is a temporary network issue and to retry — not a dead credential.
+    expect(classifyBlockingText("claude", "Authentication error · This may be a temporary network issue, please try again")).toBeUndefined();
+    // Tagged `error: "server_error"`, not `authentication_failed`, and its own text says to retry
+    // in a minute — a transient refresh race between two Claude Code processes, not a dead
+    // credential.
     expect(classifyBlockingText(
       "claude",
       "Could not refresh your login because another Claude Code process is refreshing it (or exited mid-refresh) · Try again in a minute; if it keeps happening, close other Claude Code windows or sign in again with /login",

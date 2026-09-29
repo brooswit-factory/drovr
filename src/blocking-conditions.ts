@@ -32,15 +32,28 @@ export type BlockingCondition =
 
 export type BlockingConditionKind = BlockingCondition["kind"];
 
-// Claude Code's own auth-failure formatter (read from the installed binary, build 2.1.251 — see
-// FACTORY-393) emits several distinct messages under the SAME structural tag,
-// `error: "authentication_failed"`: "Login expired", "OAuth token revoked", and "Not logged in" all
-// share the "· Please run /login" suffix, so anchoring there catches the family instead of
-// enumerating it — a list would already be short one ("OAuth token revoked" was missing here).
-// Deliberately NOT matched: "Could not refresh your login because another Claude…" carries a
-// DIFFERENT tag, `error: "server_error"` — it is a transient refresh race ("try again in a
-// minute"), not a dead credential, and its own text never mentions running /login.
-const LOGIN_EXPIRED = /· Please run \/login|Failed to authenticate\. API Error: 401/;
+// This function has no access to Claude Code's own structural `error` tag (that only exists on a
+// parsed transcript record — see classifyClaudeTranscriptRecord below): it reads raw text off a
+// pane, a launch's stdout, or a log line, so it must trust what the TEXT ITSELF says the fix is,
+// not an invisible tag. Read from the installed binary's own auth-error dispatcher (build 2.1.251
+// — see FACTORY-393; grep its extracted strings for `authentication_failed` to find the function),
+// `error: "authentication_failed"` is emitted for messages whose own remedy is NOT always /login —
+// e.g. an invalid API key ("Invalid API key · Fix external API key") shares that tag but its fix is
+// to correct an env var, not run `startClaudeLogin`. Matching the tag's full breadth here would
+// misdirect remediation, so this instead anchors on "run /login" (case-insensitive: some of the
+// binary's own phrasings capitalise it sentence-initially, e.g. "Run /login to sign in with your
+// claude.ai account"), which every message actually cleared by `startClaudeLogin` contains:
+// "Login expired", "OAuth token revoked", "Not logged in", and "…API key authentication ·
+// Run /login to sign in…" all match; a list would already be short two ("OAuth token revoked" and
+// that last one were both missing here before).
+// Deliberately NOT matched, despite sharing the SAME `authentication_failed` tag as the messages
+// above: "Invalid API key · Fix external API key" (remedy is an env var, not /login) and
+// "Authentication error · This may be a temporary network issue, please try again" (its own text
+// says retry, not re-login — tag and text disagree here, and this classifier trusts the text it can
+// actually see). Also not matched: "Could not refresh your login because another Claude…", which
+// carries a DIFFERENT tag, `error: "server_error"` — a transient refresh race, not a dead
+// credential, and its own text never mentions running /login either.
+const LOGIN_EXPIRED = /[Rr]un \/login|Failed to authenticate\. API Error: 401/;
 const DAEMON_BINARY_REPLACED = /daemon binary was deleted \(upgrade in progress\)/;
 const MCP_APPROVAL_PROMPT = /New\s*MCP\s*server\s*found\s*in\s*this\s*project/;
 
