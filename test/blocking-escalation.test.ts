@@ -173,6 +173,90 @@ describe("createBlockingEscalationWatcher", () => {
     expect(second).toEqual([]); // same (pane, fingerprint) episode: no repeat call
   });
 
+  // FACTORY-377: describeUnknownDialog used to return any non-blank line
+  // above the option block as the question, so chatter landing between the
+  // real question and the options corrupted the escalation payload and its
+  // fingerprint. Pins both halves of the fix at the level a caller actually
+  // observes: the escalated fingerprint.
+  describe("chatter lines around a weekly-limit-shaped dialog (FACTORY-377)", () => {
+    const CHATTER_FRAME_RULE_LINE = "▔".repeat(94);
+    const weeklyLimit = (...chatterAboveFrameRule: string[]) => [
+      "some prior pane output",
+      "",
+      ...(chatterAboveFrameRule.length ? [...chatterAboveFrameRule, CHATTER_FRAME_RULE_LINE] : []),
+      "What do you want to do?",
+      "",
+      "❯ 1. Stop and wait for limit to reset",
+      "  2. Wait here, then continue automatically at Oct 1, 8am",
+      "  3. Switch to usage credits",
+      "",
+      "Enter to select · Esc to cancel",
+    ].join("\n");
+
+    async function escalatedFingerprint(screen: string): Promise<string | undefined> {
+      const c = client([{ pane_id: "w1:p1", agent_status: "blocked" }], { "w1:p1": screen });
+      const hook = recordingHook();
+      await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
+      return (hook.escalations[0] as { fingerprint?: string } | undefined)?.fingerprint;
+    }
+
+    test("chatter ABOVE the dialog, never touching the option block, leaves the fingerprint unchanged (the already-good case)", async () => {
+      const baseline = await escalatedFingerprint(weeklyLimit());
+      expect(baseline).toEqual(expect.any(String));
+      for (const n of [0, 1, 3, 9, 20]) {
+        const chatter = Array.from({ length: n }, (_, i) => `[butchr] outer chatter ${i + 1}`);
+        expect(await escalatedFingerprint([...chatter, "", weeklyLimit()].join("\n"))).toBe(baseline);
+      }
+    });
+
+    // Real captures show chatter with no common shape between the question
+    // and whatever precedes it — distinct notification prefixes, the pane's
+    // own prior output, and an unlabelled wrapped continuation line — so
+    // this asserts the fingerprint stays stable across several DIFFERENTLY
+    // shaped chatter blocks, all sitting above the dialog's own frame rule.
+    test("chatter directly above the dialog's own frame rule no longer drifts the fingerprint or drops the real question (the fixed case)", async () => {
+      const baseline = await escalatedFingerprint(weeklyLimit());
+      const chatterShapes: string[][] = [
+        ["[butchr] inner chatter 1"],
+        ["❯ [butchr] related:jira-work:FACTORY-328 got a new comment", "  re-read it, then act."],
+        ["← butchr: [butchr] Ticket FACTORY-327 got a new comment — re-read it."],
+        ["  Called butchr, ran 1 shell command", "✻ Crunched for 9s · done 8:04 PM", "❯ [butchr] Ticket FACTORY-327 was updated — re-read", "  it."],
+      ];
+      for (const chatter of chatterShapes) {
+        expect(await escalatedFingerprint(weeklyLimit(...chatter))).toBe(baseline);
+      }
+    });
+
+    test("when nothing between the dialog's own frame rule and the option block looks like a question, the dialog is reported, not escalated with a wrong payload", async () => {
+      const raw = [
+        "[butchr] FACTORY-1 was updated",
+        "[butchr] FACTORY-2 was updated",
+        CHATTER_FRAME_RULE_LINE,
+        "",
+        "❯ 1. Stop and wait for limit to reset",
+        "  2. Wait here, then continue automatically at Oct 1, 8am",
+        "  3. Switch to usage credits",
+        "",
+        "Enter to select · Esc to cancel",
+      ].join("\n");
+      const c = client([{ pane_id: "w1:p1", agent_status: "blocked" }], { "w1:p1": raw });
+      const hook = recordingHook();
+      const outcomes = await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
+      expect(outcomes).toEqual([{ paneId: "w1:p1", outcome: "reported", kind: "unknown", name: undefined }]);
+      expect(hook.escalations).toEqual([]);
+    });
+
+    // The ticket's actual production evidence (FACTORY-327 weekly-limit
+    // escalations) is asserted directly against `describeUnknownDialog` in
+    // test/blocking-prompts.test.ts, not re-run through this watcher: real
+    // captures of this exact dialog classify as `rate-limit-options` (its
+    // own dedicated classifier recognises the shape), which this watcher's
+    // `escalationPayload` never routes to `describeUnknownDialog` at all —
+    // only `unknown` and `permission` dialogs escalate here. That path is
+    // untouched by this ticket; asserting a fingerprint through it here
+    // would test a classifier this fix doesn't change, not the fix itself.
+  });
+
   test("a hook rejection is reported per-pane and never thrown, so one failing pane cannot fail the whole poll", async () => {
     const c = client(
       [{ pane_id: "w1:p1", agent_status: "blocked" }, { pane_id: "w2:p1", agent_status: "blocked" }],

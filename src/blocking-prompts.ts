@@ -88,11 +88,27 @@ const WAITING_FOOTER = /(Enter to confirm|Enter to continue|Enter to select|Esc 
 
 const excerptOf = (screen: string): string => screen.trim().split("\n").slice(-16).join("\n");
 
-/** How many lines directly above a dialog's option block can be its question; further up is prior pane output by definition. */
+/** How many candidate (non-chatter) lines directly above a dialog's option block can be its question; further up is prior pane output by definition. */
 const QUESTION_TAIL = 6;
 /** Anchored at line start: a real footer IS the line, never a clause inside narration quoting one (see `describeUnknownDialog`). */
 const FOOTER_LINE = /^\s*(Enter to (confirm|continue|select)|Esc to cancel)/;
 const SEPARATOR_OR_TIP = /^(─+|·|Tip:)/;
+/**
+ * The rule (`▔`, U+2594 "upper one eighth block", repeated) a still-live pane
+ * draws directly above a dialog when butchr's own notification chatter has
+ * interleaved with it (see permission-approval.ts's doc comment on the same
+ * rule) — real captures (FACTORY-377, `test/fixtures/rate-limit-options/`)
+ * show it immediately above the question, with an arbitrary, unbounded run
+ * of chatter above THAT: several distinct notification shapes (`❯ [butchr]
+ * …`, `← butchr: [butchr] …`), interleaved with the pane's own prior output,
+ * and even an unlabelled wrapped continuation line with no chatter marker at
+ * all. No prefix or shape regex can enumerate that family — the 146/356/365/
+ * 372 fixes already paid for that lesson on the permission path — so this
+ * anchors on the one thing every one of those shapes shares: never drawing
+ * this exact rule itself. `questionAbove` treats it as a hard floor: nothing
+ * at or above it is ever read as the question, however far the chatter runs.
+ */
+const CHATTER_FRAME_RULE = /^▔+$/;
 
 /**
  * `AskUserQuestion`'s side-by-side layout draws a boxed preview column to
@@ -153,21 +169,68 @@ const NUMBERED_OPTION = /^\s*(❯\s*)?(\d+)\.\s+(.+)$/;
  * footer's exact line and does not trust the caller's gate for placement.
  * Undefined when the shape can't be read with confidence — the caller must
  * never guess a payload for a dialog it can't verify.
+ *
+ * STATEMENT OF INTENT (FACTORY-377): `question` is meant to be the dialog's
+ * own question and nothing else — never a window onto whatever else happens
+ * to sit on screen. `options` is read structurally (the numbered/marked
+ * lines themselves), so it can't pick up stray pane content; `question` used
+ * to be read positionally instead (whatever non-blank text filled
+ * `QUESTION_TAIL` lines above the options), which let an unrelated line —
+ * command output, file contents, a notification nudge — leave the pane
+ * through this field and reach a host's public escalation comment verbatim.
+ * `questionAbove` now anchors on `CHATTER_FRAME_RULE`, the dialog's own
+ * frame boundary, when one is present: nothing at or above it is ever read,
+ * however much chatter is interleaved above the dialog, and however that
+ * chatter is shaped — confinement here holds by construction, not by
+ * recognising chatter's shape, which is what makes it true of chatter this
+ * function has never seen. What's collected must also itself read as a
+ * question (end in `?`), or the whole dialog is undefined rather than a
+ * confidently wrong payload. The residual, honestly named: with NO frame
+ * rule on screen at all (a dialog nothing has interleaved with — the
+ * ordinary case), the climb still has only the bounded `QUESTION_TAIL`
+ * window and the `?`-ending check to go on, same as before this fix; an
+ * unrelated line ending in `?` sitting alone in that unbounded-content
+ * window can still be read as the question. This is a narrower, structural
+ * promise of confinement against the interleaved-chatter shape this ticket
+ * measured — not an unconditional one against every possible screen.
  */
 export function describeUnknownDialog(raw: string): { question: string; options: string[] } | undefined {
   const lines = stripTerminalEscapes(raw).split(/\r?\n/).map((line) => line.replace(/\s+$/, ""));
   return parseNumberedDialog(lines) ?? parseMarkedDialog(lines);
 }
 
-function questionAbove(lines: string[], lastAboveOptions: number): string {
+/**
+ * The dialog's own question, scanning up from directly above the option
+ * block — or undefined when nothing in that climb reads as one.
+ *
+ * If `CHATTER_FRAME_RULE` appears anywhere in the climb, it is a hard floor:
+ * the scan never reads at or above it, however much chatter piled up there
+ * (FACTORY-377) — a structural anchor on the dialog's own frame, not a guess
+ * at chatter's shape, which is what makes it robust against shapes this
+ * function has never seen. Below that floor (or from the very top of screen
+ * when no such rule is present at all — the ordinary case for a dialog
+ * nothing has interleaved with), the closest `QUESTION_TAIL` non-blank lines
+ * are collected, skipping `SEPARATOR_OR_TIP` lines, and must themselves read
+ * as a question — end in `?` — once joined; a screen where nothing above the
+ * options does is reported as undefined here, not papered over with
+ * whatever non-blank text happened to be sitting there. Undefined here fails
+ * the whole dialog (see `describeUnknownDialog`): a caller must never get a
+ * confidently wrong payload in place of an honest "couldn't read this one".
+ */
+function questionAbove(lines: string[], lastAboveOptions: number): string | undefined {
+  let floor = 0;
+  for (let i = lastAboveOptions; i >= 0; i--) {
+    if (CHATTER_FRAME_RULE.test(lines[i]!.trim())) { floor = i + 1; break; }
+  }
   const text: string[] = [];
-  for (let i = lastAboveOptions; i >= 0 && text.length < QUESTION_TAIL; i--) {
+  for (let i = lastAboveOptions; i >= floor && text.length < QUESTION_TAIL; i--) {
     const line = lines[i]!.trim();
     if (line === "") { if (text.length) break; continue; }
     if (SEPARATOR_OR_TIP.test(line)) continue;
     text.unshift(line);
   }
-  return text.join(" ").trim();
+  const question = text.join(" ").trim();
+  return question !== "" && question.endsWith("?") ? question : undefined;
 }
 
 /**
@@ -210,7 +273,8 @@ function parseNumberedDialog(rawLines: string[]): { question: string; options: s
   }
   const found = options.filter((option): option is string => option !== undefined);
   if (found.length < 2 || cursorCount !== 1 || !footerImmediatelyFollows(lines, lastOptionLine)) return undefined;
-  return { question: questionAbove(lines, first - 1), options: found };
+  const question = questionAbove(lines, first - 1);
+  return question === undefined ? undefined : { question, options: found };
 }
 
 function footerImmediatelyFollows(lines: string[], lastOptionLine: number): boolean {
@@ -237,7 +301,8 @@ function parseMarkedDialog(lines: string[]): { question: string; options: string
     break;
   }
   if (options.length < 2 || cursorCount !== 1) return undefined;
-  return { question: questionAbove(lines, i), options };
+  const question = questionAbove(lines, i);
+  return question === undefined ? undefined : { question, options };
 }
 
 /** What one screen is waiting on, or undefined when it waits on nothing. */
