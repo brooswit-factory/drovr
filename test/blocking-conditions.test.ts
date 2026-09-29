@@ -21,6 +21,27 @@ describe("classifyBlockingText", () => {
       .toBe("mcp-approval-prompt");
   });
 
+  // FACTORY-393. Claude Code's binary (build 2.1.251, per FACTORY-393's ticket text, confirmed
+  // against this checkout's own `readlink -f "$(command -v claude)"`) carries these as separate
+  // constants; read the bundle's classification function directly (search it for `authentication_failed`)
+  // rather than reconstructing from the rendered text alone — that is how the below was settled.
+  test("recognises every credential-death message sharing the authentication_failed tag", () => {
+    expect(classifyBlockingText("claude", "Login expired · Please run /login")?.kind).toBe("login-expired");
+    expect(classifyBlockingText("claude", "OAuth token revoked · Please run /login")?.kind).toBe("login-expired");
+    expect(classifyBlockingText("claude", "Not logged in · Please run /login")?.kind).toBe("login-expired");
+    expect(classifyBlockingText("claude", 'Failed to authenticate. API Error: 401 {"type":"error"}')?.kind).toBe("login-expired");
+  });
+
+  // This message reads like a credential death but the binary tags it `error: "server_error"`,
+  // not `authentication_failed` — it is a transient refresh race between two Claude Code
+  // processes, not a dead credential, and its own text says to retry, never to run /login.
+  test("does not treat a transient refresh race as a login expiry", () => {
+    expect(classifyBlockingText(
+      "claude",
+      "Could not refresh your login because another Claude Code process is refreshing it (or exited mid-refresh) · Try again in a minute; if it keeps happening, close other Claude Code windows or sign in again with /login",
+    )).toBeUndefined();
+  });
+
   test("leaves ordinary failures to the caller", () => {
     expect(classifyBlockingText("claude", "You've hit your limit · resets 9am (America/Los_Angeles)")).toBeUndefined();
     expect(classifyBlockingText("claude", "")).toBeUndefined();

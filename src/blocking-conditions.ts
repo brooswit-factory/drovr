@@ -32,8 +32,15 @@ export type BlockingCondition =
 
 export type BlockingConditionKind = BlockingCondition["kind"];
 
-// Both spellings observed in this host's own transcripts under `error: "authentication_failed"`.
-const LOGIN_EXPIRED = /Login expired · Please run \/login|Failed to authenticate\. API Error: 401/;
+// Claude Code's own auth-failure formatter (read from the installed binary, build 2.1.251 — see
+// FACTORY-393) emits several distinct messages under the SAME structural tag,
+// `error: "authentication_failed"`: "Login expired", "OAuth token revoked", and "Not logged in" all
+// share the "· Please run /login" suffix, so anchoring there catches the family instead of
+// enumerating it — a list would already be short one ("OAuth token revoked" was missing here).
+// Deliberately NOT matched: "Could not refresh your login because another Claude…" carries a
+// DIFFERENT tag, `error: "server_error"` — it is a transient refresh race ("try again in a
+// minute"), not a dead credential, and its own text never mentions running /login.
+const LOGIN_EXPIRED = /· Please run \/login|Failed to authenticate\. API Error: 401/;
 const DAEMON_BINARY_REPLACED = /daemon binary was deleted \(upgrade in progress\)/;
 const MCP_APPROVAL_PROMPT = /New\s*MCP\s*server\s*found\s*in\s*this\s*project/;
 
