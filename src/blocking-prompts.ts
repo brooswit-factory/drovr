@@ -88,11 +88,22 @@ const WAITING_FOOTER = /(Enter to confirm|Enter to continue|Enter to select|Esc 
 
 const excerptOf = (screen: string): string => screen.trim().split("\n").slice(-16).join("\n");
 
-/** How many lines directly above a dialog's option block can be its question; further up is prior pane output by definition. */
+/** How many candidate (non-chatter) lines directly above a dialog's option block can be its question; further up is prior pane output by definition. */
 const QUESTION_TAIL = 6;
 /** Anchored at line start: a real footer IS the line, never a clause inside narration quoting one (see `describeUnknownDialog`). */
 const FOOTER_LINE = /^\s*(Enter to (confirm|continue|select)|Esc to cancel)/;
 const SEPARATOR_OR_TIP = /^(─+|·|Tip:)/;
+/**
+ * A bracket-tagged notification line (e.g. a `[butchr] …` nudge landing on a
+ * still-live pane) — chatter injected between a dialog's real question and
+ * its option block, never a question of the dialog's own (FACTORY-377).
+ * Skipped like `SEPARATOR_OR_TIP` rather than accepted: unlike a separator,
+ * which never disguises itself as content, this is exactly the shape a
+ * dropped-in notification takes, so treating it as opaque noise to scan past
+ * — rather than as the question — is what lets the real question underneath
+ * it still be found.
+ */
+const NOTIFICATION_CHATTER = /^\[[^\]\n]+\]/;
 
 /**
  * `AskUserQuestion`'s side-by-side layout draws a boxed preview column to
@@ -153,21 +164,54 @@ const NUMBERED_OPTION = /^\s*(❯\s*)?(\d+)\.\s+(.+)$/;
  * footer's exact line and does not trust the caller's gate for placement.
  * Undefined when the shape can't be read with confidence — the caller must
  * never guess a payload for a dialog it can't verify.
+ *
+ * STATEMENT OF INTENT (FACTORY-377): `question` is meant to be the dialog's
+ * own question and nothing else — never a window onto whatever else happens
+ * to sit on screen. `options` is read structurally (the numbered/marked
+ * lines themselves), so it can't pick up stray pane content; `question` used
+ * to be read positionally instead (whatever non-blank text filled
+ * `QUESTION_TAIL` lines above the options), which let an unrelated line —
+ * command output, file contents, a notification nudge — leave the pane
+ * through this field and reach a host's public escalation comment verbatim.
+ * `questionAbove` now requires the collected text to itself look like a
+ * question (ending in `?`) and skips known chatter shapes while climbing, so
+ * a screen with nothing question-shaped above its options returns undefined
+ * for the whole dialog rather than confidently quoting whatever was there.
+ * This is a promise of confinement to the dialog, not merely of verbatim
+ * fidelity to whatever this function happened to extract — the two are
+ * different guarantees, and only the fix above makes the first one true.
  */
 export function describeUnknownDialog(raw: string): { question: string; options: string[] } | undefined {
   const lines = stripTerminalEscapes(raw).split(/\r?\n/).map((line) => line.replace(/\s+$/, ""));
   return parseNumberedDialog(lines) ?? parseMarkedDialog(lines);
 }
 
-function questionAbove(lines: string[], lastAboveOptions: number): string {
+/**
+ * The dialog's own question, scanning up from directly above the option
+ * block — or undefined when nothing in that climb reads as one.
+ *
+ * `SEPARATOR_OR_TIP` and `NOTIFICATION_CHATTER` lines are both skipped
+ * outright rather than counted or accepted: they cost nothing against
+ * `QUESTION_TAIL`, so a real question sitting just above injected chatter
+ * (FACTORY-377's measured case — a `[butchr] …` nudge landing directly above
+ * the option block) is still found instead of being shadowed by the chatter
+ * or by running out of window on it. What IS collected must still look like
+ * a question — end in `?` — once joined; a screen where nothing above the
+ * options does is reported as undefined here, not papered over with
+ * whatever non-blank text happened to be sitting there. Undefined here fails
+ * the whole dialog (see `describeUnknownDialog`): a caller must never get a
+ * confidently wrong payload in place of an honest "couldn't read this one".
+ */
+function questionAbove(lines: string[], lastAboveOptions: number): string | undefined {
   const text: string[] = [];
   for (let i = lastAboveOptions; i >= 0 && text.length < QUESTION_TAIL; i--) {
     const line = lines[i]!.trim();
     if (line === "") { if (text.length) break; continue; }
-    if (SEPARATOR_OR_TIP.test(line)) continue;
+    if (SEPARATOR_OR_TIP.test(line) || NOTIFICATION_CHATTER.test(line)) continue;
     text.unshift(line);
   }
-  return text.join(" ").trim();
+  const question = text.join(" ").trim();
+  return question !== "" && question.endsWith("?") ? question : undefined;
 }
 
 /**
@@ -210,7 +254,8 @@ function parseNumberedDialog(rawLines: string[]): { question: string; options: s
   }
   const found = options.filter((option): option is string => option !== undefined);
   if (found.length < 2 || cursorCount !== 1 || !footerImmediatelyFollows(lines, lastOptionLine)) return undefined;
-  return { question: questionAbove(lines, first - 1), options: found };
+  const question = questionAbove(lines, first - 1);
+  return question === undefined ? undefined : { question, options: found };
 }
 
 function footerImmediatelyFollows(lines: string[], lastOptionLine: number): boolean {
@@ -237,7 +282,8 @@ function parseMarkedDialog(lines: string[]): { question: string; options: string
     break;
   }
   if (options.length < 2 || cursorCount !== 1) return undefined;
-  return { question: questionAbove(lines, i), options };
+  const question = questionAbove(lines, i);
+  return question === undefined ? undefined : { question, options };
 }
 
 /** What one screen is waiting on, or undefined when it waits on nothing. */

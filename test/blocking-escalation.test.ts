@@ -173,6 +173,68 @@ describe("createBlockingEscalationWatcher", () => {
     expect(second).toEqual([]); // same (pane, fingerprint) episode: no repeat call
   });
 
+  // FACTORY-377: describeUnknownDialog used to return any non-blank line
+  // above the option block as the question, so chatter landing between the
+  // real question and the options corrupted the escalation payload and its
+  // fingerprint. Pins both halves of the fix at the level a caller actually
+  // observes: the escalated fingerprint.
+  describe("chatter lines around a weekly-limit-shaped dialog (FACTORY-377)", () => {
+    const weeklyLimit = (...chatterAboveOptions: string[]) => [
+      "some prior pane output",
+      "",
+      "What do you want to do?",
+      "",
+      ...chatterAboveOptions,
+      "❯ 1. Stop and wait for limit to reset",
+      "  2. Wait here, then continue automatically at Oct 1, 8am",
+      "  3. Switch to usage credits",
+      "",
+      "Enter to select · Esc to cancel",
+    ].join("\n");
+
+    async function escalatedFingerprint(screen: string): Promise<string | undefined> {
+      const c = client([{ pane_id: "w1:p1", agent_status: "blocked" }], { "w1:p1": screen });
+      const hook = recordingHook();
+      await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
+      return (hook.escalations[0] as { fingerprint?: string } | undefined)?.fingerprint;
+    }
+
+    test("chatter ABOVE the dialog, never touching the option block, leaves the fingerprint unchanged (the already-good case)", async () => {
+      const baseline = await escalatedFingerprint(weeklyLimit());
+      expect(baseline).toEqual(expect.any(String));
+      for (const n of [0, 1, 3, 9, 20]) {
+        const chatter = Array.from({ length: n }, (_, i) => `[butchr] outer chatter ${i + 1}`);
+        expect(await escalatedFingerprint([...chatter, "", weeklyLimit()].join("\n"))).toBe(baseline);
+      }
+    });
+
+    test("chatter directly above the option block no longer drifts the fingerprint or drops the real question (the fixed case)", async () => {
+      const baseline = await escalatedFingerprint(weeklyLimit());
+      for (const n of [1, 2, 5]) {
+        const chatter = Array.from({ length: n }, (_, i) => `[butchr] inner chatter ${i + 1}`);
+        expect(await escalatedFingerprint(weeklyLimit(...chatter))).toBe(baseline);
+      }
+    });
+
+    test("when nothing above the option block looks like a question, the dialog is reported, not escalated with a wrong payload", async () => {
+      const raw = [
+        "[butchr] FACTORY-1 was updated",
+        "[butchr] FACTORY-2 was updated",
+        "",
+        "❯ 1. Stop and wait for limit to reset",
+        "  2. Wait here, then continue automatically at Oct 1, 8am",
+        "  3. Switch to usage credits",
+        "",
+        "Enter to select · Esc to cancel",
+      ].join("\n");
+      const c = client([{ pane_id: "w1:p1", agent_status: "blocked" }], { "w1:p1": raw });
+      const hook = recordingHook();
+      const outcomes = await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
+      expect(outcomes).toEqual([{ paneId: "w1:p1", outcome: "reported", kind: "unknown", name: undefined }]);
+      expect(hook.escalations).toEqual([]);
+    });
+  });
+
   test("a hook rejection is reported per-pane and never thrown, so one failing pane cannot fail the whole poll", async () => {
     const c = client(
       [{ pane_id: "w1:p1", agent_status: "blocked" }, { pane_id: "w2:p1", agent_status: "blocked" }],

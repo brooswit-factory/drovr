@@ -267,6 +267,55 @@ describe("describeUnknownDialog", () => {
       options: ["Apply the refactor", "Skip for now"],
     });
   });
+
+  // FACTORY-377: a real weekly-limit-shaped menu (measured against drovr
+  // c6da5fc), the exact shape the defect was found on.
+  const weeklyLimit = (...chatterAboveOptions: string[]) => [
+    "some prior pane output",
+    "",
+    "What do you want to do?",
+    "",
+    ...chatterAboveOptions,
+    "❯ 1. Stop and wait for limit to reset",
+    "  2. Wait here, then continue automatically at Oct 1, 8am",
+    "  3. Switch to usage credits",
+    "",
+    "Enter to select · Esc to cancel",
+  ].join("\n");
+  const WEEKLY_LIMIT_OPTIONS = ["Stop and wait for limit to reset", "Wait here, then continue automatically at Oct 1, 8am", "Switch to usage credits"];
+
+  test("chatter ABOVE the dialog (not touching the option block) never changes the question — the already-good case (FACTORY-377)", () => {
+    const stable = describeUnknownDialog(weeklyLimit());
+    for (const n of [0, 1, 3, 9, 20]) {
+      const chatter = Array.from({ length: n }, (_, i) => `[butchr] outer chatter ${i + 1}`);
+      const raw = [...chatter, "", weeklyLimit()].join("\n");
+      expect(describeUnknownDialog(raw)).toEqual(stable);
+    }
+  });
+
+  test("chatter directly above the option block no longer becomes the question — the fixed case (FACTORY-377): the real question is recovered instead", () => {
+    for (const n of [1, 2, 5]) {
+      const chatter = Array.from({ length: n }, (_, i) => `[butchr] inner chatter ${i + 1}`);
+      expect(describeUnknownDialog(weeklyLimit(...chatter))).toEqual({
+        question: "What do you want to do?",
+        options: WEEKLY_LIMIT_OPTIONS,
+      });
+    }
+  });
+
+  test("when nothing above the option block looks like a question, the dialog is undefined rather than a confidently wrong payload (FACTORY-377)", () => {
+    const raw = [
+      "[butchr] FACTORY-1 was updated",
+      "[butchr] FACTORY-2 was updated",
+      "",
+      "❯ 1. Stop and wait for limit to reset",
+      "  2. Wait here, then continue automatically at Oct 1, 8am",
+      "  3. Switch to usage credits",
+      "",
+      "Enter to select · Esc to cancel",
+    ].join("\n");
+    expect(describeUnknownDialog(raw)).toBeUndefined();
+  });
 });
 
 describe("listBlockingPrompts", () => {
