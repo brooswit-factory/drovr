@@ -238,11 +238,18 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   for (let i = q - 1; i >= 0; i--) if (SEPARATOR.test(lines[i]!)) { separator = i; break; }
   let tool: string | undefined;
   let request: string;
+  // What `promptId` hashes in place of `request` — identical to `request`
+  // except on the no-separator Bash chrome below, where it deliberately
+  // excludes the reason/warning line so promptId stays a function of the
+  // command alone, never of which reason (if any) Claude renders that poll
+  // (FACTORY-391: `request` itself DOES carry that line, for the audit trail).
+  let promptIdRequest: string;
   if (separator >= 0) {
     const body = lines.slice(separator + 1, q).map((line) => line.trim()).filter((line) => line !== "" && !/^Tip:/.test(line));
     tool = body[0];
     if (tool === undefined) return undefined;
     request = body.slice(1).join("\n");
+    promptIdRequest = request;
   } else {
     // Try the generic MCP-tool frame first (FACTORY-365/6): it draws no `─`
     // rule anywhere on screen, framing its body with `About the <server> —
@@ -275,6 +282,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
         .map((line) => line.replace(DESCRIPTION_LINE_PREFIX, "").trim())
         .filter((line) => line !== "" && !MCP_EXPAND_HINT.test(line))
         .join("\n");
+      promptIdRequest = request;
     } else if (expandLine >= 0) {
       // FACTORY-396: the expand hint's own frame is present (only blank
       // lines between it and the question) but its `About the … Tool:`
@@ -327,7 +335,19 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
         if (!BASH_BODY_LINE_PREFIX.test(line)) break;
         bodyLines.unshift(line.replace(BASH_BODY_LINE_PREFIX, "").trim());
       }
-      request = bodyLines.join("\n");
+      // promptId is hashed from the command body alone (`promptIdRequest`),
+      // never from the gap — that's what keeps it stable regardless of which
+      // reason (if any) occupies the gap, the same invariant the bounded
+      // MAX_TITLE_GAP_LINES scan above exists to protect during recognition
+      // (FACTORY-391). `request`, returned for display/audit, additionally
+      // carries the gap's own reason/warning text (e.g. a too-complex
+      // command's `Contains brace with quote character (expansion
+      // obfuscation)`, FACTORY-146 comment 26827) — dropping it there lost the
+      // obfuscation signal the audit trail relied on before this chrome
+      // existed, even though it rightly never fed the anchor or the hash.
+      promptIdRequest = bodyLines.join("\n");
+      const reasonLines = lines.slice(titleLine + 1, q).map((line) => line.trim()).filter((line) => line !== "");
+      request = reasonLines.length > 0 ? `${promptIdRequest}\n${reasonLines.join("\n")}` : promptIdRequest;
     }
   }
   // The inline-`(esc)` hint alone is just verbatim option text, so a quoted
@@ -341,7 +361,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   // survives real trailing chatter landing on a still-live pane.
   if (!hasFooterLine && hasInlineEscHintOption && !WEBFETCH_BODY_MARKER.test(request)) return undefined;
   const question = QUESTION.exec(lines[q]!)![1]!;
-  const promptId = createHash("sha256").update(JSON.stringify([tool, request, question, options])).digest("hex").slice(0, 16);
+  const promptId = createHash("sha256").update(JSON.stringify([tool, promptIdRequest, question, options])).digest("hex").slice(0, 16);
   return { tool, request, question, options, cursor, promptId };
 }
 

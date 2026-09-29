@@ -342,10 +342,27 @@ onto what's actually invariant instead (FACTORY-385):
    first one immediately preceded by a `│`-prefixed line.
 3. Whatever occupies that gap — `This command requires approval`, a
    too-complex security warning, or nothing at all — is content, never the
-   anchor, and nothing here reads its text. The bound exists so unrelated
-   chatter can't manufacture a title line the screen never earned — the same
-   discipline the old "blank lines only" rule enforced, just wide enough now
-   to also admit a single reason line.
+   anchor, and nothing here reads its text to recognise the dialog. The bound
+   exists so unrelated chatter can't manufacture a title line the screen
+   never earned — the same discipline the old "blank lines only" rule
+   enforced, just wide enough now to also admit a single reason line.
+
+**FACTORY-391: the gap's content is not discarded, only kept out of the
+anchor.** The fix above (FACTORY-385) excluded gap content from `request`
+entirely, alongside excluding it from the anchor — losing the
+obfuscation/security-warning signal from `approvePermission`'s audit trail
+(`shown.request`) for a too-complex command in this chrome, even though the
+OLDER separator chrome's own `request` always included that line. `request`
+now appends the gap's non-blank lines (trimmed, joined in reading order)
+after the `│`-prefixed command body, when any are present — restoring parity
+with the older chrome. `promptId`, however, is still hashed from the command
+body ALONE (a separate `promptIdRequest` value, never returned), exactly as
+before this ticket: the whole point of excluding gap content from the anchor
+was to keep `promptId` naming the same prompt regardless of which reason (if
+any) Claude renders there, and folding the reason text into the hash would
+have reintroduced that instability by another route. A test asserts the same
+command with two different reason texts (and with the reason absent
+entirely) still yields the same `promptId`, while `request` differs.
 
 A synthetic 3-option variant of this same chrome (built from the real
 capture by dropping the stored-rule option, same method FACTORY-356 used for
