@@ -568,7 +568,11 @@ describe("classifyPermissionPrompt", () => {
       // above it as on the older one — proof the ordering is handled, not
       // just the presence of the two anchor lines.
       expect(prompt!.tool).toBe("Run shell command");
-      expect(prompt!.request).toBe('Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\nEOF\n)"\ngit log --oneline -3');
+      // FACTORY-391: `request` also carries the gap's own reason line
+      // ("This command requires approval" on this fixture) after the
+      // command body, matching the older separator chrome's behaviour of
+      // including that line in its own `request`.
+      expect(prompt!.request).toBe('Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\nEOF\n)"\ngit log --oneline -3\nThis command requires approval');
       expect(prompt!.options).toHaveLength(4);
       // U+2019 RIGHT SINGLE QUOTATION MARK, not a straight apostrophe (U+0027).
       expect(prompt!.options[1]).toBe("Yes, and don’t ask again for: git commit -m ' *");
@@ -677,13 +681,34 @@ describe("classifyPermissionPrompt", () => {
       const prompt = classifyPermissionPrompt(bashAutoModeFixture("synthetic-too-complex-new-chrome.txt"));
       expect(prompt).toBeDefined();
       expect(prompt!.tool).toBe("Run shell command");
-      // The reason line sits in the gap between title and question, never
-      // in `request` — this fallback's body is still only the │-prefixed
-      // run, exactly as for the "This command requires approval" case.
-      expect(prompt!.request).toBe("echo {'a','b'}");
+      // FACTORY-391: the reason/warning line sits in the gap between title
+      // and question, and is now carried into `request` — the audit trail
+      // (`approvePermission`'s `shown.request`) must show the obfuscation
+      // signal, the same way the older separator chrome always did.
+      expect(prompt!.request).toBe("echo {'a','b'}\nContains brace with quote character (expansion obfuscation)");
       expect(prompt!.options).toEqual(["Yes", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
       expect(optionFor(prompt!, "once")).toBe(0);
       expect(optionFor(prompt!, "always")).toBe(-1);
+    });
+
+    // FACTORY-391: `request` now carries whichever reason/warning text Claude
+    // rendered in the gap, but `promptId` must not — the gap's whole purpose
+    // (this docstring's own `MAX_TITLE_GAP_LINES` note) is to hold a reason
+    // that varies, or is absent, without that variation naming a different
+    // prompt. Compares the plain "This command requires approval" capture
+    // against the too-complex security-warning synthetic above: different
+    // reason text, different `request`, but the same command and so the
+    // same `promptId`.
+    test("promptId is unaffected by which reason text (if any) occupies the gap", () => {
+      const requiresApproval = classifyPermissionPrompt(bashAutoModeFixture(FOUR_OPTION))!;
+      const tooComplex = classifyPermissionPrompt(bashAutoModeFixture("synthetic-too-complex-new-chrome.txt"))!;
+      expect(requiresApproval.request).not.toBe(tooComplex.request);
+      expect(requiresApproval.tool).toBe(tooComplex.tool);
+      const sameCommand = classifyPermissionPrompt(
+        bashAutoModeFixture(FOUR_OPTION).replace("This command requires approval", ""),
+      )!;
+      expect(sameCommand.request).not.toBe(requiresApproval.request);
+      expect(sameCommand.promptId).toBe(requiresApproval.promptId);
     });
   });
 
