@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/drovr-logo.png" alt="drovr" width="240"></p>
+
 # drovr
 
 `@brooswit/drovr` is a wrapper around the [herdr](https://herdr.dev) SDK
