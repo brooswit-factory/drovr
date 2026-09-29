@@ -53,7 +53,23 @@ export type BlockingConditionKind = BlockingCondition["kind"];
 // actually see). Also not matched: "Could not refresh your login because another Claude…", which
 // carries a DIFFERENT tag, `error: "server_error"` — a transient refresh race, not a dead
 // credential, and its own text never mentions running /login either.
-const LOGIN_EXPIRED = /[Rr]un \/login|Failed to authenticate\. API Error: 401/;
+//
+// This is fed WHOLE SCREENS (a resident pane, a launch's full stdout, a log line), not isolated
+// messages, so a bare "run /login" substring anywhere on screen is too loose: stock Claude Code's
+// own `/help` output ("/login  Sign in; run /login again to switch accounts"), an agent's own prose
+// ("you may need to run /login in that pane"), or this very file's source shown in a pane would all
+// false-positive — and a false positive here is worse than a miss: resident-agent.ts turns any
+// match into a `ResidentMessageRefusal`, taking a HEALTHY session away, whereas a miss only delays
+// one detection. So the pattern requires the binary's own `<condition> · <remedy>` LINE shape, not
+// just the words anywhere in the text: a short run of non-"·" characters, a middle dot, then the
+// remedy — matching how every real message above is actually laid out, and rejecting free-standing
+// prose that merely mentions running /login.
+// Residual accepted, present with the old pattern too: a prose line that happens to quote one of
+// these messages verbatim (mid-sentence, not just anywhere in a screen) still matches, because that
+// line does carry the exact shape. Closing that fully needs a line-exact match against the full
+// known set, which trades brittleness against line-wrapping for a case that's already rare (quoting
+// the exact "<condition> · <remedy>" text, not just referring to /login).
+const LOGIN_EXPIRED = /^[ \t]*[^\n·]{1,120}·[ \t]*(?:Please )?[Rr]un \/login\b|^[ \t]*Failed to authenticate\. API Error: 401/m;
 const DAEMON_BINARY_REPLACED = /daemon binary was deleted \(upgrade in progress\)/;
 const MCP_APPROVAL_PROMPT = /New\s*MCP\s*server\s*found\s*in\s*this\s*project/;
 

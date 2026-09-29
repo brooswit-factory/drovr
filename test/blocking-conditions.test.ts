@@ -58,6 +58,32 @@ describe("classifyBlockingText", () => {
     )).toBeUndefined();
   });
 
+  // FACTORY-393, second review round. This function reads WHOLE SCREENS (a resident pane, a
+  // launch's full stdout), not isolated messages, and a false positive here is worse than a miss:
+  // resident-agent.ts turns any match into a ResidentMessageRefusal, taking a healthy session away.
+  // A bare "run /login" substring anywhere in a screen is too loose — these are all real screens
+  // that mention /login without being a credential death.
+  test("does not treat a screen merely mentioning /login as a credential death", () => {
+    // Stock Claude Code's own `/help` output.
+    expect(classifyBlockingText("claude", "/login  Sign in; run /login again to switch accounts")).toBeUndefined();
+    // An agent's own prose, not a rendered error.
+    expect(classifyBlockingText("claude", "you may need to run /login in that pane yourself")).toBeUndefined();
+    // This file's own source (or a diff of it) shown in a pane.
+    expect(classifyBlockingText("claude", 'const LOGIN_EXPIRED = /[Rr]un \\/login|Failed to authenticate\\. API Error: 401/;')).toBeUndefined();
+  });
+
+  // Two messages that both read, to a human, as "the same condition" (an Anthropic profile's login
+  // expiring) can still carry genuinely different remedies — and this classifier is built to respect
+  // that difference, not paper over it: one instructs /login, the other instructs re-authenticating
+  // the profile, which `startClaudeLogin` does not do.
+  test("distinguishes sibling profile-login messages by their own stated remedy", () => {
+    expect(classifyBlockingText(
+      "claude",
+      "Anthropic profile login expired · Run /login to use your claude.ai account instead, or re-authenticate the profile",
+    )?.kind).toBe("login-expired");
+    expect(classifyBlockingText("claude", "Anthropic profile login expired · Re-authenticate your Anthropic profile")).toBeUndefined();
+  });
+
   test("leaves ordinary failures to the caller", () => {
     expect(classifyBlockingText("claude", "You've hit your limit · resets 9am (America/Los_Angeles)")).toBeUndefined();
     expect(classifyBlockingText("claude", "")).toBeUndefined();
