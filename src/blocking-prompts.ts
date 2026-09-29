@@ -94,16 +94,21 @@ const QUESTION_TAIL = 6;
 const FOOTER_LINE = /^\s*(Enter to (confirm|continue|select)|Esc to cancel)/;
 const SEPARATOR_OR_TIP = /^(─+|·|Tip:)/;
 /**
- * A bracket-tagged notification line (e.g. a `[butchr] …` nudge landing on a
- * still-live pane) — chatter injected between a dialog's real question and
- * its option block, never a question of the dialog's own (FACTORY-377).
- * Skipped like `SEPARATOR_OR_TIP` rather than accepted: unlike a separator,
- * which never disguises itself as content, this is exactly the shape a
- * dropped-in notification takes, so treating it as opaque noise to scan past
- * — rather than as the question — is what lets the real question underneath
- * it still be found.
+ * The rule (`▔`, U+2594 "upper one eighth block", repeated) a still-live pane
+ * draws directly above a dialog when butchr's own notification chatter has
+ * interleaved with it (see permission-approval.ts's doc comment on the same
+ * rule) — real captures (FACTORY-377, `test/fixtures/rate-limit-options/`)
+ * show it immediately above the question, with an arbitrary, unbounded run
+ * of chatter above THAT: several distinct notification shapes (`❯ [butchr]
+ * …`, `← butchr: [butchr] …`), interleaved with the pane's own prior output,
+ * and even an unlabelled wrapped continuation line with no chatter marker at
+ * all. No prefix or shape regex can enumerate that family — the 146/356/365/
+ * 372 fixes already paid for that lesson on the permission path — so this
+ * anchors on the one thing every one of those shapes shares: never drawing
+ * this exact rule itself. `questionAbove` treats it as a hard floor: nothing
+ * at or above it is ever read as the question, however far the chatter runs.
  */
-const NOTIFICATION_CHATTER = /^\[[^\]\n]+\]/;
+const CHATTER_FRAME_RULE = /^▔+$/;
 
 /**
  * `AskUserQuestion`'s side-by-side layout draws a boxed preview column to
@@ -173,13 +178,21 @@ const NUMBERED_OPTION = /^\s*(❯\s*)?(\d+)\.\s+(.+)$/;
  * `QUESTION_TAIL` lines above the options), which let an unrelated line —
  * command output, file contents, a notification nudge — leave the pane
  * through this field and reach a host's public escalation comment verbatim.
- * `questionAbove` now requires the collected text to itself look like a
- * question (ending in `?`) and skips known chatter shapes while climbing, so
- * a screen with nothing question-shaped above its options returns undefined
- * for the whole dialog rather than confidently quoting whatever was there.
- * This is a promise of confinement to the dialog, not merely of verbatim
- * fidelity to whatever this function happened to extract — the two are
- * different guarantees, and only the fix above makes the first one true.
+ * `questionAbove` now anchors on `CHATTER_FRAME_RULE`, the dialog's own
+ * frame boundary, when one is present: nothing at or above it is ever read,
+ * however much chatter is interleaved above the dialog, and however that
+ * chatter is shaped — confinement here holds by construction, not by
+ * recognising chatter's shape, which is what makes it true of chatter this
+ * function has never seen. What's collected must also itself read as a
+ * question (end in `?`), or the whole dialog is undefined rather than a
+ * confidently wrong payload. The residual, honestly named: with NO frame
+ * rule on screen at all (a dialog nothing has interleaved with — the
+ * ordinary case), the climb still has only the bounded `QUESTION_TAIL`
+ * window and the `?`-ending check to go on, same as before this fix; an
+ * unrelated line ending in `?` sitting alone in that unbounded-content
+ * window can still be read as the question. This is a narrower, structural
+ * promise of confinement against the interleaved-chatter shape this ticket
+ * measured — not an unconditional one against every possible screen.
  */
 export function describeUnknownDialog(raw: string): { question: string; options: string[] } | undefined {
   const lines = stripTerminalEscapes(raw).split(/\r?\n/).map((line) => line.replace(/\s+$/, ""));
@@ -190,24 +203,30 @@ export function describeUnknownDialog(raw: string): { question: string; options:
  * The dialog's own question, scanning up from directly above the option
  * block — or undefined when nothing in that climb reads as one.
  *
- * `SEPARATOR_OR_TIP` and `NOTIFICATION_CHATTER` lines are both skipped
- * outright rather than counted or accepted: they cost nothing against
- * `QUESTION_TAIL`, so a real question sitting just above injected chatter
- * (FACTORY-377's measured case — a `[butchr] …` nudge landing directly above
- * the option block) is still found instead of being shadowed by the chatter
- * or by running out of window on it. What IS collected must still look like
- * a question — end in `?` — once joined; a screen where nothing above the
+ * If `CHATTER_FRAME_RULE` appears anywhere in the climb, it is a hard floor:
+ * the scan never reads at or above it, however much chatter piled up there
+ * (FACTORY-377) — a structural anchor on the dialog's own frame, not a guess
+ * at chatter's shape, which is what makes it robust against shapes this
+ * function has never seen. Below that floor (or from the very top of screen
+ * when no such rule is present at all — the ordinary case for a dialog
+ * nothing has interleaved with), the closest `QUESTION_TAIL` non-blank lines
+ * are collected, skipping `SEPARATOR_OR_TIP` lines, and must themselves read
+ * as a question — end in `?` — once joined; a screen where nothing above the
  * options does is reported as undefined here, not papered over with
  * whatever non-blank text happened to be sitting there. Undefined here fails
  * the whole dialog (see `describeUnknownDialog`): a caller must never get a
  * confidently wrong payload in place of an honest "couldn't read this one".
  */
 function questionAbove(lines: string[], lastAboveOptions: number): string | undefined {
+  let floor = 0;
+  for (let i = lastAboveOptions; i >= 0; i--) {
+    if (CHATTER_FRAME_RULE.test(lines[i]!.trim())) { floor = i + 1; break; }
+  }
   const text: string[] = [];
-  for (let i = lastAboveOptions; i >= 0 && text.length < QUESTION_TAIL; i--) {
+  for (let i = lastAboveOptions; i >= floor && text.length < QUESTION_TAIL; i--) {
     const line = lines[i]!.trim();
     if (line === "") { if (text.length) break; continue; }
-    if (SEPARATOR_OR_TIP.test(line) || NOTIFICATION_CHATTER.test(line)) continue;
+    if (SEPARATOR_OR_TIP.test(line)) continue;
     text.unshift(line);
   }
   const question = text.join(" ").trim();

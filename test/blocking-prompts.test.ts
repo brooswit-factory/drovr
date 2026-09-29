@@ -269,13 +269,17 @@ describe("describeUnknownDialog", () => {
   });
 
   // FACTORY-377: a real weekly-limit-shaped menu (measured against drovr
-  // c6da5fc), the exact shape the defect was found on.
-  const weeklyLimit = (...chatterAboveOptions: string[]) => [
+  // c6da5fc), the exact shape the defect was found on. Also covered by three
+  // REAL captures below (test/fixtures/rate-limit-options/), which are the
+  // ticket's actual production evidence — this synthetic fixture models the
+  // same shape but must never substitute for asserting on those directly.
+  const CHATTER_FRAME_RULE_LINE = "▔".repeat(94);
+  const weeklyLimit = (...chatterAboveFrameRule: string[]) => [
     "some prior pane output",
     "",
+    ...(chatterAboveFrameRule.length ? [...chatterAboveFrameRule, CHATTER_FRAME_RULE_LINE] : []),
     "What do you want to do?",
     "",
-    ...chatterAboveOptions,
     "❯ 1. Stop and wait for limit to reset",
     "  2. Wait here, then continue automatically at Oct 1, 8am",
     "  3. Switch to usage credits",
@@ -283,9 +287,11 @@ describe("describeUnknownDialog", () => {
     "Enter to select · Esc to cancel",
   ].join("\n");
   const WEEKLY_LIMIT_OPTIONS = ["Stop and wait for limit to reset", "Wait here, then continue automatically at Oct 1, 8am", "Switch to usage credits"];
+  const WEEKLY_LIMIT_STABLE = { question: "What do you want to do?", options: WEEKLY_LIMIT_OPTIONS };
 
   test("chatter ABOVE the dialog (not touching the option block) never changes the question — the already-good case (FACTORY-377)", () => {
     const stable = describeUnknownDialog(weeklyLimit());
+    expect(stable).toEqual(WEEKLY_LIMIT_STABLE);
     for (const n of [0, 1, 3, 9, 20]) {
       const chatter = Array.from({ length: n }, (_, i) => `[butchr] outer chatter ${i + 1}`);
       const raw = [...chatter, "", weeklyLimit()].join("\n");
@@ -293,20 +299,29 @@ describe("describeUnknownDialog", () => {
     }
   });
 
-  test("chatter directly above the option block no longer becomes the question — the fixed case (FACTORY-377): the real question is recovered instead", () => {
-    for (const n of [1, 2, 5]) {
-      const chatter = Array.from({ length: n }, (_, i) => `[butchr] inner chatter ${i + 1}`);
-      expect(describeUnknownDialog(weeklyLimit(...chatter))).toEqual({
-        question: "What do you want to do?",
-        options: WEEKLY_LIMIT_OPTIONS,
-      });
+  // The real captures show chatter with no common shape at all: distinct
+  // notification prefixes, the pane's own prior output interleaved with it,
+  // and an unlabelled wrapped continuation line — the frame rule directly
+  // above the question is the only thing every one of those shapes shares
+  // (see CHATTER_FRAME_RULE's own doc comment for why that, not a prefix
+  // regex, is what this anchors on).
+  test("chatter directly above the dialog's own frame rule no longer becomes the question — the fixed case (FACTORY-377): the real question is recovered instead, however the chatter above the rule is shaped", () => {
+    const chatterShapes: string[][] = [
+      ["[butchr] inner chatter 1"],
+      ["❯ [butchr] related:jira-work:FACTORY-328 got a new comment", "  re-read it, then act."],
+      ["← butchr: [butchr] Ticket FACTORY-327 got a new comment — re-read it."],
+      ["  Called butchr, ran 1 shell command", "✻ Crunched for 9s · done 8:04 PM", "❯ [butchr] Ticket FACTORY-327 was updated — re-read", "  it."],
+    ];
+    for (const chatter of chatterShapes) {
+      expect(describeUnknownDialog(weeklyLimit(...chatter))).toEqual(WEEKLY_LIMIT_STABLE);
     }
   });
 
-  test("when nothing above the option block looks like a question, the dialog is undefined rather than a confidently wrong payload (FACTORY-377)", () => {
+  test("when nothing between the dialog's own frame rule and the option block looks like a question, the dialog is undefined rather than a confidently wrong payload (FACTORY-377)", () => {
     const raw = [
       "[butchr] FACTORY-1 was updated",
       "[butchr] FACTORY-2 was updated",
+      CHATTER_FRAME_RULE_LINE,
       "",
       "❯ 1. Stop and wait for limit to reset",
       "  2. Wait here, then continue automatically at Oct 1, 8am",
@@ -315,6 +330,19 @@ describe("describeUnknownDialog", () => {
       "Enter to select · Esc to cancel",
     ].join("\n");
     expect(describeUnknownDialog(raw)).toBeUndefined();
+  });
+
+  describe("real captures (FACTORY-377 production evidence, test/fixtures/rate-limit-options/)", () => {
+    test("all three real weekly-limit escalation captures read the same stable, correct question and options — not the chatter that used to corrupt them", () => {
+      for (const file of [
+        "pane-cap-escalation-20260927T030643Z.txt",
+        "pane-cap-escalation-20260927T030721Z.txt",
+        "pane-cap-escalation-20260927T030736Z.txt",
+      ]) {
+        const raw = readFileSync(new URL(`./fixtures/rate-limit-options/${file}`, import.meta.url), "utf8");
+        expect(describeUnknownDialog(raw)).toEqual(WEEKLY_LIMIT_STABLE);
+      }
+    });
   });
 });
 
