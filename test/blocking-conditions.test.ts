@@ -21,6 +21,69 @@ describe("classifyBlockingText", () => {
       .toBe("mcp-approval-prompt");
   });
 
+  // FACTORY-393. Claude Code's binary (build 2.1.251, per FACTORY-393's ticket text, confirmed
+  // against this checkout's own `readlink -f "$(command -v claude)"`) carries these as separate
+  // constants; read the bundle's auth-error dispatcher function directly (search its extracted
+  // strings for `authentication_failed` to find it) rather than reconstructing from rendered text
+  // alone — that is how the below was settled, including which of them share Claude's own
+  // `error: "authentication_failed"` tag (all four here do) and which of THOSE this classifier
+  // still recognises (see the LOGIN_EXPIRED comment: text-matching trusts what the message itself
+  // says to do, not the invisible tag).
+  test("recognises every credential-death message whose own text says to run /login", () => {
+    expect(classifyBlockingText("claude", "Login expired · Please run /login")?.kind).toBe("login-expired");
+    expect(classifyBlockingText("claude", "OAuth token revoked · Please run /login")?.kind).toBe("login-expired");
+    expect(classifyBlockingText("claude", "Not logged in · Please run /login")?.kind).toBe("login-expired");
+    expect(classifyBlockingText(
+      "claude",
+      "Your organization has disabled API key authentication · Run /login to sign in with your claude.ai account",
+    )?.kind).toBe("login-expired");
+    expect(classifyBlockingText("claude", 'Failed to authenticate. API Error: 401 {"type":"error"}')?.kind).toBe("login-expired");
+  });
+
+  // These three all carry the SAME `error: "authentication_failed"` tag as the messages above, but
+  // are deliberately NOT matched: each one's own text names a fix other than /login, and text
+  // matching (unlike classifyClaudeTranscriptRecord, which reads the tag directly) has no way to
+  // see the tag — only the text, which is what it must trust.
+  test("does not treat a same-tag message as login-expired when its own text names a different fix", () => {
+    // Remedy is an env var, not a login: running startClaudeLogin would not fix this.
+    expect(classifyBlockingText("claude", "Invalid API key · Fix external API key")).toBeUndefined();
+    // Own text says this is a temporary network issue and to retry — not a dead credential.
+    expect(classifyBlockingText("claude", "Authentication error · This may be a temporary network issue, please try again")).toBeUndefined();
+    // Tagged `error: "server_error"`, not `authentication_failed`, and its own text says to retry
+    // in a minute — a transient refresh race between two Claude Code processes, not a dead
+    // credential.
+    expect(classifyBlockingText(
+      "claude",
+      "Could not refresh your login because another Claude Code process is refreshing it (or exited mid-refresh) · Try again in a minute; if it keeps happening, close other Claude Code windows or sign in again with /login",
+    )).toBeUndefined();
+  });
+
+  // FACTORY-393, second review round. This function reads WHOLE SCREENS (a resident pane, a
+  // launch's full stdout), not isolated messages, and a false positive here is worse than a miss:
+  // resident-agent.ts turns any match into a ResidentMessageRefusal, taking a healthy session away.
+  // A bare "run /login" substring anywhere in a screen is too loose — these are all real screens
+  // that mention /login without being a credential death.
+  test("does not treat a screen merely mentioning /login as a credential death", () => {
+    // Stock Claude Code's own `/help` output.
+    expect(classifyBlockingText("claude", "/login  Sign in; run /login again to switch accounts")).toBeUndefined();
+    // An agent's own prose, not a rendered error.
+    expect(classifyBlockingText("claude", "you may need to run /login in that pane yourself")).toBeUndefined();
+    // This file's own source (or a diff of it) shown in a pane.
+    expect(classifyBlockingText("claude", 'const LOGIN_EXPIRED = /[Rr]un \\/login|Failed to authenticate\\. API Error: 401/;')).toBeUndefined();
+  });
+
+  // Two messages that both read, to a human, as "the same condition" (an Anthropic profile's login
+  // expiring) can still carry genuinely different remedies — and this classifier is built to respect
+  // that difference, not paper over it: one instructs /login, the other instructs re-authenticating
+  // the profile, which `startClaudeLogin` does not do.
+  test("distinguishes sibling profile-login messages by their own stated remedy", () => {
+    expect(classifyBlockingText(
+      "claude",
+      "Anthropic profile login expired · Run /login to use your claude.ai account instead, or re-authenticate the profile",
+    )?.kind).toBe("login-expired");
+    expect(classifyBlockingText("claude", "Anthropic profile login expired · Re-authenticate your Anthropic profile")).toBeUndefined();
+  });
+
   test("leaves ordinary failures to the caller", () => {
     expect(classifyBlockingText("claude", "You've hit your limit · resets 9am (America/Los_Angeles)")).toBeUndefined();
     expect(classifyBlockingText("claude", "")).toBeUndefined();
