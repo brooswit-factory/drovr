@@ -288,24 +288,42 @@ export interface AgyAgentLaunch extends AgentLaunchBase {
 
 export type ManagedAgentLaunch = ClaudeAgentLaunch | CodexAgentLaunch | AgyAgentLaunch;
 
-function tomlString(value: string): string {
-  return JSON.stringify(value);
+/**
+ * On win32, herdr joins a Codex pane's argv into a single PowerShell
+ * `Start-Process -ArgumentList` string; that re-parse eats the escaped `"`
+ * a TOML basic string relies on (see FACTORY-571). A TOML *literal* string
+ * (single-quoted, no escape processing) carries no such quote and needs no
+ * backslash doubling, so it survives that hop intact. It cannot represent a
+ * value containing `'` — such a value throws rather than silently falling
+ * back to a basic string, which would reintroduce the bug it exists to avoid.
+ */
+function tomlString(value: string, platform: NodeJS.Platform): string {
+  if (platform !== "win32") return JSON.stringify(value);
+  if (value.includes("'")) {
+    throw new Error(`Cannot encode ${JSON.stringify(value)} as a Windows-safe TOML literal string: it contains a single quote`);
+  }
+  return `'${value}'`;
 }
 
-function tomlStringMap(value: Readonly<Record<string, string>>): string {
+function tomlStringMap(value: Readonly<Record<string, string>>, platform: NodeJS.Platform): string {
   return `{ ${Object.entries(value)
-    .map(([key, entry]) => `${tomlString(key)} = ${tomlString(entry)}`)
+    .map(([key, entry]) => `${tomlString(key, platform)} = ${tomlString(entry, platform)}`)
     .join(", ")} }`;
 }
 
-function codexMcpArg(server: McpServerLaunchConfig): string {
+function codexMcpArg(server: McpServerLaunchConfig, platform: NodeJS.Platform): string {
   const headers = server.headers && Object.keys(server.headers).length
-    ? `, http_headers = ${tomlStringMap(server.headers)}`
+    ? `, http_headers = ${tomlStringMap(server.headers, platform)}`
     : "";
-  return `mcp_servers.${safeName(server.name)}={ url = ${tomlString(server.url)}${headers}, enabled = true }`;
+  return `mcp_servers.${safeName(server.name)}={ url = ${tomlString(server.url, platform)}${headers}, enabled = true }`;
 }
 
-function disabledCodexMcpArg(server: DisabledMcpServer): string {
+function disabledCodexMcpArg(server: DisabledMcpServer, platform: NodeJS.Platform): string {
+  if (platform === "win32") {
+    return `mcp_servers.${safeName(server.name)}={enabled=false,${server.transport === "stdio"
+      ? "command='false'"
+      : "url='http://127.0.0.1:9/disabled'"}}`;
+  }
   return `mcp_servers.${safeName(server.name)}={enabled=false,${server.transport === "stdio"
     ? 'command="false"'
     : 'url="http://127.0.0.1:9/disabled"'}}`;
@@ -315,7 +333,10 @@ function disabledCodexMcpArg(server: DisabledMcpServer): string {
  * Translate application intent into Herdr's low-level agent.start contract.
  * Herdr owns the pane and process; Drovr owns provider-specific CLI shape.
  */
-export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"agent.start"> {
+export function buildAgentStartParams(
+  launch: ManagedAgentLaunch,
+  platform: NodeJS.Platform = process.platform,
+): ParamsOf<"agent.start"> {
   const common = {
     name: launch.name,
     pane_id: launch.paneId,
@@ -362,11 +383,11 @@ export function buildAgentStartParams(launch: ManagedAgentLaunch): ParamsOf<"age
       ...(launch.model ? ["--model", launch.model] : []),
       "--cd", launch.cwd,
       ...(launch.bypassApprovalsAndSandbox === false ? [] : ["--dangerously-bypass-approvals-and-sandbox"]),
-      ...launch.mcpServers.flatMap((server) => ["--config", codexMcpArg(server)]),
+      ...launch.mcpServers.flatMap((server) => ["--config", codexMcpArg(server, platform)]),
       ...(launch.trustWorkspace === false
         ? []
-        : ["--config", `projects={${tomlString(launch.cwd)}={trust_level="trusted"}}`]),
-      ...(launch.disabledMcpServers ?? []).flatMap((server) => ["--config", disabledCodexMcpArg(server)]),
+        : ["--config", `projects={${tomlString(launch.cwd, platform)}={trust_level=${tomlString("trusted", platform)}}}`]),
+      ...(launch.disabledMcpServers ?? []).flatMap((server) => ["--config", disabledCodexMcpArg(server, platform)]),
     ],
   };
 }

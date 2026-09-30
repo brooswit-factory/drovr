@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.16.6
+
+FACTORY-571/FACTORY-573: on win32, herdr's Codex pane joins argv into a single
+PowerShell `Start-Process -ArgumentList` string; that re-parse eats the
+escaped `"` (and un-doubles the `\`) a TOML **basic** string relies on, so
+every `--config key={...}` value Codex received had its quotes stripped —
+`invalid type: string "{C:\\...={trust_level=trusted}}", expected a map in
+projects`. drovr does not own that PowerShell hop and cannot change it; it
+can stop depending on it.
+
+- `tomlString`, `tomlStringMap`, `codexMcpArg`, `disabledCodexMcpArg`, and the
+  inline `projects={...}` expression in `buildAgentStartParams` now take a
+  `platform: NodeJS.Platform` (threaded from a new, optional second
+  `buildAgentStartParams(launch, platform = process.platform)` parameter) and
+  emit TOML **literal** strings (single-quoted, no escape processing) on
+  win32 only. A literal string carries no `"` and does no backslash
+  escaping, so it survives the `Start-Process` re-parse intact — verified by
+  round-tripping every win32 `--config` value through `Bun.TOML.parse` for
+  both a drive-letter and a UNC cwd.
+- A value containing `'` cannot be represented as a TOML literal string; it
+  throws a clear, actionable error naming the value rather than silently
+  falling back to a basic string, which would reintroduce the bug.
+- POSIX (`process.platform !== "win32"`) output is byte-identical to
+  `0.16.5` — every existing assertion in `test/agent-runtime.test.ts` and
+  `test/launch-inputs.test.ts` passes unchanged.
+- **Residual, not closed by this fix:** a value containing a *space* is
+  still wrapped in `"` by herdr's own `quote_windows_command_line_arg`, and
+  that `"` faces the same `Start-Process` re-parse. A workspace path with a
+  space, and the `prompt`/brief argument (which always has spaces), remain
+  exposed through a mechanism drovr cannot fix from its side.
+- Side effect, no separate work: `checkManagedAgentArgv` compares expected
+  vs. observed argv and could not match on Windows because the observed
+  `--config` values were mangled; quote-free values fix that incidentally.
+- No Windows host was used to verify this; verification is the argv drovr
+  emits, replayed through herdr's own quoting functions and through a real
+  TOML parser (`Bun.TOML.parse`), as detailed on FACTORY-571's triage
+  comment.
+
 ## 0.16.5
 
 FACTORY-565: bump `@brooswit/herdr-sdk` from `^0.1.3` to `^0.3.0`, so drovr

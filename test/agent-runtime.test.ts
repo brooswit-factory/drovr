@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentStartParams, checkManagedAgentArgv, inventoryCodexMcpServers, managedAgentProviderOfProcess, parseCodexMcpInventory, type AgyAgentLaunch } from "../src/index.js";
+import { buildAgentStartParams, checkManagedAgentArgv, inventoryCodexMcpServers, managedAgentProviderOfProcess, parseCodexMcpInventory, type AgyAgentLaunch, type CodexAgentLaunch } from "../src/index.js";
 
 describe("provider-owned agent launch plans", () => {
   test("recognizes managed providers from executable or process name", () => {
@@ -186,6 +186,95 @@ describe("provider-owned agent launch plans", () => {
     expect(Bun.TOML.parse(configs[1]!)).toEqual({ projects: { "/work dir/TEST-2": { trust_level: "trusted" } } });
     expect(configs).toContain('mcp_servers.yappr={enabled=false,command="false"}');
     expect(configs).toContain('mcp_servers.other={enabled=false,url="http://127.0.0.1:9/disabled"}');
+  });
+
+  // FACTORY-571/FACTORY-573: on win32, herdr joins a Codex pane's argv into one
+  // PowerShell `Start-Process -ArgumentList` string; the re-parse eats the `"`
+  // (and un-doubles the `\`) a TOML basic string relies on. TOML literal strings
+  // (single-quoted, no escapes) carry neither, so they survive intact.
+  describe.each([
+    ["a drive-letter cwd", "C:\\Users\\zippy\\butchr-workspaces\\FACTORY-571"],
+    ["a UNC cwd", "\\\\server\\share\\ws\\FACTORY-571"],
+  ])("win32 Codex --config values for %s", (_label, cwd) => {
+    function win32Configs(overrides: Partial<CodexAgentLaunch> = {}) {
+      const result = buildAgentStartParams({
+        provider: "codex",
+        name: "butchr-test-win",
+        paneId: "w1:p2",
+        cwd,
+        prompt: "follow your AGENTS.md",
+        mcpServers: [{ name: "butchr", url: "http://localhost:7717/mcp", headers: {
+          "x-issue": "TEST-2",
+          "x-butchr-provider": "codex",
+        } }],
+        disabledMcpServers: [
+          { name: "yappr", transport: "stdio" },
+          { name: "other", transport: "streamable_http" },
+        ],
+        ...overrides,
+      }, "win32");
+      return result.args!.flatMap((value, index, all) => value === "--config" ? [all[index + 1]!] : []);
+    }
+
+    test("no --config value contains a double quote, and the cwd's backslashes are not doubled", () => {
+      const configs = win32Configs();
+      expect(configs.length).toBeGreaterThan(0);
+      for (const config of configs) expect(config).not.toContain('"');
+      const projectsConfig = configs.find((config) => config.startsWith("projects="))!;
+      // JSON.stringify would double every backslash; a TOML literal string does no
+      // escape processing, so the cwd's own backslash count survives unchanged.
+      const backslashesInConfig = projectsConfig.split("\\").length - 1;
+      const backslashesInCwd = cwd.split("\\").length - 1;
+      expect(backslashesInConfig).toBe(backslashesInCwd);
+    });
+
+    test("each --config value round-trips through Bun.TOML.parse to the intended table", () => {
+      const configs = win32Configs();
+      const [mcpConfig, projectsConfig, yapprConfig, otherConfig] = configs;
+      expect(Bun.TOML.parse(mcpConfig!)).toEqual({ mcp_servers: { butchr: {
+        url: "http://localhost:7717/mcp",
+        enabled: true,
+        http_headers: { "x-issue": "TEST-2", "x-butchr-provider": "codex" },
+      } } });
+      expect(Bun.TOML.parse(projectsConfig!)).toEqual({ projects: { [cwd]: { trust_level: "trusted" } } });
+      expect(Bun.TOML.parse(yapprConfig!)).toEqual({ mcp_servers: { yappr: { enabled: false, command: "false" } } });
+      expect(Bun.TOML.parse(otherConfig!)).toEqual({ mcp_servers: { other: { enabled: false, url: "http://127.0.0.1:9/disabled" } } });
+    });
+
+    test("the projects key is character-for-character equal to the input cwd", () => {
+      const configs = win32Configs();
+      const parsed = Bun.TOML.parse(configs[1]!) as { projects: Record<string, unknown> };
+      expect(Object.keys(parsed.projects)).toEqual([cwd]);
+    });
+  });
+
+  test("win32 linux argv stays available: platform defaults to process.platform, and an explicit linux request is unaffected by win32 support", () => {
+    const linuxArgs = buildAgentStartParams({
+      provider: "codex",
+      name: "butchr-test-2",
+      paneId: "w1:p2",
+      cwd: "/work dir/TEST-2",
+      prompt: "follow your AGENTS.md",
+      model: "gpt-test",
+      mcpServers: [{ name: "butchr", url: "http://localhost:7717/mcp" }],
+    }, "linux").args;
+    expect(linuxArgs).toContain('--config');
+    const configs = linuxArgs!.flatMap((value, index, all) => value === "--config" ? [all[index + 1]!] : []);
+    expect(configs).toEqual([
+      'mcp_servers.butchr={ url = "http://localhost:7717/mcp", enabled = true }',
+      'projects={"/work dir/TEST-2"={trust_level="trusted"}}',
+    ]);
+  });
+
+  test("a value containing a single quote cannot be encoded as a win32 TOML literal string and throws a clear, actionable error", () => {
+    expect(() => buildAgentStartParams({
+      provider: "codex",
+      name: "test",
+      paneId: "p",
+      cwd: "C:\\Users\\it's-mine\\ws",
+      prompt: "go",
+      mcpServers: [],
+    }, "win32")).toThrow(/single quote/);
   });
 
   test("rejects unsafe MCP names before constructing a CLI argument", () => {
