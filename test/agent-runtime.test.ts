@@ -277,6 +277,45 @@ describe("provider-owned agent launch plans", () => {
     }, "win32")).toThrow(/single quote/);
   });
 
+  test("FACTORY-574: a header VALUE containing a double quote cannot be encoded as a win32 TOML literal string and throws a clear, actionable error", () => {
+    expect(() => buildAgentStartParams({
+      provider: "codex",
+      name: "test",
+      paneId: "p",
+      cwd: "C:\\Users\\win\\ws",
+      prompt: "go",
+      mcpServers: [{ name: "butchr", url: "http://localhost:7717/mcp", headers: {
+        "x-quoted": "a \"quoted\" value",
+      } }],
+    }, "win32")).toThrow(/double quote/);
+  });
+
+  test("FACTORY-574: a header KEY containing a double quote cannot be encoded as a win32 TOML literal string and throws a clear, actionable error", () => {
+    expect(() => buildAgentStartParams({
+      provider: "codex",
+      name: "test",
+      paneId: "p",
+      cwd: "C:\\Users\\win\\ws",
+      prompt: "go",
+      mcpServers: [{ name: "butchr", url: "http://localhost:7717/mcp", headers: {
+        'x-"quoted"-key': "value",
+      } }],
+    }, "win32")).toThrow(/double quote/);
+  });
+
+  test("FACTORY-574: a value containing a raw newline cannot be encoded as a win32 TOML literal string and throws a clear, actionable error", () => {
+    expect(() => buildAgentStartParams({
+      provider: "codex",
+      name: "test",
+      paneId: "p",
+      cwd: "C:\\Users\\win\\ws",
+      prompt: "go",
+      mcpServers: [{ name: "butchr", url: "http://localhost:7717/mcp", headers: {
+        "x-multiline": "line one\nline two",
+      } }],
+    }, "win32")).toThrow(/control character/);
+  });
+
   test("rejects unsafe MCP names before constructing a CLI argument", () => {
     expect(() => buildAgentStartParams({
       provider: "codex",

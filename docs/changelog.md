@@ -19,9 +19,15 @@ can stop depending on it.
   escaping, so it survives the `Start-Process` re-parse intact — verified by
   round-tripping every win32 `--config` value through `Bun.TOML.parse` for
   both a drive-letter and a UNC cwd.
-- A value containing `'` cannot be represented as a TOML literal string; it
-  throws a clear, actionable error naming the value rather than silently
-  falling back to a basic string, which would reintroduce the bug.
+- A value containing `'` or `"` cannot be represented as a TOML literal
+  string; it throws a clear, actionable error naming the value rather than
+  silently falling back to a basic string, which would reintroduce the bug —
+  a `"` passing through unescaped is exactly the PowerShell re-parse hazard
+  this fix exists to close (FACTORY-572). Keys go through the same
+  `tomlString` function, so a header key containing `'` or `"` throws too.
+  A raw newline, carriage return, or other control character (other than
+  tab) also throws: TOML literal strings are single-line, and such a
+  character has no representation in one.
 - POSIX (`process.platform !== "win32"`) output is byte-identical to
   `0.16.5` — every existing assertion in `test/agent-runtime.test.ts` and
   `test/launch-inputs.test.ts` passes unchanged.

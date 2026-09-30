@@ -294,13 +294,23 @@ export type ManagedAgentLaunch = ClaudeAgentLaunch | CodexAgentLaunch | AgyAgent
  * a TOML basic string relies on (see FACTORY-571). A TOML *literal* string
  * (single-quoted, no escape processing) carries no such quote and needs no
  * backslash doubling, so it survives that hop intact. It cannot represent a
- * value containing `'` — such a value throws rather than silently falling
- * back to a basic string, which would reintroduce the bug it exists to avoid.
+ * value containing `'` or `"` — a `"` would pass through the literal string
+ * unescaped and reintroduce the exact PowerShell re-parse bug this exists to
+ * avoid (see FACTORY-572) — nor a raw newline/CR/other control character
+ * (TOML literal strings are single-line; tab is the only control character
+ * they permit). Such values throw rather than silently falling back to a
+ * basic string.
  */
 function tomlString(value: string, platform: NodeJS.Platform): string {
   if (platform !== "win32") return JSON.stringify(value);
   if (value.includes("'")) {
     throw new Error(`Cannot encode ${JSON.stringify(value)} as a Windows-safe TOML literal string: it contains a single quote`);
+  }
+  if (value.includes('"')) {
+    throw new Error(`Cannot encode ${JSON.stringify(value)} as a Windows-safe TOML literal string: it contains a double quote`);
+  }
+  if (/[\x00-\x08\x0a-\x1f\x7f]/.test(value)) {
+    throw new Error(`Cannot encode ${JSON.stringify(value)} as a Windows-safe TOML literal string: it contains a control character (e.g. a newline) that a single-line TOML literal string cannot hold`);
   }
   return `'${value}'`;
 }
