@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.16.5
+
+FACTORY-565: bump `@brooswit/herdr-sdk` from `^0.1.3` to `^0.3.0`, so drovr
+(and butchr through it) can resolve the Windows-capable SDK. `^0.1.3` stops
+below `0.2.0`, and `0.1.3`'s transport hardcoded `Bun.connect({ unix })` —
+Unix-domain-only, with no Windows branch — so on native Windows, where herdr
+listens on a named pipe (`\\.\pipe\<path>`) and the `.sock` file is only an
+ownership marker (`<pid>:<nonce>`), every connection attempt failed with
+"socket error".
+
+- `@brooswit/herdr-sdk` `0.2.0` replaced the transport with `node:net`'s
+  `Socket`, which handles both a Unix socket path and a Windows named pipe,
+  honors `HERDR_SOCKET_PATH` (with `HERDR_SOCKET` kept as a deprecated
+  fallback), and resolves the default socket path the same way herdr itself
+  resolves its config dir. `0.3.0` refreshed the schema and wrappers for
+  herdr 0.9.1 (protocol 22), adding 12 new methods (`enumerateSurface` now
+  reports 103 methods across the same 12 services, up from 91). Neither
+  release lists a `BREAKING` change.
+- No source change was needed in drovr itself: `bun run typecheck` and
+  `bun run build` were clean against the new SDK version. The only break was
+  `test/parity.test.ts`'s hardcoded method-count sanity check, updated from
+  91 to 103 to match the refreshed schema; drovr's own corrections and
+  service-proxy plumbing are unaffected because they key off wire method
+  names, not a fixed method count.
+
 ## 0.16.4
 
 FACTORY-388: fingerprint unrecognised Codex approval dialogs for sighting

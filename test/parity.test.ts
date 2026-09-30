@@ -5,10 +5,10 @@ import { buildFakeHerdrClient } from "./support/fake-herdr-client.js";
 import { enumerateSurface } from "./support/enumerate-surface.js";
 
 describe("DrovrClient parity with HerdrClient", () => {
-  test("sanity: the SDK currently exposes 91 methods across 12 services", () => {
+  test("sanity: the SDK currently exposes 103 methods across 12 services", () => {
     const surface = enumerateSurface(new HerdrClient({ socketPath: "/dev/null/drovr-test-unused.sock" }));
     expect(new Set(surface.map((c) => c.service)).size).toBe(12);
-    expect(surface.length).toBe(91);
+    expect(surface.length).toBe(103);
   });
 
   test("every enumerated service method is reachable and callable through DrovrClient, and reaches the inner client", async () => {

@@ -5,7 +5,7 @@
     "": {
       "name": "@brooswit/drovr",
       "dependencies": {
-        "@brooswit/herdr-sdk": "^0.1.3",
+        "@brooswit/herdr-sdk": "^0.3.0",
         "@modelcontextprotocol/sdk": "^1.30.0",
       },
       "devDependencies": {
@@ -15,7 +15,7 @@
     },
   },
   "packages": {
-    "@brooswit/herdr-sdk": ["@brooswit/herdr-sdk@0.1.3", "", {}, "sha512-mEwipLDaDGnUEtUhGBSjDUhFU3gB3HvkjyC9Q7OLJNugpU7Hk3romKnO1ZUna9WyZYq7lteqaLu5TmPvILkekQ=="],
+    "@brooswit/herdr-sdk": ["@brooswit/herdr-sdk@0.3.0", "", {}, "sha512-55Hlf3/VFiXjJIj3i+p1K/vqivjN+ar3ebKDhR0XXvFmdte+Z7SLEQhvDW+hDdZcBqX3MfYTaQ8vvkkFFK4wvA=="],
 
     "@hono/node-server": ["@hono/node-server@2.1.1", "", { "peerDependencies": { "hono": "^4" } }, "sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg=="],
 
