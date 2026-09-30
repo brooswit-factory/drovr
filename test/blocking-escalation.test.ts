@@ -5,6 +5,11 @@ import { createBlockingEscalationWatcher, type BlockingEscalationHook } from "..
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/too-complex-permission/${name}`, import.meta.url), "utf8");
 
 const TRUST = " Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel";
+// Codex's own directory-trust dialog (FACTORY-561) — same capture as test/codex-trust.test.ts
+// and test/blocking-prompts.test.ts's CODEX_TRUST.
+const CODEX_TRUST = "> You are in /tmp/drovr-codex-trust.WZXAC0\n\n  Do you trust the contents of this directory? "
+  + "Working with untrusted contents comes with\n  higher risk of prompt injection. Trusting the directory "
+  + "allows project-local config, hooks,\n  and exec policies to load.\n\n› 1. Yes, continue\n  2. No, quit\n\n  Press enter to continue\n";
 const MCP = "New MCP server found in this project\n❯ 1. Use this and all future MCP servers\n  2. Continue without\nEnter to confirm";
 const PERMISSION = "─────────────────────────\n Bash command\n\n   touch x\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend";
 // Real captures (FACTORY-319/FACTORY-318): claude 2.1.251 in an isolated `claude
@@ -40,12 +45,12 @@ const ASK_USER_QUESTION_PREVIEW_SHORT = [
   "Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel",
 ].join("\n");
 
-interface Agent { pane_id: string; agent_status: string; cwd?: string; agent_session?: { kind: string; value: string }; name?: string }
+interface Agent { pane_id: string; agent_status: string; cwd?: string; agent_session?: { kind: string; value: string }; name?: string; agent?: "claude" | "codex" }
 
 function client(agents: Agent[], screens: Record<string, string | Error>, sentKeys: { paneId: string; keys: string[] }[] = []) {
   return {
     agent: {
-      list: async () => ({ agents: agents.map((a) => ({ ...a, agent: "claude" })) }) as never,
+      list: async () => ({ agents: agents.map((a) => ({ agent: "claude" as const, ...a })) }) as never,
       read: async (p: { target: string }) => {
         const screen = screens[p.target];
         if (screen instanceof Error) throw screen;
@@ -74,6 +79,16 @@ describe("createBlockingEscalationWatcher", () => {
     const outcomes = await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
     expect(outcomes).toEqual([{ paneId: "w1:p1", outcome: "answered", name: "trust" }]);
     expect(sent).toEqual([{ paneId: "w1:p1", keys: ["down", "enter"] }]);
+    expect(hook.escalations).toEqual([]);
+  });
+
+  test("presses the keys for Codex's own directory-trust dialog on a Codex pane too, never escalating it (FACTORY-561)", async () => {
+    const sent: { paneId: string; keys: string[] }[] = [];
+    const c = client([{ pane_id: "w5:p1", agent_status: "idle", agent: "codex" }], { "w5:p1": CODEX_TRUST }, sent);
+    const hook = recordingHook();
+    const outcomes = await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
+    expect(outcomes).toEqual([{ paneId: "w5:p1", outcome: "answered", name: "codex-trust" }]);
+    expect(sent).toEqual([{ paneId: "w5:p1", keys: ["enter"] }]);
     expect(hook.escalations).toEqual([]);
   });
 

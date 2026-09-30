@@ -4,6 +4,19 @@ import { classifyBlockingScreen, describeUnknownDialog, listBlockingPrompts, sca
 
 // Screens measured on this host, 2026-09-18.
 const TRUST = " Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel";
+// Codex's own directory-trust dialog (FACTORY-561), captured read-only from a dedicated Herdr
+// 0.8.2 smoke session — the same fixture `test/codex-trust.test.ts` uses for status correction.
+const CODEX_TRUST = `> You are in /tmp/drovr-codex-trust.WZXAC0
+
+  Do you trust the contents of this directory? Working with untrusted contents comes with
+  higher risk of prompt injection. Trusting the directory allows project-local config, hooks,
+  and exec policies to load.
+
+› 1. Yes, continue
+  2. No, quit
+
+  Press enter to continue
+`;
 const PERMISSION = [
   "─────────────────────────────────────────",
   " Bash command",
@@ -117,6 +130,10 @@ describe("classifyBlockingScreen", () => {
     expect(unknown.kind).toBe("unknown");
     expect(unknown.excerpt).toContain("Something Claude Code added last week?");
     expect(unknown.dialog).toEqual({ question: "Something Claude Code added last week?", options: ["Sure", "Later"] });
+  });
+
+  test("Codex's own directory-trust dialog is a startup prompt too, with keys to press it (FACTORY-561)", () => {
+    expect(classifyBlockingScreen(CODEX_TRUST)).toMatchObject({ kind: "startup", name: "codex-trust", keys: ["enter"] });
   });
 
   test("an MCP approval is a startup prompt Drovr reports, but carries no keys to press", () => {
@@ -375,6 +392,23 @@ describe("listBlockingPrompts", () => {
 });
 
 describe("scanBlockingPrompts", () => {
+  test("a Codex pane is scanned too, and its own trust dialog is classified and answered like a Claude startup prompt (FACTORY-561)", async () => {
+    const client = {
+      agent: {
+        list: async () => ({ type: "agent_list", agents: [
+          { pane_id: "w5:p1", agent: "codex", name: "codex", agent_status: "idle" },
+        ] }) as never,
+        read: async () => ({ type: "pane_read", read: { text: CODEX_TRUST } }) as never,
+      },
+    };
+    const { prompts, unreadable } = await scanBlockingPrompts(client);
+    expect(unreadable).toEqual([]);
+    expect(prompts).toEqual([{
+      paneId: "w5:p1", label: "codex", sessionId: undefined, cwd: undefined, herdrStatus: "idle",
+      kind: "startup", name: "codex-trust", excerpt: expect.any(String), keys: ["enter"],
+    }]);
+  });
+
   test("an unreadable pane is reported, never silently treated as 'not blocked'; a hung read is bounded by readTimeoutMs, not left open", async () => {
     let hungReadWasCalled = false;
     const client = {

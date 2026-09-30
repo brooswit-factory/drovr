@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.16.7
+
+FACTORY-561 (minimum scope for an unattended Codex task on zippy, native
+Windows/ConPTY): Codex's own directory-trust dialog ("You are in .../ Do you
+trust the contents of this directory?") used to only flip a corrected
+`agent_status` to `blocked` (`codex-trust.ts`, 0.1.0) — nothing actually
+pressed it. `scanBlockingPrompts`/`classifyBlockingScreen`
+(`blocking-prompts.ts`) now also scan Codex panes (previously Claude-only),
+and recognise this dialog as a `kind: "startup"` prompt (`name:
+"codex-trust"`) carrying the keys to press "Yes, continue" — so
+`createBlockingEscalationWatcher`'s existing auto-answer loop presses it
+exactly like a Claude startup prompt, with no separate Codex-specific
+answering path.
+
+- New `keysForCodexTrust` (`codex-trust.ts`) reads the on-screen cursor
+  (`isActiveTrustDialog` already tolerates it on either option) and derives
+  the keys to reach "Yes, continue", rather than assuming an option order.
+- `isActiveTrustDialog`'s directory-heading pattern required a POSIX path
+  (a leading `/`); widened to also accept a Windows drive path (`C:\...` or
+  `C:/...`) or a UNC share (`\\host\...`), since no Windows/ConPTY capture
+  of this dialog exists yet to confirm which form Codex actually prints
+  there — flagged on FACTORY-561 for verification against a real run.
+- `test/fixtures/codex-trust/pane-win32-reconstructed.txt` is a
+  **reconstructed**, not a real, capture (CRLF line endings and a
+  drive-letter cwd applied to the real Linux capture already used in
+  `codex-trust.test.ts`) — see that fixture directory's README.
+- The win32 Codex launch argv path (TOML literal strings for `--config`,
+  FACTORY-573/574) and herdr key sending were reviewed, not changed here:
+  nothing broken was found in this checkout, but neither was exercised
+  against a real Windows pane — also flagged on FACTORY-561.
+- Out of scope for this release (deferred by FACTORY-561's own narrowed
+  scope): Claude Code on Windows (Git Bash, `.cmd` shims) and pinning
+  `herdr >= 0.9.3` beyond this line.
+
 ## 0.16.6
 
 FACTORY-571/FACTORY-573: on win32, herdr's Codex pane joins argv into a single

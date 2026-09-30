@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { HerdrError, isTimeout, type ResultOf } from "@brooswit/herdr-sdk";
+import { keysForCodexTrust } from "../src/codex-trust.js";
 import { DrovrClient } from "../src/index.js";
 import { buildFakeHerdrClient } from "./support/fake-herdr-client.js";
 
@@ -129,5 +131,32 @@ describe("default Codex trust correction", () => {
     const { client } = buildFakeHerdrClient({ resultFor: c => c.method === "pane.read" ? read : result });
     expect((await new DrovrClient({ herdr: client }).agent.list()).agents[1]).toBe(control);
     expect(await new DrovrClient({ herdr: client, corrections: {} }).agent.list()).toBe(result as never);
+  });
+});
+
+describe("keysForCodexTrust", () => {
+  test("cursor already on 'Yes, continue' presses enter alone", () => {
+    expect(keysForCodexTrust(dialog)).toEqual(["enter"]);
+  });
+
+  test("cursor on 'No, quit' moves up first, read from the screen rather than assumed", () => {
+    const cursorOnQuit = dialog.replace("› 1.", "  1.").replace("  2.", "› 2.");
+    expect(keysForCodexTrust(cursorOnQuit)).toEqual(["up", "enter"]);
+  });
+
+  test("a screen that is not this dialog answers undefined, never a guessed key", () => {
+    expect(keysForCodexTrust("OpenAI Codex\n› Implement a feature\n? for shortcuts")).toBeUndefined();
+    expect(keysForCodexTrust(dialog.split("\n").map(line => `> ${line}`).join("\n"))).toBeUndefined();
+  });
+
+  // Reconstructed, not a real capture — see test/fixtures/codex-trust/README.md.
+  // No Windows/ConPTY session was available to record this dialog for
+  // FACTORY-561; flagged on the ticket for verification against a real
+  // zippy run. CRLF line endings and a Windows drive-letter cwd are the two
+  // differences applied on top of the real Linux capture above.
+  test("a reconstructed win32 ConPTY capture (CRLF, drive-letter cwd) still resolves", () => {
+    const raw = readFileSync(new URL("./fixtures/codex-trust/pane-win32-reconstructed.txt", import.meta.url), "utf8");
+    expect(raw).toContain("\r\n");
+    expect(keysForCodexTrust(raw)).toEqual(["enter"]);
   });
 });

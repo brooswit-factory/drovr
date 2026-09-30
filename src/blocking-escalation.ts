@@ -4,8 +4,8 @@ import { scanBlockingPrompts, type BlockingPrompt, type ScanBlockingPromptsOptio
 import { optionFor, type PermissionPrompt, type PermissionScope } from "./permission-approval.js";
 
 /**
- * The general mechanism: Drovr detects any dialog blocking a Claude pane,
- * answers the ones it knows are safe, and for everything else calls a
+ * The general mechanism: Drovr detects any dialog blocking a Claude or Codex
+ * pane, answers the ones it knows are safe, and for everything else calls a
  * host-neutral hook instead of keeping a dialog list of its own. The host
  * (Butchr, or any other consumer) supplies the hook and decides what
  * escalation means for it — a Jira comment, a workspace note, a channel
@@ -81,9 +81,9 @@ export type AutoHandleOutcome =
 
 export interface BlockingEscalationWatcher {
   /**
-   * One pass over every Claude pane. Never call this concurrently on the
-   * same watcher — two overlapping polls would race the same open-episode
-   * state kept inside it.
+   * One pass over every Claude or Codex pane. Never call this concurrently
+   * on the same watcher — two overlapping polls would race the same
+   * open-episode state kept inside it.
    */
   poll(client: EscalationClient, options?: ScanBlockingPromptsOptions): Promise<AutoHandleOutcome[]>;
 }

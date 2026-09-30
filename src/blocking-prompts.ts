@@ -1,4 +1,5 @@
 import { stripTerminalEscapes } from "./blocking-conditions.js";
+import { keysForCodexTrust } from "./codex-trust.js";
 import type { DrovrClient } from "./drovr-client.js";
 import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane } from "./pane-scan.js";
 import { classifyPermissionPrompt, type PermissionPrompt } from "./permission-approval.js";
@@ -20,7 +21,9 @@ type ScanClient = { agent: Pick<DrovrClient["agent"], "list" | "read"> };
 
 /**
  * - `startup`: a prompt `hostResident` answers (trust, development channels,
- *   auto-mode setup), or reports by name (MCP approval).
+ *   auto-mode setup), or reports by name (MCP approval). Also covers Codex's
+ *   own directory-trust dialog (`name: "codex-trust"`, FACTORY-561), answered
+ *   the same way even though Codex has no `hostResident` of its own.
  * - `permission`: a tool-permission prompt `approvePermission` answers for an operator.
  * - `rate-limit-options`: Claude Code's `/rate-limit-options` weekly-limit menu
  *   (FACTORY-345/FACTORY-347) — `answerRateLimitOptions` (rate-limit-options.ts)
@@ -84,7 +87,7 @@ export interface BlockingPrompt {
  * a footer (FACTORY-365/6): it draws no `Esc to cancel` line at all, only an
  * inline `(esc)` hint on its "No, …" option.
  */
-const WAITING_FOOTER = /(Enter to confirm|Enter to continue|Enter to select|Esc to cancel|No\b[^\n]*\(esc\))/;
+const WAITING_FOOTER = /(Enter to confirm|Enter to continue|Enter to select|Esc to cancel|No\b[^\n]*\(esc\)|Press enter to continue)/;
 
 const excerptOf = (screen: string): string => screen.trim().split("\n").slice(-16).join("\n");
 
@@ -320,6 +323,8 @@ export function classifyBlockingScreen(raw: string): Pick<BlockingPrompt, "kind"
       ...("keys" in startup ? { keys: startup.keys } : {}),
     };
   }
+  const codexTrustKeys = keysForCodexTrust(screen);
+  if (codexTrustKeys) return { kind: "startup", name: "codex-trust", excerpt: excerptOf(screen), keys: codexTrustKeys };
   const dialog = describeUnknownDialog(screen);
   return { kind: "unknown", name: undefined, excerpt: excerptOf(screen), ...(dialog ? { dialog } : {}) };
 }
@@ -332,17 +337,19 @@ export interface ScanBlockingPromptsResult {
 }
 
 /**
- * Every Claude pane waiting on a dialog. Every Claude pane's screen is read,
- * whatever herdr says its status is, bounded by `readTimeoutMs` (default
- * 1500) per pane so one hung `agent.read` can't hold up the whole scan —
- * reads run in parallel, so the scan takes roughly the slowest read, capped
- * by the deadline. A pane whose screen cannot be read — it rejects, or it
- * never resolves within the deadline — is reported in `unreadable`, never
- * silently treated as "not blocked".
+ * Every Claude or Codex pane waiting on a dialog (FACTORY-561 added Codex,
+ * for its own directory-trust dialog; only these two providers draw a
+ * dialog shape this module knows how to classify). Every such pane's screen
+ * is read, whatever herdr says its status is, bounded by `readTimeoutMs`
+ * (default 1500) per pane so one hung `agent.read` can't hold up the whole
+ * scan — reads run in parallel, so the scan takes roughly the slowest read,
+ * capped by the deadline. A pane whose screen cannot be read — it rejects,
+ * or it never resolves within the deadline — is reported in `unreadable`,
+ * never silently treated as "not blocked".
  */
 export async function scanBlockingPrompts(client: ScanClient, options: ScanBlockingPromptsOptions = {}): Promise<ScanBlockingPromptsResult> {
   const { agents } = await client.agent.list();
-  const found = await Promise.all(agents.filter((agent) => agent.agent === "claude").map(async (agent) => {
+  const found = await Promise.all(agents.filter((agent) => agent.agent === "claude" || agent.agent === "codex").map(async (agent) => {
     const base = {
       paneId: agent.pane_id,
       label: agent.name ?? undefined,
@@ -362,7 +369,7 @@ export async function scanBlockingPrompts(client: ScanClient, options: ScanBlock
 }
 
 /**
- * Every Claude pane waiting on a dialog. A thin wrapper over
+ * Every Claude or Codex pane waiting on a dialog. A thin wrapper over
  * `scanBlockingPrompts` that drops its `unreadable` list — a pane whose
  * screen could not be read is silently absent from the result, exactly as
  * before. Callers that need to tell "not blocked" apart from "could not
