@@ -124,6 +124,19 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  * returns undefined instead of letting the Bash arm guess a `tool` out of
  * the hint line or an arbitrary description line above it.
  *
+ * A fourth no-separator sibling (FACTORY-460/580): an Edit/Create-file
+ * dialog whose `─` rule and "Edit file"/"Create file" title have scrolled
+ * off a pane shorter than the dialog. Its body is a DIFF, bounded by `╌`
+ * (U+254C — distinct from the general rule's U+2500), never the Bash arm's
+ * `│`-prefixed run, so neither pre-existing sibling fits. The only anchor
+ * left is the diff's own closing `╌` border, sitting with no gap directly
+ * above the question. See `docs/permission-approval.md` for the full
+ * captured screens, including a finding that corrects this family's own
+ * prior assumption: the directory this shape's `path` field needs is in
+ * option 2 ONLY when the edited file is outside the session's
+ * already-trusted root — inside it, option 2 carries no directory at all,
+ * and `path` is `undefined`, fail-closed, exactly as it should be.
+ *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
  * permission rule the session reads at start can change it.
@@ -147,6 +160,30 @@ export interface PermissionPrompt {
   cursor: number;
   /** A hash of tool, request, question and options: names this prompt, not the cursor position. */
   promptId: string;
+  /**
+   * Full path for an "Edit file"/"Create file" dialog (FACTORY-460/580):
+   * the directory named in option 2's "…always allow access to <dir> for
+   * this session" text, plus "/", plus the basename the question line
+   * carries. `undefined` whenever EITHER half fails to parse — fail closed,
+   * never a partial path — which in practice means `undefined` whenever the
+   * edited file is already inside the session's trusted root: option 2 then
+   * carries no directory at all (see `test/fixtures/file-edit-approval/README.md`,
+   * which falsifies the "25 of 25 captures had a directory" premise this
+   * field was originally specified against). `undefined` on every other
+   * dialog shape.
+   */
+  path: string | undefined;
+  /**
+   * Which arm of `classifyPermissionPrompt` recognised this screen (GUARD 3,
+   * FACTORY-460/580): `"separator"` for the general rule-gated arm,
+   * `"no-separator-mcp-tool"`/`"no-separator-bash"` for the two pre-existing
+   * no-separator siblings, and `"no-separator-file-edit"` for the new one
+   * this ticket adds. Carried into the audit record's `shown`/outcome
+   * fields and into `AutoAnswerPermissionResult`'s `answered` variant so a
+   * reader can grep specifically for auto-answers that went through the new,
+   * previously-unrecognised fallback: `grep '"recognizedVia":"no-separator-file-edit"'`.
+   */
+  recognizedVia: "separator" | "no-separator-mcp-tool" | "no-separator-bash" | "no-separator-file-edit";
 }
 
 const SEPARATOR = /^\s*─{10,}\s*$/;
@@ -191,12 +228,105 @@ const BASH_BODY_LINE_PREFIX = /^\s*│\s?/;
  * the screen never earned.
  */
 const MAX_TITLE_GAP_LINES = 3;
+/**
+ * An Edit/Create-file dialog's own diff-body border (U+254C, distinct from
+ * the general `SEPARATOR`'s U+2500): drawn both directly above and directly
+ * below the diff, with the closing one sitting immediately above the
+ * question with no gap on every capture measured (FACTORY-460/580). It is
+ * the only anchor left once the dialog's `─` rule and "Edit file"/"Create
+ * file" title have scrolled off a pane shorter than the dialog.
+ */
+const DIFF_BORDER = /^\s*╌{10,}\s*$/;
+/**
+ * The file-edit/create question itself names the operation and carries the
+ * BASENAME only (FACTORY-460: 0 of 25 edit/create captures had a path in the
+ * question line) — captured here so both recognition and the `path`
+ * derivation below read it from the dialog's own content, never a guess.
+ */
+const FILE_EDIT_QUESTION = /^Do you want to (make this edit to|create) (\S.*)\?$/;
+/**
+ * The file-edit/create dialog's own "Yes, and …" option, measured in two
+ * shapes on claude 2.1.251 (`test/fixtures/file-edit-approval/README.md`):
+ * plain, when the edited file is already inside the session's trusted root,
+ * and compound — wrapping a second "Yes, and always allow access to <dir>
+ * for this session" grant into the SAME option — when it is not. Capturing
+ * group 1 is the directory, present only in the compound form; `undefined`
+ * on the plain form is not a parse failure, it is the dialog correctly
+ * reporting "no directory to grant" for an already-trusted path (GUARD 1's
+ * fail-closed case). This option is also the one `optionFor` below refuses
+ * for `scope: "always"`, because on EITHER shape it switches the session to
+ * accept-edits mode — GUARD 1(b)/GUARD 4.
+ */
+const FILE_EDIT_OPTION_2 =
+  /^Yes, and switch to accept edits \(auto-approve file edits and common file commands\) for this session(?:; Yes, and always allow access to (.+) for this session)? \(shift\+tab\)$/;
+
+/**
+ * Shared tail for every recognised arm: computes `promptId` and the
+ * Edit/Create-file `path` (GUARD 1) identically regardless of which arm
+ * classified the dialog, so an already-header-visible Edit/Create dialog
+ * (the general `SEPARATOR` arm) gets the same `path` logic an otherwise
+ * identical header-scrolled-off capture gets from the sibling below.
+ */
+function makePermissionPrompt(
+  tool: string,
+  request: string,
+  promptIdRequest: string,
+  question: string,
+  options: string[],
+  cursor: number,
+  recognizedVia: PermissionPrompt["recognizedVia"],
+): PermissionPrompt {
+  const promptId = createHash("sha256").update(JSON.stringify([tool, promptIdRequest, question, options])).digest("hex").slice(0, 16);
+  let path: string | undefined;
+  if (tool === "Edit file" || tool === "Create file") {
+    const basename = FILE_EDIT_QUESTION.exec(question);
+    const directory = options[1] !== undefined ? FILE_EDIT_OPTION_2.exec(options[1])?.[1] : undefined;
+    if (basename && directory) path = `${directory}/${basename[2]}`;
+  }
+  return { tool, request, question, options, cursor, promptId, path, recognizedVia };
+}
+
+/**
+ * The third no-separator sibling (FACTORY-460/580): an Edit/Create-file
+ * dialog whose `─` rule and title have scrolled off a pane shorter than the
+ * dialog, leaving nothing above the question but the diff body itself. The
+ * ONLY anchor available on a screen this scrolled is the dialog's own
+ * closing `╌` border directly above the question — no gap, matching every
+ * capture measured (`test/fixtures/file-edit-approval/`) — plus the
+ * question's and the option set's own exact wording. Never screen position,
+ * line number, or distance, per the invariant documented atop this file.
+ *
+ * GUARD 2 (exact option-label-set half, FACTORY-460): `options` must equal
+ * exactly `["Yes", <FILE_EDIT_OPTION_2>, "No"]` — not merely start with
+ * "Yes" and contain a "No" option, which the earlier generic check already
+ * requires but which alone is loose enough for an unrelated no-separator
+ * dialog to coincidentally satisfy. A torn capture (e.g. `3. Nossion`)
+ * already fails the generic `/^No\b/` check before this function is ever
+ * called; this is additional, shape-specific narrowing on top of that.
+ */
+function classifyFileEditNoSeparator(
+  lines: string[],
+  q: number,
+  question: string,
+  options: string[],
+): { tool: string; request: string } | undefined {
+  if (q === 0 || !DIFF_BORDER.test(lines[q - 1]!)) return undefined;
+  const match = FILE_EDIT_QUESTION.exec(question);
+  if (!match) return undefined;
+  if (options.length !== 3 || options[2] !== "No" || !FILE_EDIT_OPTION_2.test(options[1]!)) return undefined;
+  let open = -1;
+  for (let i = q - 2; i >= 0; i--) if (DIFF_BORDER.test(lines[i]!)) { open = i; break; }
+  const body = lines.slice(open >= 0 ? open + 1 : 0, q - 1).map((line) => line.trim()).filter((line) => line !== "");
+  if (body.length === 0) return undefined;
+  return { tool: match[1] === "create" ? "Create file" : "Edit file", request: body.join("\n") };
+}
 
 /** Claude's tool-permission dialog on a screen, or undefined for anything else. */
 export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefined {
   const lines = stripTerminalEscapes(raw).split(/\r?\n/);
   const q = lines.findIndex((line) => QUESTION.test(line));
   if (q < 0) return undefined;
+  const question = QUESTION.exec(lines[q]!)![1]!;
   const options: string[] = [];
   let cursor = -1;
   let end = q + 1;
@@ -244,7 +374,9 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   // command alone, never of which reason (if any) Claude renders that poll
   // (FACTORY-391: `request` itself DOES carry that line, for the audit trail).
   let promptIdRequest: string;
+  let recognizedVia: PermissionPrompt["recognizedVia"];
   if (separator >= 0) {
+    recognizedVia = "separator";
     const body = lines.slice(separator + 1, q).map((line) => line.trim()).filter((line) => line !== "" && !/^Tip:/.test(line));
     tool = body[0];
     if (tool === undefined) return undefined;
@@ -277,6 +409,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
       }
     }
     if (aboutLine >= 0 && mcpTool !== undefined) {
+      recognizedVia = "no-separator-mcp-tool";
       tool = mcpTool;
       request = lines.slice(aboutLine + 1, q)
         .map((line) => line.replace(DESCRIPTION_LINE_PREFIX, "").trim())
@@ -322,7 +455,19 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
         if (i > 0 && BASH_BODY_LINE_PREFIX.test(lines[i - 1]!)) { titleLine = i; break; }
         if (++gapNonBlankLines > MAX_TITLE_GAP_LINES) break;
       }
-      if (titleLine < 0) return undefined;
+      if (titleLine < 0) {
+        // Not the Bash chrome either — try the file-edit/create diff shape
+        // (FACTORY-460/580), a third sibling in this same no-separator arm.
+        // A dialog taller than the pane scrolls its `─` rule AND its "Edit
+        // file"/"Create file" title off screen, so neither the general arm
+        // above nor the Bash sibling's title-scan has anything to find: the
+        // body is a diff (bounded by `╌`, FACTORY-146's family of `│`-prefixed
+        // reason text never applies here), not a `│`-prefixed run.
+        const fileEdit = classifyFileEditNoSeparator(lines, q, question, options);
+        if (fileEdit === undefined) return undefined;
+        return makePermissionPrompt(fileEdit.tool, fileEdit.request, fileEdit.request, question, options, cursor, "no-separator-file-edit");
+      }
+      recognizedVia = "no-separator-bash";
       tool = lines[titleLine]!.trim();
       // The body is the contiguous run of `│`-prefixed lines directly above
       // the title — nothing else. Stopping at the first non-`│` line, rather
@@ -360,9 +505,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   // the framed request body) won't have. Unlike a position check, this
   // survives real trailing chatter landing on a still-live pane.
   if (!hasFooterLine && hasInlineEscHintOption && !WEBFETCH_BODY_MARKER.test(request)) return undefined;
-  const question = QUESTION.exec(lines[q]!)![1]!;
-  const promptId = createHash("sha256").update(JSON.stringify([tool, promptIdRequest, question, options])).digest("hex").slice(0, 16);
-  return { tool, request, question, options, cursor, promptId };
+  return makePermissionPrompt(tool!, request, promptIdRequest, question, options, cursor, recognizedVia!);
 }
 
 /**
@@ -381,6 +524,17 @@ export type PermissionScope = "once" | "always";
  */
 export function optionFor(prompt: PermissionPrompt, scope: PermissionScope): number {
   if (scope === "once") return prompt.options.indexOf("Yes");
+  // GUARD 1(b)/GUARD 4 (FACTORY-460/580): an Edit/Create-file dialog's own
+  // "Yes, and …" option ALWAYS also switches the session to accept-edits
+  // mode (auto-approving every future file edit), whether or not it also
+  // grants a directory in the same breath — see `FILE_EDIT_OPTION_2` above.
+  // `scope: "always"` must never press it for this shape, regardless of
+  // what the caller asks for: the refusal lives here, inside drovr, rather
+  // than depending on every caller passing `scope: "once"` on its own.
+  // drovr's own default scope IS `"always"` (see `AutoAnswerPermissionsOptions.scope`),
+  // so this is the only thing standing between that default and an
+  // unattended pass auto-accepting every future edit.
+  if (prompt.tool === "Edit file" || prompt.tool === "Create file") return -1;
   return prompt.options.findIndex((option) => /^Yes, and\b/.test(option) && !/auto mode/i.test(option));
 }
 
@@ -475,7 +629,7 @@ export type ApprovePermissionRefusalReason =
   | "verify-failed";
 
 export type ApprovePermissionResult =
-  | { ok: true; attemptId: string; tool: string; request: string; scope: PermissionScope }
+  | { ok: true; attemptId: string; tool: string; request: string; scope: PermissionScope; recognizedVia: PermissionPrompt["recognizedVia"] }
   | { ok: false; attemptId: string; reason: ApprovePermissionRefusalReason; detail: string };
 
 export interface PermissionApprovalDeps {
@@ -551,7 +705,13 @@ export async function approvePermission(
   const target = optionFor(prompt, scope);
   if (target < 0) return refuse("option-missing", `the prompt offers no option for scope ${scope}`, prompt);
 
-  const shown = { tool: prompt.tool, request: prompt.request.slice(0, AUDIT_REQUEST_CHARS), option: prompt.options[target] };
+  // GUARD 3 (FACTORY-460/580): `recognizedVia` on every record makes it
+  // possible to grep this JSONL audit file specifically for auto-answers
+  // that went through the new no-separator file-edit fallback —
+  // `grep '"recognizedVia":"no-separator-file-edit"'` — distinct from every
+  // other recognised shape, including the pre-existing SEPARATOR-arm
+  // recognition of the same "Edit file"/"Create file" dialogs.
+  const shown = { tool: prompt.tool, request: prompt.request.slice(0, AUDIT_REQUEST_CHARS), option: prompt.options[target], recognizedVia: prompt.recognizedVia };
   try {
     await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "approving" }));
   } catch (error) {
@@ -571,7 +731,7 @@ export async function approvePermission(
       const still = classifyPermissionPrompt(await readScreen(client, request.paneId).catch(() => ""));
       if (still?.promptId !== request.promptId) {
         await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "approved" })).catch(() => undefined);
-        return { ok: true, attemptId, tool: prompt.tool, request: prompt.request, scope };
+        return { ok: true, attemptId, tool: prompt.tool, request: prompt.request, scope, recognizedVia: prompt.recognizedVia };
       }
       if (deps.now().getTime() >= deadline) {
         await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "not-cleared" })).catch(() => undefined);
@@ -618,7 +778,7 @@ interface AutoAnswerBase {
 }
 
 export type AutoAnswerPermissionResult =
-  | (AutoAnswerBase & { outcome: "answered"; tool: string; request: string })
+  | (AutoAnswerBase & { outcome: "answered"; tool: string; request: string; recognizedVia: PermissionPrompt["recognizedVia"] })
   | (AutoAnswerBase & { outcome: "skipped"; reason: string })
   | (AutoAnswerBase & { outcome: "failed"; reason: string; detail: string });
 
@@ -685,7 +845,7 @@ export async function autoAnswerPermissions(
           detail: `approvePermission did not return within ${options.readTimeoutMs}ms; it is still running and the outcome is unknown — it may still press keys and record "approved" in the audit log, check it before retrying this pane`,
         };
       }
-      if (result.ok) return { ...base, outcome: "answered", tool: result.tool, request: result.request };
+      if (result.ok) return { ...base, outcome: "answered", tool: result.tool, request: result.request, recognizedVia: result.recognizedVia };
       if (
         result.reason === "audit-failed" || result.reason === "not-cleared" || result.reason === "invalid-operator" ||
         result.reason === "keys-failed" || result.reason === "verify-failed"
