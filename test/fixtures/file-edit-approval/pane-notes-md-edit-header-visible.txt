@@ -1,0 +1,38 @@
+      2 +
+      3 +## capture
+
+● Added ## capture at the end of NOTES.md.
+
+✻ Cooked for 9s · done 8:40 PM
+
+❯ Create a new file called newfile.md with the content 'hello world'. Use the Write tool
+  directly, do not ask me anything first.
+
+● Write(newfile.md)
+  ⎿  User rejected write to newfile.md
+      1 hello world
+
+✻ Brewed for 2s · done 8:41 PM
+
+❯ Edit NOTES.md: append a line '## second edit'. Use the Edit tool directly, do not ask me
+  anything first.
+
+● Update(NOTES.md)
+
+──────────────────────────────────────────────────────────────────────────────────────────────
+ Edit file
+ NOTES.md
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1  hello
+ 2
+ 3  ## capture
+ 4 +
+ 5 +## second edit
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to NOTES.md?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for
+      this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend

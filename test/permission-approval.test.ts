@@ -726,6 +726,120 @@ describe("classifyPermissionPrompt", () => {
     expect(raw).toContain("What do you want to do?");
     expect(classifyPermissionPrompt(raw)).toBeUndefined();
   });
+
+  // FACTORY-460/580: the Edit/Create-file dialog. Real captures (claude
+  // 2.1.251, `--permission-mode default`, driven live via `herdr agent
+  // prompt` + `herdr pane read`) — see `test/fixtures/file-edit-approval/README.md`
+  // for full provenance, including the finding that falsifies FACTORY-460's
+  // "25 of 25 captures had a directory in option 2" premise: it only holds
+  // when the edited file is OUTSIDE the session's already-trusted root.
+  describe("the Edit/Create-file dialog (FACTORY-460/580)", () => {
+    const fileEditFixture = (name: string) => readFileSync(new URL(`./fixtures/file-edit-approval/${name}`, import.meta.url), "utf8");
+
+    test("header visible, file already inside the trusted root: recognised by the existing SEPARATOR arm, no directory to derive", () => {
+      const prompt = classifyPermissionPrompt(fileEditFixture("pane-notes-md-edit-header-visible.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Edit file");
+      expect(prompt!.recognizedVia).toBe("separator");
+      expect(prompt!.options).toEqual([
+        "Yes",
+        "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+        "No",
+      ]);
+      // GUARD 1: option 2 carries no directory for an already-trusted path —
+      // fail closed, not a guess.
+      expect(prompt!.path).toBeUndefined();
+    });
+
+    test("header visible, file outside the trusted root: the SAME dialog derives a full path from option 2's compound grant", () => {
+      const prompt = classifyPermissionPrompt(fileEditFixture("pane-outside-dir-edit-header-visible.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Edit file");
+      expect(prompt!.recognizedVia).toBe("separator");
+      expect(prompt!.options[1]).toBe(
+        "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session; Yes, and always allow access to /tmp/claude-1002/outside-dir for this session (shift+tab)",
+      );
+      expect(prompt!.path).toBe("/tmp/claude-1002/outside-dir/OUTSIDE.md");
+    });
+
+    // CLASS 1 (FACTORY-460, 20 of 31 unrecognised replay captures): the
+    // dialog's `─` rule and "Edit file" title have scrolled off the top of a
+    // pane shorter than the dialog. Before this fix, this returned undefined
+    // (`blocking.kind: "unknown"`) — the escalation this ticket is about.
+    test("header scrolled off (top 3 rows cut): recognised by the new no-separator sibling, no directory to derive", () => {
+      const prompt = classifyPermissionPrompt(fileEditFixture("synthetic-notes-md-edit-scrolled-off-3-rows.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Edit file");
+      expect(prompt!.recognizedVia).toBe("no-separator-file-edit");
+      expect(prompt!.question).toBe("Do you want to make this edit to NOTES.md?");
+      expect(prompt!.request).toBe("1  hello\n2\n3  ## capture\n4 +\n5 +## second edit");
+      expect(prompt!.path).toBeUndefined();
+      expect(prompt!.promptId).toMatch(/^[0-9a-f]{16}$/);
+    });
+
+    // Deeper truncation: the diff's own opening border AND its first two
+    // numbered lines are also scrolled off, leaving only the diff's tail,
+    // its closing border, the question, the options and the footer.
+    // Recognition must not depend on the opening border being present.
+    test("header scrolled off even deeper (mid-diff): still recognised from the closing border alone", () => {
+      const prompt = classifyPermissionPrompt(fileEditFixture("synthetic-notes-md-edit-scrolled-off-mid-diff.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Edit file");
+      expect(prompt!.recognizedVia).toBe("no-separator-file-edit");
+      expect(prompt!.request).toBe("3  ## capture\n4 +\n5 +## second edit");
+    });
+
+    // GUARD 1 via the new sibling: the directory derivation does not depend
+    // on which arm recognised the dialog — it reads option 2 and the
+    // question exactly the same way whether or not the header is visible.
+    test("header scrolled off, file outside the trusted root: path is still derived correctly", () => {
+      const prompt = classifyPermissionPrompt(fileEditFixture("synthetic-outside-dir-edit-scrolled-off-3-rows.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Edit file");
+      expect(prompt!.recognizedVia).toBe("no-separator-file-edit");
+      expect(prompt!.path).toBe("/tmp/claude-1002/outside-dir/OUTSIDE.md");
+    });
+
+    // GUARD 2 (FACTORY-460 class 3, torn option label): a mutated `No` ->
+    // `Nossion` on the header-scrolled-off capture must stay unrecognised.
+    // Negative fixture, deliberately mutated — fixture-first's explicit
+    // exception: refusing more never needs a real tear to be legitimate.
+    test("a torn option label stays unrecognised even on the scrolled-off shape (GUARD 2, FACTORY-460 class 3)", () => {
+      expect(classifyPermissionPrompt(fileEditFixture("synthetic-notes-md-edit-torn-option-scrolled-off.txt"))).toBeUndefined();
+    });
+
+    // GUARD 1(b)/GUARD 4: a file-edit dialog's "Yes, and …" option always
+    // ALSO switches the session to accept-edits mode, so scope "always" must
+    // never press it — regardless of whether the header is visible, and
+    // regardless of whether option 2 also carries a directory grant.
+    test("scope \"always\" is refused on every Edit/Create-file shape (GUARD 1b/4)", () => {
+      const headerVisible = classifyPermissionPrompt(fileEditFixture("pane-notes-md-edit-header-visible.txt"))!;
+      const headerVisibleOutsideDir = classifyPermissionPrompt(fileEditFixture("pane-outside-dir-edit-header-visible.txt"))!;
+      const scrolledOff = classifyPermissionPrompt(fileEditFixture("synthetic-notes-md-edit-scrolled-off-3-rows.txt"))!;
+      for (const prompt of [headerVisible, headerVisibleOutsideDir, scrolledOff]) {
+        expect(optionFor(prompt, "always")).toBe(-1);
+        expect(optionFor(prompt, "once")).toBe(0);
+        expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+      }
+    });
+
+    // REGRESSION GUARD (DoD #8, FACTORY-392/396): the new sibling must not
+    // steal the pre-existing no-separator MCP-tool or Bash-chrome shapes.
+    // Both still classify exactly as before this change.
+    test("the pre-existing no-separator MCP-tool and Bash-chrome fixtures are unaffected", () => {
+      const mcpTool = classifyPermissionPrompt(
+        readFileSync(new URL("./fixtures/generic-mcp-tool-permission/pane-tell-worker-cropped.txt", import.meta.url), "utf8"),
+      );
+      expect(mcpTool).toBeDefined();
+      expect(mcpTool!.recognizedVia).toBe("no-separator-mcp-tool");
+      expect(mcpTool!.path).toBeUndefined();
+
+      const bashChrome = classifyPermissionPrompt(bashAutoModeFixture("pane-w29p1-4-option.txt"));
+      expect(bashChrome).toBeDefined();
+      expect(bashChrome!.recognizedVia).toBe("no-separator-bash");
+      expect(bashChrome!.path).toBeUndefined();
+    });
+  });
 });
 
 function fixture(screens: string[], options: { auditFails?: boolean | number; throwOnSendKeys?: boolean } = {}) {
@@ -975,11 +1089,11 @@ describe("autoAnswerPermissions", () => {
     const path = await freshAuditPath();
     const { client, keysSent } = autoClient({ "w1:p1": { reads: [BASH_PROMPT, BASH_PROMPT, AFTER] } });
     const results = await autoAnswerPermissions(client, { auditPath: path });
-    expect(results).toEqual([{ paneId: "w1:p1", label: "w1:p1", outcome: "answered", tool: "Bash command", request: "touch drovr-permission-probe.txt\nCreate empty probe file" }]);
+    expect(results).toEqual([{ paneId: "w1:p1", label: "w1:p1", outcome: "answered", tool: "Bash command", request: "touch drovr-permission-probe.txt\nCreate empty probe file", recognizedVia: "separator" }]);
     expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
     const audit = await readAudit(path);
     expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);
-    expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "always", option: "Yes, and always allow access to /tmp/drovr-herdr-proof.hostres from this project" });
+    expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "always", option: "Yes, and always allow access to /tmp/drovr-herdr-proof.hostres from this project", recognizedVia: "separator" });
   });
 
   test("a prompt whose option 2 is not 'Yes, and …' is skipped with nothing pressed", async () => {
@@ -1087,7 +1201,7 @@ describe("autoAnswerPermissions", () => {
     const path = await freshAuditPath();
     const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT, WRAPPED_BASH_PROMPT, AFTER] } });
     const results = await autoAnswerPermissions(client, { auditPath: path });
-    expect(results).toEqual([{ paneId: "w1:p1", label: "w1:p1", outcome: "answered", tool: "Bash command", request: "mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg\nCreate and remove scratch-dir-neg" }]);
+    expect(results).toEqual([{ paneId: "w1:p1", label: "w1:p1", outcome: "answered", tool: "Bash command", request: "mkdir -p scratch-dir-neg && rm -rf scratch-dir-neg\nCreate and remove scratch-dir-neg", recognizedVia: "separator" }]);
     expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
     const audit = await readAudit(path);
     expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);

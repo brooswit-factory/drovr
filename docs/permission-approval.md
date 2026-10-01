@@ -508,6 +508,148 @@ FACTORY-392's own guard would have missed, where the Bash arm's title-scan,
 having rejected the hint line, would otherwise keep scanning upward and
 accept a `│`-prefixed description line as the title instead.
 
+### A third no-separator sibling: the Edit/Create-file diff, header scrolled off (FACTORY-460/580)
+
+An Edit/Create-file dialog draws the general `─` rule and an "Edit file"/
+"Create file" title, same as a Bash dialog — but a dialog taller than the
+pane scrolls that rule and title off the top just like any other, and its
+body is a DIFF (bounded by `╌`, U+254C — a dashed border, never the general
+arm's `─` rule and never the Bash chrome's `│`-prefixed run), so neither
+pre-existing no-separator sibling fits. Before this fix, `classifyPermissionPrompt`
+returned `undefined` here and `classifyBlockingScreen` reported
+`kind: "unknown"` — the escalation FACTORY-460 was filed about, measured at
+20 of 31 replayed stalls (agentvelocity, `bin/drovr-replay.mjs`).
+
+Real captures (claude 2.1.251, `--permission-mode default`, driven live via
+`herdr agent prompt` + `herdr pane read`; full provenance in
+`test/fixtures/file-edit-approval/README.md`):
+
+```
+ Edit file
+ NOTES.md
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1  hello
+ 2
+ 3  ## capture
+ 4 +
+ 5 +## second edit
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to NOTES.md?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for
+      this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend
+```
+
+With the header scrolled off (`test/fixtures/file-edit-approval/synthetic-notes-md-edit-scrolled-off-3-rows.txt`,
+a truncation of the capture above, never an invented screen), nothing is
+left above the question but the diff body itself:
+
+```
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1  hello
+ 2
+ 3  ## capture
+ 4 +
+ 5 +## second edit
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to NOTES.md?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for
+      this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend
+```
+
+The ONLY anchor left on a screen this scrolled is the diff's own CLOSING
+`╌` border, sitting immediately above the question with no gap on every
+capture measured — never screen position, line number, or distance, per the
+invariant the rest of this file documents. Recognition works upward from
+there: the question must match "Do you want to (make this edit to|create)
+X?" (so `tool` is synthesized as "Edit file"/"Create file" from the
+dialog's own content — never scrollback — and `X` is the basename), the
+option set must equal exactly `["Yes", <the accept-edits option>, "No"]`
+(GUARD 2's exact-label-set half — a torn `3. Nossion` already fails the
+earlier generic `/^No\b/` check before this arm is ever reached, but this is
+additional narrowing specific to this shape), and the body between the
+closing border and whatever opening `╌` border (if any) sits above it is the
+diff content, verbatim. If the opening border has ALSO scrolled off (an even
+taller dialog, or a shorter pane), the body is simply whatever diff lines
+remain on screen — recognition does not depend on the opening border being
+present (`test/fixtures/file-edit-approval/synthetic-notes-md-edit-scrolled-off-mid-diff.txt`).
+
+**GUARD 1 — the `path` field, and a finding that corrects FACTORY-460's own
+premise.** The question line carries only the basename (confirmed: 0 of the
+2 edit/create captures taken for this fix had a path in it). FACTORY-460
+claimed "the directory is in option 2 … present in 25 of 25 edit/create
+captures" as a universal rule; that does NOT hold on this host's claude
+2.1.251. It holds only when the edited file is OUTSIDE the session's
+already-trusted root:
+
+```
+ Do you want to make this edit to OUTSIDE.md?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for
+      this session; Yes, and always allow access to /tmp/claude-1002/outside-dir for this
+      session (shift+tab)
+   3. No
+```
+
+— one option, wrapped onto three physical lines, granting BOTH the
+accept-edits toggle and the directory access in the same affirmative choice.
+When the edited file is already inside the trusted root (the common case),
+option 2 carries no directory at all (`pane-notes-md-edit-header-visible.txt`
+above). `path` is therefore `undefined` whenever either half fails to
+parse — which in practice means whenever the file is already trusted — fail
+closed, never a partially-built path, and never a guess at wording this
+fix has not actually captured. This derivation is shared by every arm (a
+small `makePermissionPrompt` helper), so an already-header-visible Edit/Create
+dialog (the general `SEPARATOR` arm, unchanged) gets the same `path` an
+otherwise-identical header-scrolled-off capture gets from this sibling.
+
+**GUARD 1(b)/GUARD 4 — `scope: "always"` is refused for this shape, inside
+drovr, unconditionally.** On EITHER capture above, option 2 ALSO switches
+the session to accept-edits mode (auto-approving every future file edit),
+whether or not it carries a directory grant in the same breath. `optionFor`
+therefore returns `-1` for `scope: "always"` whenever `tool` is "Edit file"
+or "Create file", regardless of what the caller asks for — this is the only
+thing standing between drovr's own default scope (`"always"`,
+`AutoAnswerPermissionsOptions.scope`) and an unattended pass auto-accepting
+every future edit. butchr's live path already passes `scope: "once"`
+independently (`src/agents/permission-answer-loop.ts`), but this refusal
+does not rely on that.
+
+**GUARD 2 — torn captures.** The exact-option-label-set half lives in
+recognition (above); the two-identical-reads half is unchanged, already a
+property of `approvePermission`'s re-read-before-pressing design (see
+Guarantees below) — this fix adds no new torn-capture handling to the
+answering path, only the narrower recognition gate. A negative fixture,
+`test/fixtures/file-edit-approval/synthetic-notes-md-edit-torn-option-scrolled-off.txt`
+(the header-scrolled-off capture with `No` hand-mutated to `Nossion`, per
+FACTORY-460's class 3), is pinned as unrecognised. Per the fixture-first
+rule, a negative test does not need a real tear to be legitimate — refusing
+more is always safe.
+
+**GUARD 3 (drovr's half) — attributable audit/results.** Every `PermissionPrompt`
+now carries `recognizedVia`: `"separator"`, `"no-separator-mcp-tool"`,
+`"no-separator-bash"`, or `"no-separator-file-edit"` — which arm classified
+the screen. It flows into every audit record `approvePermission` writes
+(the `shown` object merged into `record()`) and into `ApprovePermissionResult`/
+`AutoAnswerPermissionResult`'s `answered`/`ok: true` variants. To find every
+auto-answer that went through this new, previously-unrecognised fallback:
+`grep '"recognizedVia":"no-separator-file-edit"'` over the JSONL audit file.
+
+**Not in scope.** FACTORY-460's class 2 (a blank line inside the option
+block) has no real capture on this host and is not fixed here — the option
+loop is unchanged. Class 3 (the torn label) is pinned as a negative test,
+never "fixed" — recognising it would be wrong. Class 4 (~9 unclassified
+captures) and the 50-capture replay need `bin/drovr-replay.mjs` and
+agentvelocity's captures, neither of which exist on this host; both are
+reported as outstanding on the ticket rather than estimated.
+
 ## Guarantees
 
 - **Only the prompt the operator saw.** The screen is re-read before any key
