@@ -135,7 +135,9 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  * prior assumption: the directory this shape's `path` field needs is in
  * option 2 ONLY when the edited file is outside the session's
  * already-trusted root — inside it, option 2 carries no directory at all,
- * and `path` is `undefined`, fail-closed, exactly as it should be.
+ * and `path` is `undefined`. `optionFor` (GUARD 1(c), FACTORY-584) then
+ * refuses both scopes for an `undefined` `path`, so the prompt escalates
+ * instead of being answered.
  *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
@@ -164,13 +166,17 @@ export interface PermissionPrompt {
    * Full path for an "Edit file"/"Create file" dialog (FACTORY-460/580):
    * the directory named in option 2's "…always allow access to <dir> for
    * this session" text, plus "/", plus the basename the question line
-   * carries. `undefined` whenever EITHER half fails to parse — fail closed,
-   * never a partial path — which in practice means `undefined` whenever the
-   * edited file is already inside the session's trusted root: option 2 then
-   * carries no directory at all (see `test/fixtures/file-edit-approval/README.md`,
-   * which falsifies the "25 of 25 captures had a directory" premise this
-   * field was originally specified against). `undefined` on every other
-   * dialog shape.
+   * carries. `undefined` whenever EITHER half fails to parse — never a
+   * partial path, never a guess — which in practice means `undefined`
+   * whenever the edited file is already inside the session's trusted root:
+   * option 2 then carries no directory at all (see
+   * `test/fixtures/file-edit-approval/README.md`, which falsifies the "25 of
+   * 25 captures had a directory" premise this field was originally specified
+   * against). `undefined` on every other dialog shape. The fail-closed
+   * guarantee itself lives in `optionFor` (GUARD 1(c), FACTORY-584), which
+   * refuses both scopes whenever `path` is `undefined` here — this field
+   * being `undefined` is only the derivation declining to guess, not by
+   * itself what makes the prompt unanswerable.
    */
   path: string | undefined;
   /**
@@ -252,10 +258,11 @@ const FILE_EDIT_QUESTION = /^Do you want to (make this edit to|create) (\S.*)\?$
  * for this session" grant into the SAME option — when it is not. Capturing
  * group 1 is the directory, present only in the compound form; `undefined`
  * on the plain form is not a parse failure, it is the dialog correctly
- * reporting "no directory to grant" for an already-trusted path (GUARD 1's
- * fail-closed case). This option is also the one `optionFor` below refuses
- * for `scope: "always"`, because on EITHER shape it switches the session to
- * accept-edits mode — GUARD 1(b)/GUARD 4.
+ * reporting "no directory to grant" for an already-trusted path — `optionFor`
+ * then refuses both scopes for a prompt whose derived `path` is `undefined`
+ * (GUARD 1(c)). This option is also the one `optionFor` below refuses for
+ * `scope: "always"` unconditionally, because on EITHER shape it switches the
+ * session to accept-edits mode — GUARD 1(b)/GUARD 4.
  */
 const FILE_EDIT_OPTION_2 =
   /^Yes, and switch to accept edits \(auto-approve file edits and common file commands\) for this session(?:; Yes, and always allow access to (.+) for this session)? \(shift\+tab\)$/;
