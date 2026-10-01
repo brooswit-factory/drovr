@@ -575,11 +575,23 @@ option set must equal exactly `["Yes", <the accept-edits option>, "No"]`
 (GUARD 2's exact-label-set half — a torn `3. Nossion` already fails the
 earlier generic `/^No\b/` check before this arm is ever reached, but this is
 additional narrowing specific to this shape), and the body between the
-closing border and whatever opening `╌` border (if any) sits above it is the
-diff content, verbatim. If the opening border has ALSO scrolled off (an even
-taller dialog, or a shorter pane), the body is simply whatever diff lines
-remain on screen — recognition does not depend on the opening border being
-present (`test/fixtures/file-edit-approval/synthetic-notes-md-edit-scrolled-off-mid-diff.txt`).
+closing border and the opening `╌` border above it is the diff content,
+verbatim. The opening border is the ONLY anchor for where that body actually
+starts; if it has ALSO scrolled off (an even taller dialog, or a shorter
+pane), there is nothing left to bound the body by, so recognition REFUSES
+(`undefined`) instead of falling back to whatever scrollback happens to sit
+above the closing border (GUARD 5, FACTORY-583:
+`test/fixtures/file-edit-approval/synthetic-notes-md-edit-scrolled-off-mid-diff.txt`
+is kept as the negative proof of this — it is NOT a recognised capture). An
+earlier version of this fix fell back to line 0 in that case, which let
+`request` — and so `promptId` — drift with however much unrelated pane
+chatter happened to precede the dialog on a given read: prepending a single
+`⏺ Bash(ls)` line to that fixture changed promptId from `6224bec08f0ba851` to
+`46d1fcdd55a314bb`. That broke the exact invariant this file opens with
+(`promptId` is a function of the dialog's own content, never scrollback —
+see FACTORY-327, FACTORY-356, FACTORY-396) and reproduced FACTORY-460's own
+symptom: `approvePermission`'s re-read sees a different promptId, refuses
+`prompt-changed`, and the dialog is never answered.
 
 **GUARD 1 — the `path` field, and a finding that corrects FACTORY-460's own
 premise.** The question line carries only the basename (confirmed: 0 of the

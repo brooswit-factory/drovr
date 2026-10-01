@@ -310,6 +310,15 @@ function makePermissionPrompt(
  * dialog to coincidentally satisfy. A torn capture (e.g. `3. Nossion`)
  * already fails the generic `/^No\b/` check before this function is ever
  * called; this is additional, shape-specific narrowing on top of that.
+ *
+ * GUARD 5 (FACTORY-583): the OPENING `╌` border — the only anchor for where
+ * the diff body actually starts — can itself be scrolled off a pane shorter
+ * than the diff, leaving only the closing border above the question. There
+ * is no fallback delimiter for that case: a pane this short carries no
+ * anchor at all for where the body begins, so recognition refuses
+ * (`undefined`) rather than let `body` absorb whatever scrollback happens to
+ * sit above the closing border, which would make `promptId` a function of
+ * scrollback again — the exact invariant documented atop this file.
  */
 function classifyFileEditNoSeparator(
   lines: string[],
@@ -323,7 +332,16 @@ function classifyFileEditNoSeparator(
   if (options.length !== 3 || options[2] !== "No" || !FILE_EDIT_OPTION_2.test(options[1]!)) return undefined;
   let open = -1;
   for (let i = q - 2; i >= 0; i--) if (DIFF_BORDER.test(lines[i]!)) { open = i; break; }
-  const body = lines.slice(open >= 0 ? open + 1 : 0, q - 1).map((line) => line.trim()).filter((line) => line !== "");
+  // FACTORY-583: when the opening border itself has scrolled off the visible
+  // screen, there is no anchor left for where the diff body actually starts —
+  // falling back to line 0 would let `body` (and so `promptId`) absorb
+  // whatever scrollback happens to sit above the closing border, exactly the
+  // "promptId is a function of scrollback" bug this ticket exists to close.
+  // The frame is genuinely gone, not merely hard to find, so refuse rather
+  // than guess (FACTORY-396's lesson): return undefined, meaning "not
+  // recognised yet", not "this isn't a prompt at all".
+  if (open < 0) return undefined;
+  const body = lines.slice(open + 1, q - 1).map((line) => line.trim()).filter((line) => line !== "");
   if (body.length === 0) return undefined;
   return { tool: match[1] === "create" ? "Create file" : "Edit file", request: body.join("\n") };
 }
