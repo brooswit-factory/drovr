@@ -777,16 +777,19 @@ describe("classifyPermissionPrompt", () => {
       expect(prompt!.promptId).toMatch(/^[0-9a-f]{16}$/);
     });
 
-    // Deeper truncation: the diff's own opening border AND its first two
-    // numbered lines are also scrolled off, leaving only the diff's tail,
-    // its closing border, the question, the options and the footer.
-    // Recognition must not depend on the opening border being present.
-    test("header scrolled off even deeper (mid-diff): still recognised from the closing border alone", () => {
+    // Deeper truncation: the diff's own OPENING border AND its first two
+    // numbered lines are also scrolled off, leaving only the diff's tail, its
+    // closing border, the question, the options and the footer. FACTORY-583:
+    // the opening border is the only anchor for where the body actually
+    // starts, so once it's gone there is nothing left to bound `body` by —
+    // the pre-fix code fell back to line 0, making `request` (and so
+    // `promptId`) absorb whatever scrollback sits above the closing border
+    // (reproduced: prepending a single "⏺ Bash(ls)" line changed promptId
+    // from 6224bec08f0ba851 to 46d1fcdd55a314bb). Recognition must refuse
+    // instead (GUARD 5) — kept as a fixture, inverted to assert exactly that.
+    test("header scrolled off even deeper (mid-diff, opening border gone): NOT recognised (GUARD 5, refuse rather than guess)", () => {
       const prompt = classifyPermissionPrompt(fileEditFixture("synthetic-notes-md-edit-scrolled-off-mid-diff.txt"));
-      expect(prompt).toBeDefined();
-      expect(prompt!.tool).toBe("Edit file");
-      expect(prompt!.recognizedVia).toBe("no-separator-file-edit");
-      expect(prompt!.request).toBe("3  ## capture\n4 +\n5 +## second edit");
+      expect(prompt).toBeUndefined();
     });
 
     // GUARD 1 via the new sibling: the directory derivation does not depend
@@ -798,6 +801,26 @@ describe("classifyPermissionPrompt", () => {
       expect(prompt!.tool).toBe("Edit file");
       expect(prompt!.recognizedVia).toBe("no-separator-file-edit");
       expect(prompt!.path).toBe("/tmp/claude-1002/outside-dir/OUTSIDE.md");
+    });
+
+    // FACTORY-583: the same stability bar the no-separator Bash chrome
+    // already carries ("promptId and tool are stable across differing
+    // amounts of preceding scrollback", above), extended to this sibling —
+    // the opening-border-missing arm of this same function used to let
+    // `request`/`promptId` absorb whatever scrollback sat above the closing
+    // border; GUARD 5 above closes that for the "border gone" case, and this
+    // proves the still-recognised "border present" case was never affected.
+    test("promptId and tool are stable across differing amounts of preceding scrollback", () => {
+      const base = fileEditFixture("synthetic-notes-md-edit-scrolled-off-3-rows.txt");
+      const baseline = classifyPermissionPrompt(base)!;
+      for (const chatterLines of [0, 3, 9, 20]) {
+        const chatter = Array.from({ length: chatterLines }, (_, i) => `unrelated scrollback line ${i}`).join("\n");
+        const screen = chatterLines === 0 ? base : `${chatter}\n${base}`;
+        const prompt = classifyPermissionPrompt(screen);
+        expect(prompt).toBeDefined();
+        expect(prompt!.tool).toBe(baseline.tool);
+        expect(prompt!.promptId).toBe(baseline.promptId);
+      }
     });
 
     // GUARD 2 (FACTORY-460 class 3, torn option label): a mutated `No` ->

@@ -43,8 +43,14 @@ shorter than the dialog:
 - `synthetic-notes-md-edit-scrolled-off-mid-diff.txt` — the same capture cut
   deeper (6 rows): the diff's opening border and its first two numbered lines
   are also gone, leaving only the diff's tail, its closing border, the
-  question, the options, and the footer. Confirms recognition does not
-  depend on the diff's opening border being present either.
+  question, the options, and the footer. FACTORY-583: the opening border is
+  the only anchor for where the diff body starts, so once it's also gone
+  there is nothing left to bound `request` by — recognition REFUSES
+  (`undefined`) on this shape rather than guess a body out of whatever
+  scrollback sits above the closing border, which previously made `promptId`
+  drift with scrollback (see `docs/permission-approval.md` and GUARD 5 in
+  `src/permission-approval.ts`). This fixture is kept as the negative proof
+  of that refusal, not as a recognised capture.
 - `synthetic-outside-dir-edit-scrolled-off-3-rows.txt` — `pane-outside-dir-edit-header-visible.txt`
   with the same top-3-rows cut. Exercises the `path` derivation (GUARD 1)
   with the header gone AND the directory-bearing compound option 2 present.
