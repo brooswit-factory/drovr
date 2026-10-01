@@ -746,8 +746,9 @@ describe("classifyPermissionPrompt", () => {
         "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
         "No",
       ]);
-      // GUARD 1: option 2 carries no directory for an already-trusted path —
-      // fail closed, not a guess.
+      // `path` derivation: option 2 carries no directory for an
+      // already-trusted path — refusing to guess, not itself the fail-closed
+      // guarantee. GUARD 1(c) below is what makes the prompt unanswerable.
       expect(prompt!.path).toBeUndefined();
     });
 
@@ -841,8 +842,40 @@ describe("classifyPermissionPrompt", () => {
       const scrolledOff = classifyPermissionPrompt(fileEditFixture("synthetic-notes-md-edit-scrolled-off-3-rows.txt"))!;
       for (const prompt of [headerVisible, headerVisibleOutsideDir, scrolledOff]) {
         expect(optionFor(prompt, "always")).toBe(-1);
+      }
+    });
+
+    // GUARD 1(c) (FACTORY-584): when `path` cannot be derived — the
+    // in-trusted-root shape, the common case — scope "once" must ALSO be
+    // refused, not just "always". Completing the directory from the pane's
+    // own cwd was considered and rejected (FACTORY-580's ask/decision
+    // thread): the question line carries only the basename, "inside the
+    // trusted root" means anywhere under it, so a cwd-completed path would be
+    // a guess wearing a derived path's clothes. This is what actually makes
+    // the prompt unanswerable and routes it to the FACTORY-318 escalation,
+    // regardless of which arm recognised it (header-visible or
+    // header-scrolled-off).
+    test("scope \"once\" is ALSO refused when path is undefined (GUARD 1c, FACTORY-584)", () => {
+      const headerVisible = classifyPermissionPrompt(fileEditFixture("pane-notes-md-edit-header-visible.txt"))!;
+      const scrolledOff = classifyPermissionPrompt(fileEditFixture("synthetic-notes-md-edit-scrolled-off-3-rows.txt"))!;
+      for (const prompt of [headerVisible, scrolledOff]) {
+        expect(prompt.path).toBeUndefined();
+        expect(optionFor(prompt, "once")).toBe(-1);
+        expect(optionFor(prompt, "always")).toBe(-1);
+      }
+    });
+
+    // The flip side of GUARD 1(c): when `path` IS derivable (outside the
+    // trusted root), scope "once" must still answer with option 1 — only
+    // "always" is refused, by GUARD 1(b)/4 above, unconditionally.
+    test("scope \"once\" still answers when path IS derivable (outside the trusted root)", () => {
+      const headerVisibleOutsideDir = classifyPermissionPrompt(fileEditFixture("pane-outside-dir-edit-header-visible.txt"))!;
+      const scrolledOffOutsideDir = classifyPermissionPrompt(fileEditFixture("synthetic-outside-dir-edit-scrolled-off-3-rows.txt"))!;
+      for (const prompt of [headerVisibleOutsideDir, scrolledOffOutsideDir]) {
+        expect(prompt.path).toBeDefined();
         expect(optionFor(prompt, "once")).toBe(0);
         expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+        expect(optionFor(prompt, "always")).toBe(-1);
       }
     });
 
@@ -1249,5 +1282,60 @@ describe("autoAnswerPermissions", () => {
     expect((results[0] as { reason: string }).reason).toMatch(/no "Yes, and …" stored-rule option/);
     expect(keysSent["w1:p1"]).toBeUndefined();
     expect(await readAudit(path)).toEqual([]);
+  });
+
+  // GUARD 1(c) (FACTORY-584), through the real autoAnswerPermissions path: an
+  // in-trusted-root Edit/Create-file prompt — path undefined, the common
+  // case — must be skipped under scope "once", with no "approving" audit
+  // record and no keys sent at all, on both the header-visible capture and
+  // its header-scrolled-off derivative (FACTORY-460 class 1).
+  describe("the Edit/Create-file dialog with an undefined path (GUARD 1c, FACTORY-584)", () => {
+    const fileEditFixture = (name: string) => readFileSync(new URL(`./fixtures/file-edit-approval/${name}`, import.meta.url), "utf8");
+
+    test("header visible, in trusted root: skipped under scope once, no audit record, nothing pressed", async () => {
+      const path = await freshAuditPath();
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [fileEditFixture("pane-notes-md-edit-header-visible.txt")] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+      expect((results[0] as { reason: string }).reason).toMatch(/no plain "Yes" option/);
+      expect(keysSent["w1:p1"]).toBeUndefined();
+      expect(await readAudit(path)).toEqual([]);
+    });
+
+    test("header scrolled off (class 1), in trusted root: skipped under scope once, no audit record, nothing pressed", async () => {
+      const path = await freshAuditPath();
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [fileEditFixture("synthetic-notes-md-edit-scrolled-off-3-rows.txt")] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+      expect((results[0] as { reason: string }).reason).toMatch(/no plain "Yes" option/);
+      expect(keysSent["w1:p1"]).toBeUndefined();
+      expect(await readAudit(path)).toEqual([]);
+    });
+
+    // The flip side: outside the trusted root, path IS derivable, so scope
+    // "once" still answers with option 1 exactly as before this ticket.
+    test("header visible, outside the trusted root: still answered with option 1 under scope once", async () => {
+      const path = await freshAuditPath();
+      const prompt = fileEditFixture("pane-outside-dir-edit-header-visible.txt");
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [prompt, prompt, AFTER] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "answered", tool: "Edit file", recognizedVia: "separator" }]);
+      expect(keysSent["w1:p1"]).toEqual([["enter"]]);
+      const audit = await readAudit(path);
+      expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);
+      expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "once", option: "Yes" });
+    });
+
+    // scope "always" must still be refused outright on this shape too
+    // (GUARD 1b/4, unchanged) — confirms GUARD 1(c)'s new "once" refusal did
+    // not accidentally loosen the pre-existing "always" one.
+    test("header visible, in trusted root: scope always is also skipped, nothing pressed", async () => {
+      const path = await freshAuditPath();
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [fileEditFixture("pane-notes-md-edit-header-visible.txt")] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "always" });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+      expect(keysSent["w1:p1"]).toBeUndefined();
+      expect(await readAudit(path)).toEqual([]);
+    });
   });
 });
