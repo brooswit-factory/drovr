@@ -587,7 +587,9 @@ premise.** The question line carries only the basename (confirmed: 0 of the
 claimed "the directory is in option 2 … present in 25 of 25 edit/create
 captures" as a universal rule; that does NOT hold on this host's claude
 2.1.251. It holds only when the edited file is OUTSIDE the session's
-already-trusted root:
+already-trusted root — a finding that falsified the original premise, but is
+not itself the fail-closed guarantee; see GUARD 1(c) below for the part
+that actually is:
 
 ```
  Do you want to make this edit to OUTSIDE.md?
@@ -603,12 +605,20 @@ accept-edits toggle and the directory access in the same affirmative choice.
 When the edited file is already inside the trusted root (the common case),
 option 2 carries no directory at all (`pane-notes-md-edit-header-visible.txt`
 above). `path` is therefore `undefined` whenever either half fails to
-parse — which in practice means whenever the file is already trusted — fail
-closed, never a partially-built path, and never a guess at wording this
-fix has not actually captured. This derivation is shared by every arm (a
-small `makePermissionPrompt` helper), so an already-header-visible Edit/Create
+parse — which in practice means whenever the file is already trusted — never
+a partially-built path, and never a guess at wording this fix has not
+actually captured. This derivation is shared by every arm (a small
+`makePermissionPrompt` helper), so an already-header-visible Edit/Create
 dialog (the general `SEPARATOR` arm, unchanged) gets the same `path` an
 otherwise-identical header-scrolled-off capture gets from this sibling.
+`path` being `undefined` here is NOT, by itself, fail-closed — it is only a
+derivation refusing to guess. Until FACTORY-584, the shape stayed fully
+*answerable* despite that: `optionFor(prompt, "once")` returned plain
+`"Yes"`'s index regardless of `path`, so the common in-trusted-root case
+(`path === undefined`) was pressed anyway, with no path ever known. A PR
+comment and an earlier revision of this doc called that branch
+"fail-closed"; it was the permissive one. GUARD 1(c) is the actual
+fail-closed guarantee.
 
 **GUARD 1(b)/GUARD 4 — `scope: "always"` is refused for this shape, inside
 drovr, unconditionally.** On EITHER capture above, option 2 ALSO switches
@@ -621,6 +631,45 @@ thing standing between drovr's own default scope (`"always"`,
 every future edit. butchr's live path already passes `scope: "once"`
 independently (`src/agents/permission-answer-loop.ts`), but this refusal
 does not rely on that.
+
+**GUARD 1(c) — `scope: "once"` is ALSO refused when `path` is `undefined`
+(FACTORY-584), making the dialog unanswerable, not merely unprivileged.**
+GUARD 1(b) above refuses `"always"` unconditionally for this shape; until
+FACTORY-584 that left `"once"` free to press plain `"Yes"` even when `path`
+could not be derived — the common case, every in-trusted-root edit. Derived
+`path` on its own never caused anything; it was only ever stored on the
+`PermissionPrompt` for the one-off caller that wants it. Completing the
+missing directory from the pane's own `cwd` was considered and rejected on
+FACTORY-580 before this ticket existed: "inside the trusted root" means
+anywhere under it, the question line carries only the basename, so
+`<cwd>/<basename>` for an edit to `<root>/src/foo.ts` would derive
+`<root>/foo.ts` — a guessed path wearing a derived path's clothes, the
+exact thing this guard forbids — and the pane's reported `cwd` is not
+reliably the session's trusted root to begin with. `optionFor` now returns
+`-1` for scope `"once"` too, whenever `tool` is "Edit file" or "Create
+file" and `path === undefined` — regardless of what the caller asks for,
+the same unconditional shape GUARD 1(b) already uses for `"always"`.
+
+Concretely: `autoAnswerPermissions` (scope `"once"`, butchr's live default)
+now returns `skipped` for this shape with no `approvePermission` call at
+all, so no `"approving"` audit record is written and no keys are sent —
+see "A prompt without that option in that position is skipped" above.
+`createBlockingEscalationWatcher`'s `escalationPayload`
+(`docs/blocking-escalation.md`) escalates precisely when
+`optionFor(permission, permissionScope) < 0` for a recognised dialog, so
+this now reaches a human through the existing FACTORY-318 path — with
+`question`/`options` copied verbatim and a content-stable fingerprint — the
+same mechanism and nothing new. An outside-root edit, where `path` IS
+derivable, is unaffected: `optionFor("once")` still returns plain `"Yes"`'s
+index for it, exactly as before.
+
+Not claimed here: the in-root/outside-root split of FACTORY-460's 20 class-1
+captures is unmeasured on this host — `bin/drovr-replay.mjs` and
+agentvelocity's captures would answer it, and doing so is outstanding, not
+this ticket's to estimate. Nor is this a statement that `(c)` (answering
+with an explicitly-unknown path, left to a consumer-side policy) is
+implemented anywhere — it isn't, and shipping it needs admin-agentsafety's
+sign-off, not this repo's.
 
 **GUARD 2 — torn captures.** The exact-option-label-set half lives in
 recognition (above); the two-identical-reads half is unchanged, already a

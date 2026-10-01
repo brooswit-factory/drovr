@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createBlockingEscalationWatcher, type BlockingEscalationHook } from "../src/blocking-escalation.js";
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/too-complex-permission/${name}`, import.meta.url), "utf8");
+const fileEditFixture = (name: string) => readFileSync(new URL(`./fixtures/file-edit-approval/${name}`, import.meta.url), "utf8");
 
 const TRUST = " Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel";
 // Codex's own directory-trust dialog (FACTORY-561) — same capture as test/codex-trust.test.ts
@@ -346,6 +347,49 @@ describe("createBlockingEscalationWatcher", () => {
       const fp1 = (first[0] as { fingerprint: string }).fingerprint;
       const fp2 = (second[0] as { fingerprint: string }).fingerprint;
       expect(fp1).not.toBe(fp2);
+    });
+  });
+
+  // GUARD 1(c) (FACTORY-460/580/584): an Edit/Create-file prompt with no
+  // derivable `path` is now unanswerable under EITHER scope, including
+  // "once" — before this ticket, "once" still answered it (plain "Yes" at
+  // index 0), so it never reached this escalation path at all. Routes
+  // through the SAME `optionFor(...) < 0` gate as the too-complex shape
+  // above, with no new escalation mechanism.
+  describe("an Edit/Create-file prompt with no derivable path, strict fail-closed (FACTORY-584)", () => {
+    test("scope once does NOT answer this shape when path is undefined (in-root), so it escalates instead of being silently reported", async () => {
+      const c = client([{ pane_id: "w1:p1", agent_status: "blocked" }], { "w1:p1": fileEditFixture("pane-notes-md-edit-header-visible.txt") });
+      const hook = recordingHook();
+      const outcomes = await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
+      expect(outcomes).toEqual([{ paneId: "w1:p1", outcome: "escalated", fingerprint: expect.any(String) }]);
+      expect(hook.escalations).toHaveLength(1);
+      const escalation = hook.escalations[0] as { paneId: string; question: string; options: string[] };
+      expect(escalation.paneId).toBe("w1:p1");
+      // escalationPayload composes `question` as tool\nrequest\nquestion —
+      // the verbatim parsed question line alone, not the raw screen.
+      expect(escalation.question).toContain("Do you want to make this edit to NOTES.md?");
+      expect(escalation.question.startsWith("Edit file\n")).toBe(true);
+      expect(escalation.options).toEqual([
+        "Yes",
+        "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+        "No",
+      ]);
+    });
+
+    test("the same undefined-path shape still escalates on the header-scrolled-off capture (FACTORY-460 class 1)", async () => {
+      const c = client([{ pane_id: "w1:p1", agent_status: "blocked" }], { "w1:p1": fileEditFixture("synthetic-notes-md-edit-scrolled-off-3-rows.txt") });
+      const hook = recordingHook();
+      const outcomes = await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
+      expect(outcomes).toEqual([{ paneId: "w1:p1", outcome: "escalated", fingerprint: expect.any(String) }]);
+      expect(hook.escalations).toHaveLength(1);
+    });
+
+    test("scope once DOES still answer this shape when path IS derivable (outside the trusted root), so it stays reported — no escalation", async () => {
+      const c = client([{ pane_id: "w1:p1", agent_status: "blocked" }], { "w1:p1": fileEditFixture("pane-outside-dir-edit-header-visible.txt") });
+      const hook = recordingHook();
+      const outcomes = await createBlockingEscalationWatcher(hook, { permissionScope: "once" }).poll(c);
+      expect(outcomes).toEqual([{ paneId: "w1:p1", outcome: "reported", kind: "permission", name: "Edit file" }]);
+      expect(hook.escalations).toEqual([]);
     });
   });
 });

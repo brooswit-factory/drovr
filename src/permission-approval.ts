@@ -523,7 +523,22 @@ export type PermissionScope = "once" | "always";
  * anything.
  */
 export function optionFor(prompt: PermissionPrompt, scope: PermissionScope): number {
-  if (scope === "once") return prompt.options.indexOf("Yes");
+  if (scope === "once") {
+    // GUARD 1 (FACTORY-580 ask/decision thread, FACTORY-584): an Edit/Create-
+    // file dialog whose `path` could not be derived (no directory in option 2
+    // — the in-trusted-root shape, the common case) must never be answered
+    // blind. Completing it from the pane's own cwd was considered and
+    // rejected: "inside the trusted root" means anywhere under it, the
+    // question line carries only the basename, and cwd is what the pane
+    // agent reports, not necessarily the trusted root — so a derived path
+    // would really be a guess wearing a derived path's clothes, exactly what
+    // this guard exists to forbid. Refusing BOTH scopes (not just "always",
+    // which already refuses this shape unconditionally below) routes the
+    // prompt into the existing FACTORY-318 escalation instead: it stays
+    // recognised, but unanswerable, and a human decides.
+    if ((prompt.tool === "Edit file" || prompt.tool === "Create file") && prompt.path === undefined) return -1;
+    return prompt.options.indexOf("Yes");
+  }
   // GUARD 1(b)/GUARD 4 (FACTORY-460/580): an Edit/Create-file dialog's own
   // "Yes, and …" option ALWAYS also switches the session to accept-edits
   // mode (auto-approving every future file edit), whether or not it also
