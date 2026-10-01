@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realTmpdir } from "./support/tmp";
 import { dirname, join } from "node:path";
 import { nativeTranscriptReply, readNativeTranscript } from "../src/native-transcript.js";
 
@@ -21,7 +21,7 @@ const byPath = (value: string) => readNativeTranscript({ provider: "claude", ses
 const rollout = (day = "13") => `.codex/sessions/2026/09/${day}/rollout-2026-09-${day}T12-00-00-${id}.jsonl`;
 
 describe("native transcript disk reader", () => {
-  beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "drovr-native-")); });
+  beforeEach(async () => { home = await mkdtemp(join(realTmpdir(), "drovr-native-")); });
   afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
   test("explicit path wins over layout discovery and preserves all UTF-8 text", async () => {

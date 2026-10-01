@@ -1,11 +1,11 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realTmpdir } from "./support/tmp";
 import { join } from "node:path";
 import { providerSetupSeed, applyProviderSetupSeed } from "../src/provider-setup";
 
 test("repair preserves target preferences and rejects symlink writes", async () => {
-  const home = await mkdtemp(join(tmpdir(), "drovr-repair-"));
+  const home = await mkdtemp(join(realTmpdir(), "drovr-repair-"));
   const path = join(home, ".gemini/antigravity-cli/settings.json");
   const files = [{ relative: ".gemini/antigravity-cli/settings.json", contents: '{"colorScheme":"terminal"}' }];
   try {
@@ -23,7 +23,7 @@ test("repair preserves target preferences and rejects symlink writes", async () 
 });
 
 test("AGY setup preserves completed choices without leaking trust or MCP settings", async () => {
-  const home = await mkdtemp(join(tmpdir(), "drovr-setup-"));
+  const home = await mkdtemp(join(realTmpdir(), "drovr-setup-"));
   const prefix = join(home, ".gemini/antigravity-cli");
   await mkdir(join(prefix, "cache"), { recursive: true });
   try {
@@ -42,7 +42,7 @@ test("AGY setup preserves completed choices without leaking trust or MCP setting
 });
 
 test("Claude requires existing completion; Codex needs no fabricated setup", async () => {
-  const home = await mkdtemp(join(tmpdir(), "drovr-setup-"));
+  const home = await mkdtemp(join(realTmpdir(), "drovr-setup-"));
   try {
     expect(await providerSetupSeed("codex", home)).toEqual([]);
     await writeFile(join(home, ".claude.json"), '{"hasCompletedOnboarding":false}');

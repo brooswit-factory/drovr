@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
+import { realTmpdir } from "./support/tmp";
 import { join } from "node:path";
 import { prepareAgyHome } from "../src/agy-home.js";
 
 test("isolated AGY home contains only its supplied MCP identity and exact workspace trust", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "drovr-home-"));
+  const cwd = await mkdtemp(join(realTmpdir(), "drovr-home-"));
   try {
     const home = join(cwd, "home");
     const servers = { butchr: { command: "/usr/bin/bun", args: ["bridge.js"] } };
@@ -18,7 +19,7 @@ test("isolated AGY home contains only its supplied MCP identity and exact worksp
 });
 
 test("reuses completed setup only, preserves private trust/MCP, and installs official hooks with private HOME", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "drovr-home-setup-"));
+  const cwd = await mkdtemp(join(realTmpdir(), "drovr-home-setup-"));
   try {
     const home = join(cwd, "home");
     const source = join(cwd, "source");
@@ -61,7 +62,7 @@ test("reuses completed setup only, preserves private trust/MCP, and installs off
 });
 
 test("incomplete source onboarding propagates without running integration or replacing private settings", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "drovr-home-incomplete-"));
+  const cwd = await mkdtemp(join(realTmpdir(), "drovr-home-incomplete-"));
   try {
     const home = join(cwd, "home");
     const source = join(cwd, "source");
@@ -83,7 +84,7 @@ test("incomplete source onboarding propagates without running integration or rep
 });
 
 test("integration failure propagates instead of claiming a prepared home", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "drovr-home-install-failure-"));
+  const cwd = await mkdtemp(join(realTmpdir(), "drovr-home-install-failure-"));
   try {
     const failure = new Error("injected installer timeout");
     await expect(prepareAgyHome({ home: join(cwd, "home"), cwd, servers: {}, installHerdrIntegration: true,
@@ -94,7 +95,7 @@ test("integration failure propagates instead of claiming a prepared home", async
 
 test("refuses the real home and a symlinked MCP config without changing its target", async () => {
   await expect(prepareAgyHome({ home: homedir(), cwd: homedir(), servers: {} })).rejects.toThrow("dedicated");
-  const cwd = await mkdtemp(join(tmpdir(), "drovr-home-guard-"));
+  const cwd = await mkdtemp(join(realTmpdir(), "drovr-home-guard-"));
   try {
     const home = join(cwd, "home");
     const config = join(home, ".gemini/config");

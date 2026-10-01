@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realTmpdir } from "./support/tmp";
 import { join } from "node:path";
 import { NativeTranscriptUnavailableError, readClaudeTranscriptTail } from "../src/native-transcript.js";
 import {
@@ -212,7 +212,7 @@ describe("resident agent messaging", () => {
 describe("Claude transcript tail reader", () => {
   let home: string;
   const cwd = "/factory/work dir";
-  beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "drovr-tail-")); });
+  beforeEach(async () => { home = await mkdtemp(join(realTmpdir(), "drovr-tail-")); });
   afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
   test("returns complete records from an offset and leaves a partial record for later", async () => {
@@ -228,7 +228,7 @@ describe("Claude transcript tail reader", () => {
   });
 
   test("a transcript carried to a worktree's project folder is found by session ID", async () => {
-    const home = await mkdtemp(join(tmpdir(), "drovr-tail-moved-"));
+    const home = await mkdtemp(join(realTmpdir(), "drovr-tail-moved-"));
     // Measured: the whole file moves; nothing is left under the launch directory's folder.
     const moved = join(home, ".claude", "projects", "-work-repo--claude-worktrees-task");
     await mkdir(moved, { recursive: true });
@@ -251,7 +251,7 @@ describe("Claude transcript tail reader", () => {
   });
 
   test("an unprompted session's absent transcript reads as empty only from the start", async () => {
-    const home = await mkdtemp(join(tmpdir(), "drovr-tail-absent-"));
+    const home = await mkdtemp(join(realTmpdir(), "drovr-tail-absent-"));
     const target = { sessionId: "never-prompted", cwd: "/work/fresh", home };
     expect(await readClaudeTranscriptTail(target, 0)).toEqual({ offset: 0, text: "" });
     await expect(readClaudeTranscriptTail(target, 5)).rejects.toThrow("saved history is unavailable");

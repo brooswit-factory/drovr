@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realTmpdir } from "./support/tmp";
 import { join } from "node:path";
 import {
   ManagedConversationRunner, runConversationProcess,
@@ -244,7 +244,7 @@ afterEach(async () => {
 
 describe("conversation process adapter", () => {
   test("uses argv directly, preserves cwd, and closes stdin", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "drovr-conversation-process-"));
+    const cwd = await mkdtemp(join(realTmpdir(), "drovr-conversation-process-"));
     directories.push(cwd);
     const literal = "$(not-a-command); \"literal\"";
     const result = await runConversationProcess([process.execPath, "--eval", "console.log(JSON.stringify({cwd:process.cwd(),arg:process.argv.at(-1),stdin:await new Response(Bun.stdin).text()}))", "--", literal], cwd);
@@ -254,11 +254,11 @@ describe("conversation process adapter", () => {
   });
 
   test("drains stdout and stderr concurrently and preserves the exit code", async () => {
-    const result = await runConversationProcess([process.execPath, "--eval", "await Promise.all([Bun.write(Bun.stdout, 'o'.repeat(262144)), Bun.write(Bun.stderr, 'e'.repeat(262144))]); process.exit(7)"], tmpdir());
+    const result = await runConversationProcess([process.execPath, "--eval", "await Promise.all([Bun.write(Bun.stdout, 'o'.repeat(262144)), Bun.write(Bun.stderr, 'e'.repeat(262144))]); process.exit(7)"], realTmpdir());
     expect(result).toEqual({ exitCode: 7, stdout: "o".repeat(262144), stderr: "e".repeat(262144) });
   });
 
   test("spawn failures are sanitized", async () => {
-    await expect(runConversationProcess(["/not-present/private-executable-secret"], tmpdir())).rejects.toThrow("Conversation process execution failed");
+    await expect(runConversationProcess(["/not-present/private-executable-secret"], realTmpdir())).rejects.toThrow("Conversation process execution failed");
   });
 });
