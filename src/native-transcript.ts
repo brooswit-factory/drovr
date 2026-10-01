@@ -14,6 +14,9 @@ const MAX_BYTES = 4 * 1024 * 1024;
 const MAX_ENTRIES = 10_000;
 const MAX_CANDIDATES = 16;
 const MAX_DEPTH = 4;
+// macOS 11+: the kernel refuses a symlink in ANY component of the path, in one
+// atomic open. Node does not export the constant.
+const O_NOFOLLOW_ANY = 0x20000000;
 
 export class NativeTranscriptUnavailableError extends Error {
   constructor() { super("Native transcript: saved history is unavailable"); this.name = "NativeTranscriptUnavailableError"; }
@@ -53,10 +56,20 @@ function fail(message: string): never {
 
 // Pin every directory before opening its child. O_NOFOLLOW on just the final
 // filename would still follow symlinked parents or race a parent replacement.
+// Linux walks the path one component at a time through /proc/self/fd. macOS has
+// no equivalent of that, so it opens the whole path once with O_NOFOLLOW_ANY.
 async function openSafe(path: string, directory = false): Promise<FileHandle> {
-  if (process.platform !== "linux") fail("safe disk reads require Linux /proc/self/fd");
+  if (process.platform !== "linux" && process.platform !== "darwin") fail("safe disk reads require Linux or macOS");
   if (!isAbsolute(path) || path.includes("\0") || path.split("/").includes("..")) {
     fail("an absolute path without parent traversal is required");
+  }
+  if (process.platform === "darwin") {
+    try {
+      return await open(path, constants.O_RDONLY | O_NOFOLLOW_ANY | constants.O_NONBLOCK | (directory ? constants.O_DIRECTORY : 0));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new NativeTranscriptUnavailableError();
+      fail("path unavailable or unsafe (symlinks are not allowed)");
+    }
   }
   let handle = await open("/", constants.O_RDONLY | constants.O_DIRECTORY);
   try {
@@ -74,6 +87,15 @@ async function openSafe(path: string, directory = false): Promise<FileHandle> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new NativeTranscriptUnavailableError();
     fail("path unavailable or unsafe (symlinks are not allowed)");
   }
+}
+
+// Where to list a directory that `handle` pins. Linux lists the descriptor
+// itself. macOS cannot (/dev/fd/N is not a directory there), so it lists the
+// path just opened: that yields names only, and every name is then opened again
+// by full path through openSafe, so a swap in between cannot make a read leave
+// the tree.
+function listingPath(path: string, handle: FileHandle): string {
+  return process.platform === "linux" ? `/proc/self/fd/${handle.fd}` : path;
 }
 
 async function readFile(path: string): Promise<string> {
@@ -125,7 +147,7 @@ async function findCodex(root: string, id: string, cwd: string): Promise<string>
     if (depth > MAX_DEPTH) fail("Codex search depth limit exceeded");
     const handle = await openSafe(path, true);
     try {
-      const dir = await opendir(`/proc/self/fd/${handle.fd}`);
+      const dir = await opendir(listingPath(path, handle));
       for await (const entry of dir) {
         if (++entries > MAX_ENTRIES) fail("Codex search entry limit exceeded");
         const child = join(path, entry.name);
@@ -205,7 +227,7 @@ async function findClaudeTranscript(projects: string, name: string): Promise<Fil
   const found: string[] = [];
   let entries = 0;
   try {
-    for await (const entry of await opendir(`/proc/self/fd/${root.fd}`)) {
+    for await (const entry of await opendir(listingPath(projects, root))) {
       if (++entries > MAX_ENTRIES) fail("Claude project search entry limit exceeded");
       if (!entry.isDirectory()) continue;
       try {
