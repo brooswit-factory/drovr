@@ -630,6 +630,23 @@ same way) — both classify as `undefined`; verified by hand against the
 pre-FACTORY-586 scan that both were previously RECOGNISED, with the
 intervening footer/options/chatter absorbed into `request`.
 
+**GUARD 7 — two further refusals (FACTORY-587, from review of the GUARD 6
+change).** GUARD 6's bound only trips on lines ABOVE `q`, the FIRST question
+on screen, so it cannot catch an earlier dialog whose own question line is
+still visible: `q` is then that older question and the live dialog is never
+examined. Measured probe: a COMPLETE earlier edit dialog (opening border,
+diff, closing border, question, 3 options, `Esc to cancel`) above a live
+dialog with its opening border scrolled off was still recognised, with the
+older diff as `request`. Now recognition refuses (`undefined`) when more than
+one `QUESTION` line is on screen, rather than guess which is live. Second,
+a bare stray `╌{10,}` line followed by plain chatter (no QUESTION/OPTION/`Esc
+to cancel` line between it and the live closing border) was still absorbed;
+every diff body line carries the line-number gutter (`1  …`, `4 +…`), so the
+body must now consist solely of gutter lines or recognition refuses. Both
+only ever refuse MORE. Derived negative probes (not sightings):
+`synthetic-earlier-dialog-with-question-plus-live-no-opening-border.txt` and
+`synthetic-stray-border-chatter-above-live-no-opening-border.txt`.
+
 **GUARD 1 — the `path` field, and a finding that corrects FACTORY-460's own
 premise.** The question line carries only the basename (confirmed: 0 of the
 2 edit/create captures taken for this fix had a path in it). FACTORY-460

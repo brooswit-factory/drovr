@@ -97,3 +97,14 @@ capture on this host and is NOT fixed here — see the PR description.
   boundary line, found the stray `╌` run, and absorbed the boundary line and
   the chatter into `request`. After the fix, the scan stops at the `Esc to
   cancel` line and refuses. Also a derived negative probe, not a sighting.
+- `synthetic-earlier-dialog-with-question-plus-live-no-opening-border.txt` —
+  FACTORY-587: a COMPLETE earlier edit dialog (opening border, diff, closing
+  border, question, 3 options, `Esc to cancel`, taken from
+  `pane-notes-md-edit-header-visible.txt`) prefixed onto
+  `synthetic-outside-dir-edit-scrolled-off-3-rows.txt` with its opening border
+  removed. Derived negative probe, not a sighting. Refused: two question lines.
+- `synthetic-stray-border-chatter-above-live-no-opening-border.txt` —
+  FACTORY-587: a bare stray `╌` run and one line of plain chatter (no
+  QUESTION/OPTION/`Esc to cancel` line) prefixed onto the same live capture
+  with its opening border removed. Derived negative probe, not a sighting.
+  Refused: the body lines carry no diff line-number gutter.

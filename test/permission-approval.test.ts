@@ -939,6 +939,19 @@ describe("classifyPermissionPrompt", () => {
         expect(raw).toContain("Esc to cancel");
         expect(classifyPermissionPrompt(raw)).toBeUndefined();
       });
+
+      // FACTORY-587: wroosbit's review of #86 measured two cases the scan bound alone misses.
+      test("an earlier COMPLETE dialog (its own question line included) above a live dialog with no opening border: NOT recognised (derived probe, not a sighting)", () => {
+        const raw = fileEditFixture("synthetic-earlier-dialog-with-question-plus-live-no-opening-border.txt");
+        expect(raw.match(/Do you want to make this edit/g)!.length).toBe(2);
+        expect(classifyPermissionPrompt(raw)).toBeUndefined();
+      });
+
+      test("a bare stray ╌{10,} line followed by plain chatter (no QUESTION/OPTION/Esc line between) above a live dialog with no opening border: NOT recognised (derived probe, not a sighting)", () => {
+        const raw = fileEditFixture("synthetic-stray-border-chatter-above-live-no-opening-border.txt");
+        expect(raw).toContain("some chatter");
+        expect(classifyPermissionPrompt(raw)).toBeUndefined();
+      });
     });
   });
 });

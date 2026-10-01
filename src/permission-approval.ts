@@ -243,6 +243,7 @@ const MAX_TITLE_GAP_LINES = 3;
  * file" title have scrolled off a pane shorter than the dialog.
  */
 const DIFF_BORDER = /^\s*╌{10,}\s*$/;
+const DIFF_GUTTER = /^\d+(\s|$)/;
 /**
  * The file-edit/create question itself names the operation and carries the
  * BASENAME only (FACTORY-460: 0 of 25 edit/create captures had a path in the
@@ -346,6 +347,11 @@ function classifyFileEditNoSeparator(
   const match = FILE_EDIT_QUESTION.exec(question);
   if (!match) return undefined;
   if (options.length !== 3 || options[2] !== "No" || !FILE_EDIT_OPTION_2.test(options[1]!)) return undefined;
+  // FACTORY-587: `q` is the FIRST question on screen, and the scan below
+  // starts above it, so a second question anywhere means an earlier dialog's
+  // question sits above the live one and the live frame is never examined.
+  // Only ever stricter: refuse rather than guess which question is live.
+  if (lines.some((line, i) => i !== q && QUESTION.test(line))) return undefined;
   let open = -1;
   for (let i = q - 2; i >= 0; i--) {
     const line = lines[i]!;
@@ -375,6 +381,9 @@ function classifyFileEditNoSeparator(
   if (open < 0) return undefined;
   const body = lines.slice(open + 1, q - 1).map((line) => line.trim()).filter((line) => line !== "");
   if (body.length === 0) return undefined;
+  // FACTORY-587: every diff body line carries the line-number gutter. A bare
+  // stray `╌` run followed by plain chatter has none, so refuse it.
+  if (!body.every((line) => DIFF_GUTTER.test(line))) return undefined;
   return { tool: match[1] === "create" ? "Create file" : "Edit file", request: body.join("\n") };
 }
 
