@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.9
+
+macOS support for the native transcript readers (Claude, Codex, AGY, and the
+Claude tail reader): `openSafe` (`src/native-transcript.ts`) now opens the
+whole path once with `O_NOFOLLOW_ANY` on macOS 11+, so a symlink in any path
+component is refused atomically, equivalent to the Linux per-component walk
+through `/proc/self/fd` (which is unchanged). On macOS a directory is listed by
+path rather than the pinned descriptor and every entry is re-opened by full path
+through `openSafe`, so a swap in between cannot make a read leave the tree
+(documented in the code). Other platforms still refuse. Tests now resolve
+`os.tmpdir()` through `realpath` (`test/support/tmp.ts`), so the suite passes on
+macOS. No change on Linux.
+
 ## 0.16.8
 
 File-edit/Create-file approval dialog whose header has scrolled off the
