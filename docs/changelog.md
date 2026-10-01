@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.8
+
+File-edit/Create-file approval dialog whose header has scrolled off the
+pane is now recognised (FACTORY-460/580), with the safety bounds added since:
+refuse when the opening `╌` border is off screen (FACTORY-583); a dialog
+whose full path is not derivable is recognised but unanswerable, so it
+escalates to a human (FACTORY-584/585, strict fail-closed); the backward
+border scan is bounded to the dialog's own frame (FACTORY-586); and
+recognition refuses when a second question line is on screen or the diff body
+lacks the line-number gutter (FACTORY-587, `docs/permission-approval.md`
+GUARD 6/7).
+
 ## 0.16.7
 
 FACTORY-561 (minimum scope for an unattended Codex task on zippy, native
