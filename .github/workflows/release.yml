@@ -1,0 +1,72 @@
+name: release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check release tag
+        id: check
+        run: |
+          set -euo pipefail
+          V="$(node -p "require('./package.json').version")"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$V" >/dev/null 2>&1; then
+            echo "already released: v$V"
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.check.outputs.release_needed == 'true'
+        with: { bun-version: latest }
+
+      - name: Build release asset
+        if: steps.check.outputs.release_needed == 'true'
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          npm pack
+
+      - name: Extract release notes
+        if: steps.check.outputs.release_needed == 'true'
+        run: |
+          set -euo pipefail
+          V="${{ steps.check.outputs.version }}"
+          awk -v ver="## $V" '
+            $0 == ver { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' docs/changelog.md > /tmp/release-notes.md
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "no changelog section for $V in docs/changelog.md" >&2
+            exit 1
+          fi
+
+      - name: Create release
+        if: steps.check.outputs.release_needed == 'true'
+        run: |
+          set -euo pipefail
+          V="${{ steps.check.outputs.version }}"
+          gh release create "v$V" "brooswit-drovr-$V.tgz" \
+            --target "$GITHUB_SHA" \
+            --title "Drovr $V" \
+            --notes-file /tmp/release-notes.md
