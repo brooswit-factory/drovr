@@ -64,3 +64,36 @@ shorter than the dialog:
 
 Class 2 from FACTORY-460 (a blank line inside the option block) has no real
 capture on this host and is NOT fixed here — see the PR description.
+
+- `synthetic-earlier-dialog-frame-plus-live-no-opening-border.txt` — DERIVED
+  NEGATIVE PROBE, not a sighting (FACTORY-586). Built from TWO committed
+  captures, never invented wholesale: `synthetic-outside-dir-edit-scrolled-off-3-rows.txt`
+  with its own opening `╌` border line removed (so, exactly as in the other
+  `-scrolled-off-` fixtures above, the only anchor available is its closing
+  border directly above its question), prefixed by a hand-assembled remnant
+  of an EARLIER edit dialog's own frame — its closing `╌` border, its option
+  list, and its `Esc to cancel` footer, but deliberately WITHOUT a literal
+  "Do you want to...?" question line (simulating that row having scrolled
+  further off than the rest of its own frame, so `lines.findIndex(QUESTION)`
+  still lands on the LIVE dialog's own question, not the older one's).
+  FACTORY-586 measured that, before the bound added in this ticket, the
+  backward `DIFF_BORDER` scan walked straight through the earlier dialog's
+  footer and option lines (none of which are `╌` borders) and latched onto
+  that EARLIER dialog's own closing border as if it were the live dialog's
+  opening one — absorbing the earlier dialog's options and intervening
+  chatter into `request`/`promptId`. After the fix, the scan stops the
+  instant it crosses the earlier dialog's `Esc to cancel` footer line (one of
+  the three boundary anchors — `QUESTION`, `OPTION`, `Esc to cancel` — this
+  ticket's bound respects) and refuses (`undefined`) rather than accept a
+  border found past it. REACHABILITY IS NOT ESTABLISHED, exactly as FACTORY-460/586
+  state: this is a mechanism probe assembled by hand from committed
+  fixtures, not a captured pane with two live dialogs on it.
+- `synthetic-stray-border-above-live-no-opening-border.txt` — the WEAKER
+  variant FACTORY-586 names, needing no second dialog's content at all: a
+  bare stray `╌{10,}` line, an `Esc to cancel`-shaped boundary line, and a
+  line of unrelated chatter, prefixed onto `synthetic-notes-md-edit-scrolled-off-3-rows.txt`
+  with its own opening border removed (same "closing border only" shape as
+  above). Before the fix, the unbounded scan crossed the `Esc to cancel`
+  boundary line, found the stray `╌` run, and absorbed the boundary line and
+  the chatter into `request`. After the fix, the scan stops at the `Esc to
+  cancel` line and refuses. Also a derived negative probe, not a sighting.

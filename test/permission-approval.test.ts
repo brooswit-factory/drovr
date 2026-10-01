@@ -763,6 +763,28 @@ describe("classifyPermissionPrompt", () => {
       expect(prompt!.path).toBe("/tmp/claude-1002/outside-dir/OUTSIDE.md");
     });
 
+    // FACTORY-586 DoD #3: every already-recognised fixture must classify
+    // EXACTLY as it did before this ticket's bound — same promptId, tool,
+    // request, path, recognizedVia — since the bound is narrowing a rule
+    // something already depends on. Explicit promptId values (not just the
+    // `/^[0-9a-f]{16}$/` shape check elsewhere) so a future change can't move
+    // them silently; pinned against the pre-FACTORY-586 values, verified by
+    // hand to be unchanged by this ticket's scan bound.
+    test("promptIds of every already-recognised Edit/Create-file fixture are unchanged by FACTORY-586's scan bound", () => {
+      expect(classifyPermissionPrompt(fileEditFixture("pane-notes-md-edit-header-visible.txt"))!.promptId).toBe(
+        "56b8abdf43825821",
+      );
+      expect(classifyPermissionPrompt(fileEditFixture("pane-outside-dir-edit-header-visible.txt"))!.promptId).toBe(
+        "a30f1125a82714fe",
+      );
+      expect(classifyPermissionPrompt(fileEditFixture("synthetic-notes-md-edit-scrolled-off-3-rows.txt"))!.promptId).toBe(
+        "04e4cfff44c9e3a1",
+      );
+      expect(classifyPermissionPrompt(fileEditFixture("synthetic-outside-dir-edit-scrolled-off-3-rows.txt"))!.promptId).toBe(
+        "a2cbb27f967f4809",
+      );
+    });
+
     // CLASS 1 (FACTORY-460, 20 of 31 unrecognised replay captures): the
     // dialog's `─` rule and "Edit file" title have scrolled off the top of a
     // pane shorter than the dialog. Before this fix, this returned undefined
@@ -894,6 +916,29 @@ describe("classifyPermissionPrompt", () => {
       expect(bashChrome).toBeDefined();
       expect(bashChrome!.recognizedVia).toBe("no-separator-bash");
       expect(bashChrome!.path).toBeUndefined();
+    });
+
+    // FACTORY-586: bound the backward `DIFF_BORDER` scan so it cannot cross
+    // another dialog's frame. Both fixtures here are DERIVED NEGATIVE
+    // PROBES, not sightings — reachability of a pane holding two live
+    // dialogs is explicitly NOT established (see the fixtures' own README
+    // entries and `docs/permission-approval.md`). Both must classify as
+    // `undefined`; before this ticket's bound, both were wrongly RECOGNISED
+    // (verified by hand against the pre-fix scan: the first absorbed an
+    // earlier dialog's options/footer/chatter into `request`, the second
+    // absorbed a stray `╌` run's intervening footer/chatter the same way).
+    describe("the backward opening-border scan is bounded to this dialog's own frame (FACTORY-586)", () => {
+      test("an earlier dialog's own frame (closing border, options, footer — no question line) above a live dialog with no opening border: NOT recognised", () => {
+        const raw = fileEditFixture("synthetic-earlier-dialog-frame-plus-live-no-opening-border.txt");
+        expect(raw).toContain("Esc to cancel");
+        expect(classifyPermissionPrompt(raw)).toBeUndefined();
+      });
+
+      test("a stray ╌{10,} line beyond an Esc-to-cancel boundary, above a live dialog with no opening border: NOT recognised, body does not absorb the intervening text", () => {
+        const raw = fileEditFixture("synthetic-stray-border-above-live-no-opening-border.txt");
+        expect(raw).toContain("Esc to cancel");
+        expect(classifyPermissionPrompt(raw)).toBeUndefined();
+      });
     });
   });
 });

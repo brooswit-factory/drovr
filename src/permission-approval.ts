@@ -319,6 +319,22 @@ function makePermissionPrompt(
  * (`undefined`) rather than let `body` absorb whatever scrollback happens to
  * sit above the closing border, which would make `promptId` a function of
  * scrollback again — the exact invariant documented atop this file.
+ *
+ * GUARD 6 (FACTORY-586): the backward scan for the opening border is itself
+ * bounded to THIS dialog's own frame. Without a bound, intervening
+ * scrollback holding an EARLIER dialog's entire frame — its question, its
+ * option list, its `Esc to cancel` footer, and its own `╌` border — would
+ * let the scan walk straight through the live dialog's frame and latch onto
+ * the older one's border instead, silently importing that older dialog's
+ * diff as if it were this one's body (and, because `q` above is already the
+ * FIRST question on screen, misattributing the whole prompt to the older
+ * dialog). A `QUESTION` line, an `OPTION` line, or an `Esc to cancel` line
+ * all mark that boundary — crossing any of them means the scan has left this
+ * dialog's own frame, so it stops and refuses rather than accept a border
+ * found on the far side. This mirrors the no-separator MCP-tool arm's own
+ * header search above, which stops at a blank line, `SEPARATOR`, or
+ * `QUESTION` for the same reason: never let one dialog's recognition reach
+ * into another's frame for an anchor.
  */
 function classifyFileEditNoSeparator(
   lines: string[],
@@ -331,15 +347,31 @@ function classifyFileEditNoSeparator(
   if (!match) return undefined;
   if (options.length !== 3 || options[2] !== "No" || !FILE_EDIT_OPTION_2.test(options[1]!)) return undefined;
   let open = -1;
-  for (let i = q - 2; i >= 0; i--) if (DIFF_BORDER.test(lines[i]!)) { open = i; break; }
+  for (let i = q - 2; i >= 0; i--) {
+    const line = lines[i]!;
+    if (DIFF_BORDER.test(line)) { open = i; break; }
+    // FACTORY-586: bound the scan to THIS dialog's own frame. A `QUESTION`
+    // line, an `OPTION` line, or an `Esc to cancel` footer all mark the edge
+    // of some OTHER dialog sitting further up the scrollback — an earlier
+    // one's question, its option list, or its footer. Past that edge, any
+    // `╌` run belongs to that other frame, not to this one, so continuing
+    // the scan would let an unrelated border (and the chatter above it)
+    // become this dialog's body. Mirrors the no-separator MCP-tool arm's own
+    // bounded header search above, which stops at a blank line, `SEPARATOR`,
+    // or `QUESTION` for the identical reason — never cross into a different
+    // dialog's frame to find an anchor for this one.
+    if (QUESTION.test(line) || OPTION.test(line) || /Esc to cancel/.test(line)) break;
+  }
   // FACTORY-583: when the opening border itself has scrolled off the visible
-  // screen, there is no anchor left for where the diff body actually starts —
-  // falling back to line 0 would let `body` (and so `promptId`) absorb
-  // whatever scrollback happens to sit above the closing border, exactly the
-  // "promptId is a function of scrollback" bug this ticket exists to close.
-  // The frame is genuinely gone, not merely hard to find, so refuse rather
-  // than guess (FACTORY-396's lesson): return undefined, meaning "not
-  // recognised yet", not "this isn't a prompt at all".
+  // screen, or is beyond the other dialog's frame bounded above (FACTORY-586),
+  // there is no anchor left for where the diff body actually starts — falling
+  // back to line 0 (or past the boundary) would let `body` (and so
+  // `promptId`) absorb whatever scrollback happens to sit above the closing
+  // border, exactly the "promptId is a function of scrollback" bug this
+  // ticket exists to close. The frame is genuinely gone, not merely hard to
+  // find, so refuse rather than guess (FACTORY-396's lesson): return
+  // undefined, meaning "not recognised yet", not "this isn't a prompt at
+  // all".
   if (open < 0) return undefined;
   const body = lines.slice(open + 1, q - 1).map((line) => line.trim()).filter((line) => line !== "");
   if (body.length === 0) return undefined;

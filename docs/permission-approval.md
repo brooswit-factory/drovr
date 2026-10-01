@@ -593,6 +593,43 @@ see FACTORY-327, FACTORY-356, FACTORY-396) and reproduced FACTORY-460's own
 symptom: `approvePermission`'s re-read sees a different promptId, refuses
 `prompt-changed`, and the dialog is never answered.
 
+**GUARD 6 — the backward scan for the opening border is bounded to this
+dialog's own frame (FACTORY-586).** The scan above does not merely stop when
+the opening border is missing (GUARD 5) — it also stops the instant it
+crosses a line that marks the edge of some OTHER dialog: a `QUESTION` line
+(`Do you want to …?`), an `OPTION` line (a numbered `1. …`/`2. …` choice), or
+an `Esc to cancel` footer. Without that bound, intervening scrollback holding
+an EARLIER dialog's entire frame — its own question, its own options, its
+own footer, and its own `╌` border — let the scan walk straight through the
+live dialog's frame and latch onto the older one's border instead, silently
+treating the older dialog's diff as this one's body. Worse, because `q` above
+is already the FIRST question found on screen, an earlier dialog whose own
+question line is still literally present would make the WHOLE prompt —
+`tool`, `path`, `request`, `promptId` — resolve to the OLDER dialog while the
+pane is actually showing the live one. A weaker variant needs no second
+dialog at all: any stray `╌{10,}` run anywhere above the live dialog — a
+decorative rule, unrelated chatter that happens to contain the character —
+became an "opening border" the unbounded scan was willing to accept,
+absorbing everything between it and the live closing border into `request`.
+REACHABILITY OF THE TWO-LIVE-DIALOG CASE IS NOT ESTABLISHED — this is a
+mechanism closed defensively, not a reproduced field failure (see
+FACTORY-586's own ticket text) — but the weaker single-stray-border variant
+needs no second dialog to matter, and both are closed the same way: stop and
+refuse (`undefined`) rather than accept a border found past the boundary.
+This mirrors the no-separator MCP-tool arm's own header search above, which
+stops at a blank line, `SEPARATOR`, or `QUESTION` for the identical reason —
+never let one dialog's recognition reach into another's frame for an anchor.
+Two derived negative probes exercise this, assembled by hand from the
+committed captures above rather than invented from scratch (per this file's
+fixture-first practice, a negative test — refusing MORE — needs no real
+capture to be legitimate): `test/fixtures/file-edit-approval/synthetic-earlier-dialog-frame-plus-live-no-opening-border.txt`
+(an earlier dialog's closing border, options and footer, prefixed onto a live
+capture with its own opening border removed) and `synthetic-stray-border-above-live-no-opening-border.txt`
+(a bare stray `╌` run plus an `Esc to cancel`-shaped boundary, prefixed the
+same way) — both classify as `undefined`; verified by hand against the
+pre-FACTORY-586 scan that both were previously RECOGNISED, with the
+intervening footer/options/chatter absorbed into `request`.
+
 **GUARD 1 — the `path` field, and a finding that corrects FACTORY-460's own
 premise.** The question line carries only the basename (confirmed: 0 of the
 2 edit/create captures taken for this fix had a path in it). FACTORY-460
