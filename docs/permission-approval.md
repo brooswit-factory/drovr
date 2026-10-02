@@ -1011,7 +1011,7 @@ fold in).
 ## A blank row inside the wrap was ALSO invisible (FACTORY-603/604/605)
 
 DROVR-41 above tolerated a wrapped continuation line with no blank row
-around it. FACTORY-603 measured (and agentvelocity's live daemon captures,
+around it. FACTORY-603 measured (and a live daemon's own real captures,
 FACTORY-603 comment 28606, confirmed) that the SAME wrap can also leave a
 blank — or merely whitespace-only, `line.trim() === ""` rather than
 `line === ""` — row INSIDE the option block: before the continuation, after
@@ -1025,8 +1025,8 @@ trailing `No` option and the footer window were both lost, and
 ```
  Do you want to proceed?
  ❯ 1. Yes
-   2. Yes, allow reading from /home/…/agentcost-capture/packages/collector/
-      src/backfill from this project
+   2. Yes, allow reading from /xxxx/xxxxxxxx/code/example/pkg/src/backfill
+      from this project
 
    3. Yes, and switch to auto mode · auto mode handles these prompts for you
    4. No

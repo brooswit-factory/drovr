@@ -123,8 +123,8 @@ const UNINDENTED_STRAY_LINE_PROMPT = WRAPPED_BASH_PROMPT.replace(
 // tolerated. Built by inserting a blank row at each measured position into
 // WRAPPED_BASH_PROMPT's own wrap (same command, same "Yes, and don't ask
 // again for …" stored-rule shape FACTORY-603's real captures 02/03/05/06
-// use) — synthetic, NOT one of agentvelocity's capture files (those remain
-// unreadable from this host; see test/fixtures/file-edit-approval/README.md
+// use) — synthetic, NOT one of the real captured fixture files (those
+// remain unreadable from this host; see test/fixtures/file-edit-approval/README.md
 // for this repo's own pane-*/synthetic-* convention). FACTORY-603's real
 // captures put the blank row AFTER the continuation, between it and the
 // next option — `BLANK_AFTER` matches that measured position; `BLANK_BEFORE`
@@ -145,7 +145,7 @@ const WRAPPED_BASH_PROMPT_WHITESPACE_ONLY_ROW = withBlankRowInserted(wrapLineInd
 // `optionFor`'s `/^Yes, and\b/` match never recognises under scope "always"
 // (it's "Yes, allow", not "Yes, and") — recognising it can never newly
 // auto-answer anything. Built the same way, from the same Bash chrome.
-const READ_ONLY_DIR = "/home/brooswit/code/agentcost/agentcost-capture/packages/collector/src/backfill";
+const READ_ONLY_DIR = "/xxxx/xxxxxxxx/code/example/pkg/src/backfill";
 const WRAPPED_READ_ONLY_BASH_PROMPT = [
   "❯ Search a long path outside the project for a string. Nothing else.",
   "",
