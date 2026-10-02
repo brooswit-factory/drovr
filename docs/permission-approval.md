@@ -1008,6 +1008,73 @@ synthetic variants for a wrapped option at position 3, a wrapped non-"Yes,
 and…" option 2, and an unindented stray line (which must end the scan, not
 fold in).
 
+## A blank row inside the wrap was ALSO invisible (FACTORY-603/604/605)
+
+DROVR-41 above tolerated a wrapped continuation line with no blank row
+around it. FACTORY-603 measured (and agentvelocity's live daemon captures,
+FACTORY-603 comment 28606, confirmed) that the SAME wrap can also leave a
+blank — or merely whitespace-only, `line.trim() === ""` rather than
+`line === ""` — row INSIDE the option block: before the continuation, after
+it, or between two numbered options. `CONTINUATION` (`/^\s+\S/`) requires a
+non-whitespace character, so that row never matched it either, and the
+dialog was invisible in exactly the same way DROVR-41 fixed for the
+no-blank-row case: `classifyPermissionPrompt` returned `undefined`, the
+trailing `No` option and the footer window were both lost, and
+`listPendingPermissions` never surfaced the pane.
+
+```
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, allow reading from /home/…/agentcost-capture/packages/collector/
+      src/backfill from this project
+
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
+```
+
+Fixed: a bounded run of whitespace-only rows (`MAX_OPTION_BLANK_RUN`,
+currently 2 — bounded for the same reason `MAX_TITLE_GAP_LINES` is bounded
+above, not "blank rows anywhere") is now tolerated INSIDE one dialog's own
+option block. The discriminator is the dialog's own content, never screen
+position: after skipping the blank run, the next non-blank row must either
+fold into the option above it (a `CONTINUATION` row) or continue this
+block's own numbering (an `OPTION` row numbered exactly one past the last
+option collected — `OPTION`'s own number, previously matched but discarded,
+is now captured for this purpose). Anything else — a fresh `QUESTION` or
+`SEPARATOR`, the `Esc to cancel` footer, an unindented stray line, or a
+blank run followed by an option numbered `1.` (a second dialog's own block)
+— still ends the list exactly as before this change; the footer's own
+trailing blank line before "Esc to cancel" is one case of this, not a
+special case; it is covered by the same discriminator, not exempted from
+it.
+
+**This is recognition only, and recognition is not the same as safety.**
+The option-collection loop runs before all four recognition arms above, so
+the fix is arm-independent: any dialog whose option block carries a blank
+row is now reachable, not only the read-only "allow reading from `<dir>`"
+shape FACTORY-603 measured. In particular, FACTORY-603's real captures also
+include the OTHER wrapped label, "Yes, and don't ask again for: `<command>`"
+— including an `rm -f` approval and a Claude Code "manual approval
+required" compound-command warning — which were equally invisible before
+this fix. Recognising them is **pre-existing policy newly reached, not new
+policy**: `optionFor`'s `/^Yes, and\b/` match (GUARD-adjacent, not itself a
+GUARD) already presses that exact option set on the UNWRAPPED equivalent of
+that shape today, under drovr's own default `scope: "always"` — DROVR-41's
+own fixture above proves it. This fix does not change `optionFor`, does not
+add a refusal, and does not scope the tolerance to one label shape; it
+simply makes a screen that carries that shape, wrapped with a blank row,
+reachable the same way its unwrapped twin already is. The read-only "allow
+reading from `<dir>`" shape is unaffected either way: its label is "Yes,
+allow…", never "Yes, and…", so `optionFor(_, "always")` returns `-1` for it
+regardless of this fix, exactly as before. Both halves of this claim — the
+stored-rule shape's answer decision under both scopes, and the read-only
+shape's refusal under `scope: "always"` — are pinned directly by test in
+`test/permission-approval.test.ts`, through both `optionFor` and the real
+`autoAnswerPermissions` path, so any future change to the answered set is a
+visible diff rather than an incidental discovery.
+
 ## Live proof (DROVR-41, 2026-09-25)
 
 `scripts/verify-auto-answer-permissions.ts` is the opt-in proof: it opens two
