@@ -1,0 +1,39 @@
+
+
+
+← xxxxxxx: @xxxxx-xxxxxxxx xxxxxx, xxxx xxxxxx xxx xxxxx. xxx xxx xxxx…
+
+● xxxxxxx x=/xxx/xxxxxx-xxxx/-xxxx-xxxxxxxx--xxxxx-xxxxx-xx…
+  ⎿  $
+     x=/xxx/xxxxxx-xxxx/-xxxx-xxxxxxxx--xxxxx-xxxxx-xxxxxx-xxxxxxx-xxxxxxxxxx-xxxxxx
+     xxxx-xxxxxxx-xxxxxxxx--0xxxxx-0xxxxxxxxx-0x-xxxxxx-0xxxxxxx-0xxxxxxxx-xxxxxxxxx
+     xx-0xxxxxx-xxxxxxxx-xxxx/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/xxxxxxxxxx/x000;
+     xxxxx -x $x; xx $x; xxxxxx -x "xx" --xxxxx xxxxx --xxxxxx-xx…
+
+────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+
+   │ S=/tmp/claude-xxxx/-home-someuser--local-share-xxxxxx-project-workspaces-fil
+   │ esystem-managed-sessions--2Fhome-2Fsomeuser-2F-config-2Fxxxxxx-2Fsession-def
+   │ initions-2Fxxxxx-xxxxxxxx-json/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/scratchp
+   │ ad/r467; mkdir -p $S; cd $S; claude -p "hi" --model haiku --output-format
+   │ json 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin);
+   │ print(d['session_id'], d.get('result'))"
+   xxx xxxxx xxxxxxx
+
+ │ Compound command contains cd with write operation - manual approval required to
+ │ prevent path resolution bypass
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: S=/tmp/claude-xxxx/-home-someuser--local-share-b
+      utchr-project-workspaces-filesystem-managed-sessions--2Fhome-2Fsomeuser-2F-con
+      fig-2Fxxxxxx-2Fsession-definitions-2Fxxxxx-xxxxxxxx-json/xxxxxxxx-xxxx-xxxx-xx
+      xx-xxxxxxxxxxxx/scratchpad/r467; mkdir -p $S; cd $S; claude -p "hi" --model
+      haiku --output-format json 2>&1 | python3 -c "import json,sys;
+      d=json.load(sys.stdin); print(d['session_id'], d.get('result'))"
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend

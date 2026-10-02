@@ -117,6 +117,121 @@ const UNINDENTED_STRAY_LINE_PROMPT = WRAPPED_BASH_PROMPT.replace(
   "commands in /tmp/drovr-herdr-proof.41-neg",
 );
 
+// FACTORY-603/604/605: option 2's label can be long enough to wrap AND leave
+// a blank (or whitespace-only) row inside the option block — not merely a
+// continuation row with no blank around it, which DROVR-41 above already
+// tolerated. Built by inserting a blank row at each measured position into
+// WRAPPED_BASH_PROMPT's own wrap (same command, same "Yes, and don't ask
+// again for …" stored-rule shape FACTORY-603's real captures 02/03/05/06
+// use) — synthetic, NOT one of the real captured fixture files (those
+// remain unreadable from this host; see test/fixtures/file-edit-approval/README.md
+// for this repo's own pane-*/synthetic-* convention). FACTORY-603's real
+// captures put the blank row AFTER the continuation, between it and the
+// next option — `BLANK_AFTER` matches that measured position; `BLANK_BEFORE`
+// and the whitespace-only variant cover the other positions the diagnosis
+// named as independently failing before this fix.
+const wrapLineIndex = WRAPPED_BASH_PROMPT.split("\n").indexOf("      commands in /tmp/drovr-herdr-proof.41-neg");
+function withBlankRowInserted(afterIndex: number, blankRow = ""): string {
+  const lines = WRAPPED_BASH_PROMPT.split("\n");
+  lines.splice(afterIndex + 1, 0, blankRow);
+  return lines.join("\n");
+}
+const WRAPPED_BASH_PROMPT_BLANK_BEFORE_CONTINUATION = withBlankRowInserted(wrapLineIndex - 1);
+const WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION = withBlankRowInserted(wrapLineIndex);
+const WRAPPED_BASH_PROMPT_WHITESPACE_ONLY_ROW = withBlankRowInserted(wrapLineIndex, "   ");
+
+// The OTHER shape FACTORY-603's real captures measure (01/04/07/08): a
+// read-only "allow reading from <dir> from this project" option 2, which
+// `optionFor`'s `/^Yes, and\b/` match never recognises under scope "always"
+// (it's "Yes, allow", not "Yes, and") — recognising it can never newly
+// auto-answer anything. Built the same way, from the same Bash chrome.
+const READ_ONLY_DIR = "/xxxx/xxxxxxxx/code/example/pkg/src/backfill";
+const WRAPPED_READ_ONLY_BASH_PROMPT = [
+  "❯ Search a long path outside the project for a string. Nothing else.",
+  "",
+  "● Bash(grep -rn 'needle' ...)",
+  "  ⎿  Waiting…",
+  "",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+  "",
+  `   grep -rn "needle" ${READ_ONLY_DIR}`,
+  "   Search backfill sources",
+  "",
+  " Do you want to proceed?",
+  " ❯ 1. Yes",
+  `   2. Yes, allow reading from ${READ_ONLY_DIR}`,
+  "      from this project",
+  "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+  "   4. No",
+  "",
+  " Esc to cancel · Tab to amend",
+].join("\n");
+const readOnlyWrapLineIndex = WRAPPED_READ_ONLY_BASH_PROMPT.split("\n").indexOf("      from this project");
+function withBlankRowInsertedReadOnly(afterIndex: number, blankRow = ""): string {
+  const lines = WRAPPED_READ_ONLY_BASH_PROMPT.split("\n");
+  lines.splice(afterIndex + 1, 0, blankRow);
+  return lines.join("\n");
+}
+const WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION = withBlankRowInsertedReadOnly(readOnlyWrapLineIndex);
+
+// Negative controls (FACTORY-603/604/605 criterion 4): the bounded tolerance
+// must still end the option list, exactly as before this change, whenever
+// the row after the blank run is not a CONTINUATION of the SAME block and
+// not that block's own next-numbered OPTION.
+const BLANK_ROW_BETWEEN_TWO_DIALOGS_PROMPT = [
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+  "",
+  "   touch a",
+  "   Create a",
+  "",
+  " Do you want to proceed?",
+  " ❯ 1. Yes",
+  "   2. Yes, and don't ask again for touch a",
+  "   3. No",
+  "",
+  " ❯ 1. Yes",
+  "   2. Yes, and don't ask again for touch b",
+  "   3. No",
+  "",
+  " Esc to cancel · Tab to amend",
+].join("\n");
+const BLANK_ROW_BEFORE_FIRST_OPTION_PROMPT = [
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+  "",
+  "   touch a",
+  "   Create a",
+  "",
+  " Do you want to proceed?",
+  "",
+  " ❯ 1. Yes",
+  "   2. Yes, and don't ask again for touch a",
+  "   3. No",
+  "",
+  " Esc to cancel · Tab to amend",
+].join("\n");
+const OPTIONS_FROM_TWO_FRAMES_PROMPT = [
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+  "",
+  "   touch a",
+  "   Create a",
+  "",
+  " Do you want to proceed?",
+  " ❯ 1. Yes",
+  "   2. Yes, and don't ask again for touch a",
+  "",
+  "──────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+].join("\n");
+// A wrapped label with a blank row, on a dialog that is missing the
+// footer/inline-esc-hint precondition and so does not qualify for any
+// recognition arm — independent of the blank-row change, and must stay
+// that way.
+const WRAPPED_WITH_BLANK_BUT_NO_FOOTER_PROMPT = WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION.replace(" Esc to cancel · Tab to amend", "");
+
 describe("classifyPermissionPrompt", () => {
   test("reads the tool, the request, the options and the cursor off the measured dialog", () => {
     const prompt = classifyPermissionPrompt(BASH_PROMPT)!;
@@ -173,6 +288,126 @@ describe("classifyPermissionPrompt", () => {
     // is never reached and the dialog fails the "must offer No" check below —
     // proof the line was not silently absorbed into option 2's text.
     expect(classifyPermissionPrompt(UNINDENTED_STRAY_LINE_PROMPT)).toBeUndefined();
+  });
+
+  // FACTORY-603/604/605: a blank or whitespace-only row INSIDE one dialog's
+  // own option block (between a wrapped option and its continuation, or
+  // between two numbered options) previously ended the scan early — DROVR-41
+  // above only tolerated a continuation row with no blank around it. The
+  // dialog was not refused, it was INVISIBLE: the trailing `No` option and
+  // the footer window were both lost, so `classifyPermissionPrompt` returned
+  // `undefined` for a screen that is otherwise an ordinary recognised dialog.
+  describe("a blank row inside one dialog's own option block is tolerated (FACTORY-603/604/605)", () => {
+    const withoutBlank = classifyPermissionPrompt(WRAPPED_BASH_PROMPT)!;
+
+    test("blank BEFORE the wrapped continuation: recognised identically to the screen with the blank row removed", () => {
+      const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT_BLANK_BEFORE_CONTINUATION);
+      expect(prompt).toBeDefined();
+      expect(prompt).toEqual(withoutBlank);
+    });
+
+    test("blank AFTER the wrapped continuation (the position FACTORY-603's real captures measure): recognised identically", () => {
+      const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION);
+      expect(prompt).toBeDefined();
+      expect(prompt).toEqual(withoutBlank);
+    });
+
+    test("a whitespace-only (not literally empty) row is tolerated identically — line.trim() === \"\", not line === \"\"", () => {
+      const insertedRow = WRAPPED_BASH_PROMPT_WHITESPACE_ONLY_ROW.split("\n")[wrapLineIndex + 1];
+      expect(insertedRow).toBe("   "); // sanity: the inserted row is whitespace-only, not literally empty
+      expect(insertedRow!.trim()).toBe("");
+      const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT_WHITESPACE_ONLY_ROW);
+      expect(prompt).toBeDefined();
+      expect(prompt).toEqual(withoutBlank);
+    });
+
+    test("the read-only 'allow reading from <dir>' shape (FACTORY-603 captures 01/04/07/08) is tolerated the same way", () => {
+      const withoutBlankReadOnly = classifyPermissionPrompt(WRAPPED_READ_ONLY_BASH_PROMPT)!;
+      const prompt = classifyPermissionPrompt(WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION);
+      expect(prompt).toBeDefined();
+      expect(prompt).toEqual(withoutBlankReadOnly);
+      expect(prompt!.tool).toBe("Bash command");
+      expect(prompt!.cursor).toBe(0);
+      expect(prompt!.recognizedVia).toBe("separator");
+    });
+
+    // Mutation check (criterion 5, narrative half — the commands/output live
+    // in the PR description): removing the tolerance (reverting the loop to
+    // `break` on any `line.trim() === ""`) turns every positive test above
+    // red, since each fixture's option list would then end at the blank row
+    // and fail the "must offer No" check. These two assertions are that same
+    // claim pinned as a test, not just prose.
+    test("mutation sanity: every positive fixture here actually contains a blank or whitespace-only row inside its option block", () => {
+      for (const fixture of [
+        WRAPPED_BASH_PROMPT_BLANK_BEFORE_CONTINUATION,
+        WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION,
+        WRAPPED_BASH_PROMPT_WHITESPACE_ONLY_ROW,
+        WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION,
+      ]) {
+        const optionBlock = fixture.slice(fixture.indexOf("Do you want to proceed?"), fixture.indexOf("Esc to cancel"));
+        const rows = optionBlock.split("\n").slice(1, -2); // drop the question line and the trailing blank+footer-adjacent rows
+        expect(rows.some((row) => row.trim() === "" )).toBe(true);
+      }
+    });
+
+    describe("negative controls: the bounded tolerance still ends the list exactly as before this change", () => {
+      test("a blank row between two different dialogs' option blocks (the second restarting at 1.) is still refused", () => {
+        expect(classifyPermissionPrompt(BLANK_ROW_BETWEEN_TWO_DIALOGS_PROMPT)).toBeUndefined();
+      });
+
+      test("a blank row before the first option is still refused", () => {
+        expect(classifyPermissionPrompt(BLANK_ROW_BEFORE_FIRST_OPTION_PROMPT)).toBeUndefined();
+      });
+
+      test("options drawn from two different frames are still refused, not merged into one list", () => {
+        expect(classifyPermissionPrompt(OPTIONS_FROM_TWO_FRAMES_PROMPT)).toBeUndefined();
+      });
+
+      test("a wrapped label with a blank row on a dialog that does not otherwise qualify (no footer, no inline esc hint) is still refused", () => {
+        expect(WRAPPED_WITH_BLANK_BUT_NO_FOOTER_PROMPT).not.toMatch(/Esc to cancel/);
+        expect(classifyPermissionPrompt(WRAPPED_WITH_BLANK_BUT_NO_FOOTER_PROMPT)).toBeUndefined();
+      });
+
+      test("widening the tolerance to any blank row anywhere would wrongly recognise the two-dialogs control — named here as the mutation-check target", () => {
+        // Narrative pin for the PR's mutation-check evidence: if the n+1 /
+        // CONTINUATION discriminator were dropped (tolerating a blank row
+        // regardless of what follows it), this fixture's blank row — between
+        // dialog A's "3. No" and dialog B's unrelated "1. Yes" — would no
+        // longer end the list, and dialog A's options would gain dialog B's
+        // "Yes"/"Yes, and don't ask again for touch b"/"No" appended onto its
+        // own, which is exactly the "options from two different frames"
+        // defect this test suite must keep catching. The assertion above
+        // (`toBeUndefined()`) is what actually goes red under that mutation;
+        // this test exists to name which one and why, per the PR description
+        // requirement.
+        expect(classifyPermissionPrompt(BLANK_ROW_BETWEEN_TWO_DIALOGS_PROMPT)).toBeUndefined();
+      });
+    });
+
+    // Criterion 3 (FACTORY-605): the answer DECISION for the two shapes
+    // FACTORY-603's real captures carry, pinned explicitly so any future
+    // change to the answered set is a visible diff — not incidentally
+    // discovered. Recognising these screens is pre-existing policy newly
+    // reached, not new policy: drovr already presses this exact option set
+    // on the UNWRAPPED equivalent today (DROVR-41 fixtures above prove
+    // that); these screens were simply invisible, not refused, before this
+    // fix made them reachable.
+    describe("the answer decision for each shape is unchanged by this fix (pinned by test)", () => {
+      test("'Yes, and don't ask again for: <command>' shape (captures 02/03/05/06, including rm -f): scope always presses option 2, scope once presses option 1", () => {
+        const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION)!;
+        expect(optionFor(prompt, "always")).toBe(1);
+        expect(prompt.options[optionFor(prompt, "always")]).toMatch(/^Yes, and don't ask again for\b/);
+        expect(optionFor(prompt, "once")).toBe(0);
+        expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+      });
+
+      test("'Yes, allow reading from <dir>' shape (captures 01/04/07/08): scope always finds no stored-rule option (refuses), scope once presses option 1", () => {
+        const prompt = classifyPermissionPrompt(WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION)!;
+        expect(optionFor(prompt, "always")).toBe(-1);
+        expect(optionFor(prompt, "once")).toBe(0);
+        expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+      });
+    });
   });
 
   // FACTORY-318/FACTORY-146: Claude's static bash analyser marks a command
@@ -997,6 +1232,93 @@ function fixture(screens: string[], options: { auditFails?: boolean | number; th
 const idOf = (screen: string) => classifyPermissionPrompt(screen)!.promptId;
 const base = { paneId: "w1:p1", operator: "brooswit", auditPath: "/audit.jsonl" };
 
+// FACTORY-603/604/605: real daemon captures (test/fixtures/permission-blank-row/,
+// scrubbed for this public repo — see that directory's own README.md for the
+// scrubbing method and per-pane provenance), landed after the Jira attachment
+// channel carrying them turned out to be unreadable from this host. Director's
+// final scope ("option 3"): the blank-row screen must behave EXACTLY like its
+// own unwrapped twin, at both scopes, whatever that behaviour already is — no
+// hard-coded per-screen expectation, since the hard-coding is exactly what a
+// future change to `optionFor` would silently stop being caught by. All 8
+// pairs measured: recognised via the general `separator` arm, tool "Bash
+// command", cursor 0, path undefined, matching the director's own report.
+describe("real captures (FACTORY-603/604/605): a blank-row screen behaves exactly like its unwrapped twin", () => {
+  const blankRowFixture = (nn: string) => readFileSync(new URL(`./fixtures/permission-blank-row/pane-factory603-${nn}-blank-row.txt`, import.meta.url), "utf8");
+  const unwrappedTwinFixture = (nn: string) => readFileSync(new URL(`./fixtures/permission-blank-row/pane-factory603-${nn}-unwrapped-twin.txt`, import.meta.url), "utf8");
+  // 03/08 are re-captures of 02/07 (byte-identical fixtures) — kept and tested
+  // anyway per the fixtures' own README: cheap, and a real re-capture is still
+  // a real capture.
+  const PAIRS = ["01", "02", "03", "04", "05", "06", "07", "08"];
+
+  for (const nn of PAIRS) {
+    test(`pane-factory603-${nn}: recognised identically to its unwrapped twin (same tool/request/question/options/cursor/recognizedVia/path)`, () => {
+      const blankRow = classifyPermissionPrompt(blankRowFixture(nn));
+      const twin = classifyPermissionPrompt(unwrappedTwinFixture(nn));
+      expect(twin).toBeDefined();
+      expect(blankRow).toBeDefined();
+      expect(blankRow).toEqual(twin);
+      expect(blankRow!.tool).toBe("Bash command");
+      expect(blankRow!.recognizedVia).toBe("separator");
+      expect(blankRow!.cursor).toBe(0);
+    });
+
+    test(`pane-factory603-${nn}: optionFor agrees with its unwrapped twin at BOTH scopes`, () => {
+      const blankRow = classifyPermissionPrompt(blankRowFixture(nn))!;
+      const twin = classifyPermissionPrompt(unwrappedTwinFixture(nn))!;
+      expect(optionFor(blankRow, "once")).toBe(optionFor(twin, "once"));
+      expect(optionFor(blankRow, "always")).toBe(optionFor(twin, "always"));
+    });
+  }
+
+  // Full-path equivalence (criterion: "AND the same through autoAnswerPermissions
+  // (press / no press identical)") — one representative screen of each measured
+  // label shape (01: read-only; 05: the other wrapped label), both scopes, run
+  // through the real autoAnswerPermissions path rather than optionFor alone.
+  describe("the same equivalence holds through the real autoAnswerPermissions path", () => {
+    async function pressFor(screen: string, scope: "once" | "always") {
+      const auditPath = `/tmp/drovr-factory603-equiv-${Math.random().toString(36).slice(2)}.jsonl`;
+      const reads = [screen, screen, "❯ "];
+      const client = {
+        agent: {
+          list: async () => ({ agents: [{ pane_id: "w1:p1", agent: "claude" }] }) as never,
+          get: async (target: string) => ({ agent: { pane_id: target } }) as never,
+          read: async () => ({ read: { text: reads.length > 1 ? reads.shift()! : reads[0] } }) as never,
+          sendKeys: async () => ({}) as never,
+        },
+      };
+      const [result] = await autoAnswerPermissions(client, { auditPath, scope });
+      return result!.outcome;
+    }
+
+    for (const nn of ["01", "05"]) {
+      for (const scope of ["once", "always"] as const) {
+        test(`pane-factory603-${nn}, scope ${scope}: same outcome (answered/skipped) as its unwrapped twin`, async () => {
+          const blankRowOutcome = await pressFor(blankRowFixture(nn), scope);
+          const twinOutcome = await pressFor(unwrappedTwinFixture(nn), scope);
+          expect(blankRowOutcome).toBe(twinOutcome);
+        });
+      }
+    }
+  });
+
+  // Mutation proof (criterion 3): a tolerance that drops an option, or picks a
+  // different option index, breaks the equivalence check above.
+  test("mutation proof: dropping an option from the blank-row result breaks the equivalence the tests above depend on", () => {
+    const blankRow = classifyPermissionPrompt(blankRowFixture("01"))!;
+    const twin = classifyPermissionPrompt(unwrappedTwinFixture("01"))!;
+    const mutated = { ...blankRow, options: blankRow.options.slice(0, -1) }; // drop "No"
+    expect(mutated).not.toEqual(twin);
+    expect(mutated.options).not.toEqual(twin.options);
+  });
+
+  test("mutation proof: a different cursor position on the blank-row result breaks the equivalence the tests above depend on", () => {
+    const blankRow = classifyPermissionPrompt(blankRowFixture("01"))!;
+    const twin = classifyPermissionPrompt(unwrappedTwinFixture("01"))!;
+    const mutated = { ...blankRow, cursor: blankRow.cursor + 1 };
+    expect(mutated).not.toEqual(twin);
+  });
+});
+
 describe("listPendingPermissions", () => {
   test("reads every Claude pane's screen and returns only those showing the dialog", async () => {
     const f = fixture([BASH_PROMPT]);
@@ -1340,6 +1662,46 @@ describe("autoAnswerPermissions", () => {
     expect((results[0] as { reason: string }).reason).toMatch(/no "Yes, and …" stored-rule option/);
     expect(keysSent["w1:p1"]).toBeUndefined();
     expect(await readAudit(path)).toEqual([]);
+  });
+
+  // FACTORY-603/604/605: pinning the ANSWER DECISION through the real
+  // autoAnswerPermissions path, not just optionFor in isolation, for the
+  // synthetic "don't ask again for" shape — `optionFor` is untouched by
+  // this ticket, so these screens get exactly the decision their unwrapped
+  // twin already gets (DROVR-41's own fixture above), at either scope. The
+  // real-fixture equivalence tests above assert this same property against
+  // actual captures; these synthetic ones pin it at the unit level too.
+  describe("FACTORY-603/604/605: the answer decision for a screen the blank-row fix newly recognises, pinned through autoAnswerPermissions", () => {
+    test("'Yes, and don't ask again for: <command>' shape (captures 02/03/05/06, including rm -f): scope always presses the stored-rule option, same as its unwrapped twin", async () => {
+      const path = await freshAuditPath();
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, AFTER] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "answered", tool: "Bash command" }]);
+      expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
+      const audit = await readAudit(path);
+      expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);
+      expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "always", option: "Yes, and don't ask again for mkdir -p scratch-dir-neg and rm -rf scratch-dir-neg commands in /tmp/drovr-herdr-proof.41-neg" });
+    });
+
+    test("'Yes, and don't ask again for: <command>' shape: scope once presses plain 'Yes', unaffected by the blank row", async () => {
+      const path = await freshAuditPath();
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, AFTER] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "answered", tool: "Bash command" }]);
+      expect(keysSent["w1:p1"]).toEqual([["enter"]]);
+      const audit = await readAudit(path);
+      expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "once", option: "Yes" });
+    });
+
+    test("'Yes, allow reading from <dir>' shape (captures 01/04/07/08): scope always still finds no stored-rule option — skipped, nothing pressed, exactly as the unwrapped equivalent", async () => {
+      const path = await freshAuditPath();
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+      expect((results[0] as { reason: string }).reason).toMatch(/no "Yes, and …" stored-rule option/);
+      expect(keysSent["w1:p1"]).toBeUndefined();
+      expect(await readAudit(path)).toEqual([]);
+    });
   });
 
   // GUARD 1(c) (FACTORY-584), through the real autoAnswerPermissions path: an

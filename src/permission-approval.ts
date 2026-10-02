@@ -194,7 +194,7 @@ export interface PermissionPrompt {
 
 const SEPARATOR = /^\s*─{10,}\s*$/;
 const QUESTION = /^\s*(Do you want to .+\?)\s*$/;
-const OPTION = /^\s*(❯\s*)?\d+\.\s+(.+?)\s*$/;
+const OPTION = /^\s*(❯\s*)?(\d+)\.\s+(.+?)\s*$/;
 /** A wrapped option's continuation line: indented text with no number of its own. */
 const CONTINUATION = /^\s+\S/;
 /**
@@ -234,6 +234,20 @@ const BASH_BODY_LINE_PREFIX = /^\s*│\s?/;
  * the screen never earned.
  */
 const MAX_TITLE_GAP_LINES = 3;
+/**
+ * How many consecutive whitespace-only rows are tolerated INSIDE one
+ * dialog's own option block (FACTORY-603/604/605) — e.g. between a long
+ * option label's own text and its wrapped `CONTINUATION` row, or between
+ * two numbered options. A long "allow reading from <dir>" label wraps onto
+ * a blank or whitespace-only row (measured: `line.trim() === ""`, not
+ * literal emptiness) often enough to make these dialogs invisible
+ * (`classifyPermissionPrompt` returns `undefined`) rather than refused. A
+ * small fixed bound, not "unbounded blank rows", is what keeps that
+ * tolerance from also letting unrelated scrollback far below this dialog's
+ * own frame supply a match the screen never earned — the same reasoning
+ * `MAX_TITLE_GAP_LINES` above already applies to the title-to-question gap.
+ */
+const MAX_OPTION_BLANK_RUN = 2;
 /**
  * An Edit/Create-file dialog's own diff-body border (U+254C, distinct from
  * the general `SEPARATOR`'s U+2500): drawn both directly above and directly
@@ -396,12 +410,14 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   const options: string[] = [];
   let cursor = -1;
   let end = q + 1;
+  let lastOptionNumber = -1;
   for (; end < lines.length; end++) {
     const line = lines[end]!;
     const match = OPTION.exec(line);
     if (match) {
       if (match[1]) cursor = options.length;
-      options.push(match[2]!);
+      lastOptionNumber = Number(match[2]);
+      options.push(match[3]!);
       continue;
     }
     // A long option can wrap onto a following physical line with no number
@@ -412,6 +428,48 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
     // it becomes invisible to listPendingPermissions entirely. A blank
     // line, an unindented stray line, a fresh separator or question, or the
     // footer itself still ends the list.
+    if (line.trim() === "" && options.length > 0) {
+      // FACTORY-603/604/605: the wrap above can itself leave a blank or
+      // whitespace-only row INSIDE this option block — before its own
+      // CONTINUATION row, after it, or between two numbered options — which
+      // is otherwise indistinguishable from the footer's own trailing blank
+      // line or from scrollback below a second, unrelated dialog. Decide
+      // purely from THIS dialog's own content, never from screen position:
+      // skip a bounded run of such rows (`MAX_OPTION_BLANK_RUN`), then
+      // require the next non-blank row to either fold into the option
+      // above it (a CONTINUATION row) or continue this block's own
+      // numbering (an OPTION row numbered one past the last option
+      // collected). A blank run followed by `1.` is a second dialog's own
+      // block and fails that numbering check, ending the list exactly as
+      // before this change — and so does the footer's own trailing blank
+      // line, whose next non-blank row is `Esc to cancel`, neither a
+      // CONTINUATION row nor an OPTION row.
+      let probe = end;
+      while (probe < lines.length && probe < end + MAX_OPTION_BLANK_RUN && lines[probe]!.trim() === "") probe++;
+      const resumeLine = probe < lines.length ? lines[probe]! : undefined;
+      if (resumeLine !== undefined) {
+        // OPTION is checked first, exactly like the main loop above checks
+        // it before CONTINUATION on the same line: `CONTINUATION` (any
+        // indented, non-blank row) would otherwise also match an ordinary
+        // numbered option line, misreading "   3. Yes, and …" as more text
+        // folded onto option 2 instead of option 3 in its own right.
+        const resumeMatch = OPTION.exec(resumeLine);
+        if (resumeMatch) {
+          if (Number(resumeMatch[2]) === lastOptionNumber + 1) {
+            end = probe - 1;
+            continue;
+          }
+        } else {
+          const resumeContinuation = CONTINUATION.test(resumeLine) && !SEPARATOR.test(resumeLine) && !QUESTION.test(resumeLine) && !/Esc to cancel/.test(resumeLine);
+          if (resumeContinuation) {
+            options[options.length - 1] = `${options[options.length - 1]} ${resumeLine.trim()}`;
+            end = probe;
+            continue;
+          }
+        }
+      }
+      break;
+    }
     const continuation = options.length > 0 && CONTINUATION.test(line) && !SEPARATOR.test(line) && !QUESTION.test(line) && !/Esc to cancel/.test(line);
     if (!continuation) break;
     options[options.length - 1] = `${options[options.length - 1]} ${line.trim()}`;
