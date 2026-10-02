@@ -1,0 +1,40 @@
+
+● xxxxxxxxxx xxxxxxx "xxxxx xxxx -x "xxxxxxxxx\|xxxxxx"
+/xxx/xxxxxx-xxxx/*/*/xxxxx/xxxxx00xx.xxxxxx || ! xxxxx -x xx.xxx >/xxx/xxxx; xx
+xxxxx 0; xxxx; xxx /xxx/xxxxxx-xxxx/*/*/xxxxx/xxxxx00xx.xxxxxx; xx -x xxx
+--xx-xxxxxxx -x 0000" xxxxxxxxx (xxxx xxxx 0)
+
+● xxx xxxxxx xxxxxxxxxxx xxxx xxxxxx xx xxxxx xxxxx 00:00x, xxxxxxxxxx xxx xxxx
+  xxxxxxxxxxx xxxxxx xxxx xxxxxxx xxxx xxxxxx xxxx xxxxxxxxxx xxx xxx xx xxxx. x'xx
+  xxxxx xxxx xx x xxxxxx xxxx xx xxx xxxxxxxxxxx xx xxxxxx xxxxxxxx. · xxxxxxx
+
+● xxxxxxx xx -x /xxx | xxxx -0; x=/xxx/xxxxxx-xxxx/-xxxx-xx…
+  ⎿  $ xx -x /xxx | xxxx -0;
+     x=/xxx/xxxxxx-xxxx/-xxxx-xxxxxxxx--xxxxx-xxxxx-xxxxxx-xxxxxxx-xxxxxxxxxx-xxxxxx
+     xxxx-xxxxxxx-xxxxxxxx--0xxxxx-0xxxxxxxxx-0x-xxxxxx-0xxxxxxx-0xxxxxxxx-xxxxxxxxx
+     xx-0xxxxxx-xxxxxxxxx-xxxx/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/xxxxxxxxxx; xxxx
+     -xx "\.xxxxxx" ~/xxxx/xxxxxxxxx/xxxxx…
+
+────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ xxx xxxxx xxxxxxx
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ df -h /tmp | tail -1;
+ │ S=/tmp/claude-xxxx/-home-someuser--local-share-xxxxxx-project-workspaces-filesys
+ │ tem-managed-sessions--2Fhome-2Fsomeuser-2F-config-2Fxxxxxx-2Fsession-definitions
+ │ -2Fxxxxx-xxxxxxxxx-json/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/scratchpad; grep
+ │ -rn "\.claude"
+ │ ~/code/xxxxxxxxx/xxxxxxxxxxxxxxxxx/packages/xxxxxxxxx/src/xxxxxxxx/claude.ts
+ │ ~/code/xxxxxxxxx/xxxxxxxxxxxxxxxxx/packages/xxxxxxxxx/src/xxxxxxxxxxx/xxxxxxxxxx
+ │ s.ts | grep -i "homedir\|projects" | head
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, allow reading from /xxxx/xxxxxxxx/code/xxxxxxxxx/xxxxxxxxxxxxxxxxx/packag
+      es/xxxxxxxxx/src/xxxxxxxx from this project
+
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend

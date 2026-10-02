@@ -1,0 +1,40 @@
+
+● .xx xx xxxxxxxxx xxxxxxxx xx xxxx xxxxxxx'x xxxxxxxxxx, xxx x xxx xxxxxxxxxxxx
+  xxxxxx xxx xxx xx xxxxxxxx xxxxxxxxxx xxxxxx #xxxx-xxxxxxxx, xxxxx xx xxx xxx
+  xxxxxxxx xxx xxxxx xxxxxxx xxxxx xxxx xxxxxxx xx xxxxxxx. x'xx xxxxx xx xxxxx xxx
+  xxx xxxxxxxxx xxxxxx xxxx xxxxxxx xxxxxx xxxxxxxx xxxxxxx xx xxxxxx xx. · xxxxxxx
+
+  xxx 0 xxxxx xxxxxxxx
+
+● xxxx xxxx xxxxxxxxx xxxx xxx xx 000 xxxxxxxxxx, xx xx xxx xxxx xxx xxx xxx
+  xxxxxxxx xxxx. xx xxxxx'x xxxxxxxxx xxxx xxx xxxxx xxx xxxxxx xx xxx xxxxxxx. xxx
+  xx xxxxx xxx xxxx xxxxxx xxxx xxx xxxxxxx.
+
+  xxx 0 xxxxx xxxxxxx
+
+● x'xx xxxxxxxxx xxxx xxx xxx xxxxxxx xx #xxxx-xxxxxxxx xxx xxxxxxxx'x xxxxxxxx
+  xxxxxxx, xx x'xx xxxxx xx xxxxxxxxx xxx xxxxxxx xxxxx xxxxxxx xxxxxxxxx xxxxx
+  xxxxxx xxxxxxx xxxx xxxxx. xxxx, x'xx xxxxxx xxx xxxxx xxxxxxx xxxxx xxxx
+  xxxxxxxxxxx'x xxxxx xxxxxxx xxx xxxxxxxxxx xxxxxxxx xxxxxx xxxx xxxxx xxx xxxxx
+  xxxxxx xxxxxxxxx xx. · xxxxxxx
+
+● xxxxxxx xxxxxxx xxxx xxxx xx xxxxxx xxxxxxx
+
+────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+
+   │ grep '"version"' /xxxx/xxxxxxxx/.local/share/xxxxxx/runtime-xxxxxxx/node_mod
+   │ ules/@someuser/xxxxx/package.json /xxxx/xxxxxxxx/.local/share/xxxxxx/runtime
+   │ -xxxxxxx/node_modules/@someuser/xxxxx/package.json 2>&1 | cut -xxx-xxx
+   xxxxxxx xxxxx xxxxxxxx xx xxx xxx xxx xxxxxxxx
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, allow reading from /xxxx/xxxxxxxx/.local/share/xxxxxx/runtime-xxxxxxx/nod
+      e_modules/@someuser/xxxxx from this project
+
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
