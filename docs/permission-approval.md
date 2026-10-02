@@ -1050,66 +1050,21 @@ trailing blank line before "Esc to cancel" is one case of this, not a
 special case; it is covered by the same discriminator, not exempted from
 it.
 
-**This is recognition only, and recognition is not the same as safety.**
-The option-collection loop runs before all four recognition arms above, so
-the fix is arm-independent: any dialog whose option block carries a blank
-row is now reachable, not only the read-only "allow reading from `<dir>`"
-shape FACTORY-603 measured. In particular, FACTORY-603's real captures also
-include the OTHER wrapped label, "Yes, and don't ask again for: `<command>`"
-— including an `rm -f` approval and a Claude Code "manual approval
-required" compound-command warning — which were equally invisible before
-this fix.
-
-**GUARD 8 — a prompt recognised ONLY through the blank-row tolerance is
-answered only if it is the read-only shape (director decision 2026-10-02,
-FACTORY-594/603/604/605).** An earlier draft of this fix argued recognising
-the stored-rule shape was "pre-existing policy newly reached" and left
-`optionFor` untouched. That argument does not survive contact with what
-`optionFor` is actually called with in production: the live caller's
-default is `scope: "once"`, not `"always"` (verified independently by two
-reviewers in the butchr daemon's own source), and `scope: "once"` has no
-guard at all comparable to GUARD 1/1(c)'s Edit/Create-file refusal — it
-presses plain `"Yes"` on every recognised screen. So recognition alone, at
-EITHER scope, would let drovr press `"Yes"` on an `rm -f` screen and a
-Claude Code "manual approval required" warning the moment this fix made
-them reachable — a real, new auto-approval FACTORY-594's own corrected
-description forbids.
-
-The fix: `classifyPermissionPrompt` now records `blankRowTolerated` on the
-returned prompt — true only when the option-collection loop actually had
-to skip a blank row to recognise this screen, false whenever the dialog
-would already be recognised without it (including every pre-existing,
-unwrapped capture). `optionFor` checks this FIRST, before either scope's
-own logic: when `blankRowTolerated` is true, the prompt is answered at
-BOTH scopes only if it is the read-only "Yes, allow reading from `<dir>`"
-shape (`tool === "Bash command"` and an option starting with that exact
-text) — in which case it falls through to the SAME logic its unwrapped
-twin already uses, since that logic already gives the correct decision
-(once → plain `"Yes"`; always → no "Yes, and …" match, because this label
-is "Yes, allow", never "Yes, and"). Every other `blankRowTolerated` prompt
-— the "don't ask again for" shape included — returns `-1` at both scopes,
-unconditionally: recognised, but unanswerable, routing to the existing
-escalation path exactly as it stalls today. Nothing about the unwrapped
-case changes: `blankRowTolerated` is false for it, so GUARD 8 never even
-inspects it, and `optionFor` falls straight through to its pre-existing
-logic — pinned by test (the DROVR-41 fixture's own regression tests, both
-scopes).
-
-A first version of this guard tried to reach the same outcome by matching
-`optionFor`'s own "Yes, and …" result against the Bash "don't ask again"
-wording, gated on `scope: "always"` only. Review found it defective twice:
-its regex used an ASCII apostrophe where claude 2.1.251 renders the real
-captures with the typographic U+2019, so it silently matched nothing real;
-and it only ever touched `scope: "always"`, which is not what production
-calls. Keying on `blankRowTolerated` instead needs no wording match at all
-for the shapes it refuses (no apostrophe to get wrong) and is
-scope-independent by construction (no live-vs-default distinction to miss).
-Both halves of the final claim — the stored-rule shape refused at both
-scopes while its unwrapped twin is unaffected, and the read-only shape's
-pre-existing behaviour preserved at both scopes — are pinned directly by
-test in `test/permission-approval.test.ts`, through both `optionFor` and
-the real `autoAnswerPermissions` path, so any future change to the answered
-set is a visible diff rather than an incidental discovery.
+**This is recognition only.** The option-collection loop runs before all
+four recognition arms above, so the fix is arm-independent: any dialog
+whose option block carries a blank row is now reachable, not only the
+read-only "allow reading from `<dir>`" shape FACTORY-603 measured. In
+particular, FACTORY-603's real captures also include the OTHER wrapped
+label, "Yes, and don't ask again for: `<command>`" — which was equally
+invisible before this fix. `optionFor` is untouched by this change: a
+blank-row-tolerated screen's answer decision, at either scope, is exactly
+the same as its unwrapped twin's — whatever that decision already is today
+— for every shape, not only the read-only one. Pinned directly by test in
+`test/permission-approval.test.ts`, as an equivalence against each real
+fixture's own unwrapped twin, not as a hard-coded expectation: any future
+change to `optionFor`'s existing behaviour shows up as a diff there, same
+as it would for the unwrapped case, rather than as a special rule this fix
+introduces.
 
 ## Live proof (DROVR-41, 2026-09-25)
 

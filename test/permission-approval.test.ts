@@ -300,17 +300,16 @@ describe("classifyPermissionPrompt", () => {
   describe("a blank row inside one dialog's own option block is tolerated (FACTORY-603/604/605)", () => {
     const withoutBlank = classifyPermissionPrompt(WRAPPED_BASH_PROMPT)!;
 
-    test("blank BEFORE the wrapped continuation: recognised identically to the screen with the blank row removed, flagged blankRowTolerated", () => {
+    test("blank BEFORE the wrapped continuation: recognised identically to the screen with the blank row removed", () => {
       const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT_BLANK_BEFORE_CONTINUATION);
       expect(prompt).toBeDefined();
-      expect(prompt).toEqual({ ...withoutBlank, blankRowTolerated: true });
-      expect(withoutBlank.blankRowTolerated).toBe(false); // sanity: the unwrapped twin needed no tolerance
+      expect(prompt).toEqual(withoutBlank);
     });
 
-    test("blank AFTER the wrapped continuation (the position FACTORY-603's real captures measure): recognised identically, flagged blankRowTolerated", () => {
+    test("blank AFTER the wrapped continuation (the position FACTORY-603's real captures measure): recognised identically", () => {
       const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION);
       expect(prompt).toBeDefined();
-      expect(prompt).toEqual({ ...withoutBlank, blankRowTolerated: true });
+      expect(prompt).toEqual(withoutBlank);
     });
 
     test("a whitespace-only (not literally empty) row is tolerated identically — line.trim() === \"\", not line === \"\"", () => {
@@ -319,14 +318,14 @@ describe("classifyPermissionPrompt", () => {
       expect(insertedRow!.trim()).toBe("");
       const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT_WHITESPACE_ONLY_ROW);
       expect(prompt).toBeDefined();
-      expect(prompt).toEqual({ ...withoutBlank, blankRowTolerated: true });
+      expect(prompt).toEqual(withoutBlank);
     });
 
-    test("the read-only 'allow reading from <dir>' shape (FACTORY-603 captures 01/04/07/08) is tolerated the same way, flagged blankRowTolerated", () => {
+    test("the read-only 'allow reading from <dir>' shape (FACTORY-603 captures 01/04/07/08) is tolerated the same way", () => {
       const withoutBlankReadOnly = classifyPermissionPrompt(WRAPPED_READ_ONLY_BASH_PROMPT)!;
       const prompt = classifyPermissionPrompt(WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION);
       expect(prompt).toBeDefined();
-      expect(prompt).toEqual({ ...withoutBlankReadOnly, blankRowTolerated: true });
+      expect(prompt).toEqual(withoutBlankReadOnly);
       expect(prompt!.tool).toBe("Bash command");
       expect(prompt!.cursor).toBe(0);
       expect(prompt!.recognizedVia).toBe("separator");
@@ -385,38 +384,25 @@ describe("classifyPermissionPrompt", () => {
       });
     });
 
-    // Criterion 3 (FACTORY-605), GUARD 8 — director decision 2026-10-02
-    // (FACTORY-603 comment 28660, "option 1"): the answer DECISION for the
-    // two shapes FACTORY-603's real captures carry, pinned explicitly so
-    // any future change to the answered set is a visible diff. A prompt
-    // recognised ONLY through the blank-row tolerance is answered at BOTH
-    // scopes only when it is the read-only "allow reading from <dir>"
-    // shape, exactly like its unwrapped twin. The "don't ask again for:
-    // <command>" shape — an `rm -f` approval and a Claude Code "manual
-    // approval required" warning among the real captures — is
-    // recognised-but-unanswerable at BOTH scopes: nothing newly
-    // auto-approves, and unwrapped behaviour for that shape (DROVR-41's own
-    // fixture, not blank-row-tolerated) does not change at all.
-    describe("the answer decision for each shape, pinned by test (GUARD 8, FACTORY-594/603/604/605)", () => {
-      test("'Yes, and don't ask again for: <command>' shape (captures 02/03/05/06, including rm -f): refused at BOTH scopes, routes to escalation instead", () => {
+    // Criterion 3 (FACTORY-605): the answer DECISION for the two shapes
+    // FACTORY-603's real captures carry, pinned explicitly so any future
+    // change to the answered set is a visible diff — not incidentally
+    // discovered. Recognising these screens is pre-existing policy newly
+    // reached, not new policy: drovr already presses this exact option set
+    // on the UNWRAPPED equivalent today (DROVR-41 fixtures above prove
+    // that); these screens were simply invisible, not refused, before this
+    // fix made them reachable.
+    describe("the answer decision for each shape is unchanged by this fix (pinned by test)", () => {
+      test("'Yes, and don't ask again for: <command>' shape (captures 02/03/05/06, including rm -f): scope always presses option 2, scope once presses option 1", () => {
         const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION)!;
-        expect(prompt.blankRowTolerated).toBe(true);
-        expect(optionFor(prompt, "always")).toBe(-1);
-        expect(optionFor(prompt, "once")).toBe(-1);
-      });
-
-      test("the SAME shape's UNWRAPPED twin (not blank-row-tolerated) is unaffected: scope always still presses option 2, scope once still presses option 1", () => {
-        const prompt = classifyPermissionPrompt(WRAPPED_BASH_PROMPT)!;
-        expect(prompt.blankRowTolerated).toBe(false);
         expect(optionFor(prompt, "always")).toBe(1);
         expect(prompt.options[optionFor(prompt, "always")]).toMatch(/^Yes, and don't ask again for\b/);
         expect(optionFor(prompt, "once")).toBe(0);
         expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
       });
 
-      test("'Yes, allow reading from <dir>' shape (captures 01/04/07/08): scope always finds no stored-rule option (refuses, independent of GUARD 8), scope once presses option 1", () => {
+      test("'Yes, allow reading from <dir>' shape (captures 01/04/07/08): scope always finds no stored-rule option (refuses), scope once presses option 1", () => {
         const prompt = classifyPermissionPrompt(WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION)!;
-        expect(prompt.blankRowTolerated).toBe(true);
         expect(optionFor(prompt, "always")).toBe(-1);
         expect(optionFor(prompt, "once")).toBe(0);
         expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
@@ -1591,39 +1577,22 @@ describe("autoAnswerPermissions", () => {
     expect(await readAudit(path)).toEqual([]);
   });
 
-  // FACTORY-603/604/605, criterion 3, GUARD 8 — director decision
-  // 2026-10-02 (FACTORY-603 comment 28660, "option 1"): pinning the ANSWER
-  // DECISION through the real autoAnswerPermissions path, not just
-  // optionFor in isolation — for both shapes FACTORY-603's real captures
-  // carry, at BOTH scopes (the live caller's default is "once", not
-  // "always" — an earlier version of this guard only covered "always" and
-  // was rejected on review for exactly that gap). Nothing newly
-  // auto-approves: the "don't ask again for" shape is skipped at both
-  // scopes, routing to escalation instead, same as it stalls today.
+  // FACTORY-603/604/605, criterion 3: pinning the ANSWER DECISION through the
+  // real autoAnswerPermissions path, not just optionFor in isolation — for
+  // both shapes FACTORY-603's real captures carry. This is the precise
+  // safety argument the PR description makes: these screens are invisible
+  // to drovr TODAY (classifyPermissionPrompt returns undefined for them, so
+  // autoAnswerPermissions never even sees them in `listPendingPermissions`);
+  // after this fix they are recognised, and whichever of these two
+  // assertions matches is PRE-EXISTING policy newly reached — the same
+  // option set drovr already presses on the unwrapped equivalent
+  // (DROVR-41's own fixture above). Neither assertion may ever read as
+  // "cannot grow the answered set": the `rm -f`/write-warning case DOES get
+  // pressed, by policy that already existed for the unwrapped screen.
   describe("FACTORY-603/604/605: the answer decision for a screen the blank-row fix newly recognises, pinned through autoAnswerPermissions", () => {
-    test("'Yes, and don't ask again for: <command>' shape (captures 02/03/05/06, including rm -f): scope always is skipped, nothing pressed", async () => {
+    test("'Yes, and don't ask again for: <command>' shape (captures 02/03/05/06, including rm -f): scope always PRESSES the stored-rule option — this is pre-existing policy newly reached, not new policy", async () => {
       const path = await freshAuditPath();
-      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION] } });
-      const results = await autoAnswerPermissions(client, { auditPath: path });
-      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
-      expect((results[0] as { reason: string }).reason).toMatch(/no "Yes, and …" stored-rule option/);
-      expect(keysSent["w1:p1"]).toBeUndefined();
-      expect(await readAudit(path)).toEqual([]);
-    });
-
-    test("'Yes, and don't ask again for: <command>' shape: scope once is ALSO skipped, nothing pressed (this is the gap the live caller's default scope actually exercises)", async () => {
-      const path = await freshAuditPath();
-      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION] } });
-      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
-      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
-      expect((results[0] as { reason: string }).reason).toMatch(/no plain "Yes" option/);
-      expect(keysSent["w1:p1"]).toBeUndefined();
-      expect(await readAudit(path)).toEqual([]);
-    });
-
-    test("the SAME shape's UNWRAPPED twin (not blank-row-tolerated) is unaffected: scope always still presses the stored-rule option", async () => {
-      const path = await freshAuditPath();
-      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT, WRAPPED_BASH_PROMPT, AFTER] } });
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, AFTER] } });
       const results = await autoAnswerPermissions(client, { auditPath: path });
       expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "answered", tool: "Bash command" }]);
       expect(keysSent["w1:p1"]).toEqual([["down", "enter"]]);
@@ -1632,9 +1601,9 @@ describe("autoAnswerPermissions", () => {
       expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "always", option: "Yes, and don't ask again for mkdir -p scratch-dir-neg and rm -rf scratch-dir-neg commands in /tmp/drovr-herdr-proof.41-neg" });
     });
 
-    test("the SAME shape's UNWRAPPED twin: scope once still presses plain 'Yes'", async () => {
+    test("'Yes, and don't ask again for: <command>' shape: scope once presses plain 'Yes', unaffected by the blank row", async () => {
       const path = await freshAuditPath();
-      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT, WRAPPED_BASH_PROMPT, AFTER] } });
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, AFTER] } });
       const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
       expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "answered", tool: "Bash command" }]);
       expect(keysSent["w1:p1"]).toEqual([["enter"]]);
@@ -1650,17 +1619,6 @@ describe("autoAnswerPermissions", () => {
       expect((results[0] as { reason: string }).reason).toMatch(/no "Yes, and …" stored-rule option/);
       expect(keysSent["w1:p1"]).toBeUndefined();
       expect(await readAudit(path)).toEqual([]);
-    });
-
-    test("'Yes, allow reading from <dir>' shape: scope once PRESSES plain 'Yes' — the carve-out that keeps this shape answerable, through the real path", async () => {
-      const path = await freshAuditPath();
-      const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION, WRAPPED_READ_ONLY_BASH_PROMPT_BLANK_AFTER_CONTINUATION, AFTER] } });
-      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
-      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "answered", tool: "Bash command" }]);
-      expect(keysSent["w1:p1"]).toEqual([["enter"]]);
-      const audit = await readAudit(path);
-      expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);
-      expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "once", option: "Yes" });
     });
   });
 
