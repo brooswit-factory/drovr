@@ -1,0 +1,39 @@
+
+
+
+← xxxxxxx: **xxxxxxxx xxxxx 00:00→00:00x** (xxxx xxxx 00:00 xxx). xxxx…
+
+  xxxxxx xxxxxxx 0 xxxxx, xxx 0 xxxxx xxxxxxxx
+
+← xxxxxxx: @xxxxxxx-xxxxxxxxxxxxx xxxxxxxxxxx xxxxxxxx. x xxxx xxxxxxx…
+
+  xxxxxx 0 xxxxxxxxx, xxxxxx xxxxxxx, xxx 0 xxxxx xxxxxxxx
+
+● xxx xxxxxxxxx xxxx xx xxxx: xxxx xxx xx xxxx xxxxxxxx xxx xx xxxxxxx, xxxx xx
+  xxxxxxxx xxxxxxx xx xxxx xxx xxx xxxxx xxx xxxx xxxxxxx xx xxx xxxxx xx xxx. xxxx
+  x'xx xxxxx xxx xxxxx x0.00.0 xxxxxxx xxxxx xxxxxx xxxxxxx xxxxx #00. · xxxxxxx
+
+● xxxxxxxx xxx xxxxxxxxxxxx xxx xxx xxxxxxxxx xxxxx xxxxxxx
+  ⎿  $ xxxxx xxx xxxx; xx
+     ~/.xxxxx/xxxxx/xxxxxx/xxxxxxx-xxxxxxx/xxxx_xxxxxxx/@xxxxxxxx/xxxxx/ 0>&0 |
+     xxxx; xxxx -x0 '"xxxxxxx"'
+     ~/.xxxxx/xxxxx/xxxxxx/xxxxxxx-xxxxxxx/xxxx_xxxxxxx/@xxxxxxxx/xxxxx/xxxxxxx.xxxx
+
+────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ xxxxx xxx xxxxxxxxxxxx xxx xxx xxxxxxxxx xxxxx xxxxxxx
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ which bun node; ls
+ │ ~/.local/share/xxxxxx/runtime-xxxxxxx/node_modules/@someuser/xxxxx/ 2>&1 | head;
+ │ grep -m1 '"version"'
+ │ ~/.local/share/xxxxxx/runtime-xxxxxxx/node_modules/@someuser/xxxxx/package.json
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, allow reading from /xxxx/xxxxxxxx/.local/share/xxxxxx/runtime-xxxxxxx/nod
+      e_modules/@someuser/xxxxx from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend

@@ -1,0 +1,40 @@
+
+
+● xxxx xxxxxxx xxx xxxxxxx, xx xxx x'x xxxxxxxx xx x 00 xx xxxx xx xxxxxx xxxx x
+  xxxxxxx xxxxxx xx xxxxxxxxx xxxxx, xxxxx x xxxxx xxxxxxx xxxxx xxxxxxxxx xx x
+  xxxxxx xx. · xxxxxxx
+
+  xxxxxxxx xxx xxxxxxx xx xxxx xxx xxxxxxxxxx xxx xxxx xxxxx xxxx
+  ⎿  $
+     xx="/xxx/xxxxxx-xxxx/-xxxx-xxxxxxxx--xxxxx-xxxxx-xxxxxx-xxxxxxx-xxxxxxxxxx-xxxx
+     xxxxxx-xxxxxxx-xxxxxxxx--0xxxxx-0xxxxxxxxx-0x-xxxxxx-0xxxxxxx-0xxxxxxxx-xxxxxxx
+     xxxx-0xxxxxx-xxxxxxxxxxx-xxxx/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/xxxxxxxxxx";
+     [ -x "$xx" ] && [ -x "$xx/xx.xx" ] && xx -x "$xx/xx.xx"; xx…
+
+────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ xxxxxx xxx xxxxxxx xx xxxx xxx xxxxxxx xxx xxxx xxxxx xxxx
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ SP="/tmp/claude-xxxx/-home-someuser--local-share-xxxxxx-project-workspaces-files
+ │ ystem-managed-sessions--2Fhome-2Fsomeuser-2F-config-2Fxxxxxx-2Fsession-definitio
+ │ ns-2Fxxxxx-xxxxxxxxxxx-json/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/scratchpad"; [
+ │ -n "$SP" ] && [ -f "$SP/bk.db" ] && rm -f "$SP/bk.db"; ls -la "$SP" | tail -5;
+ │ date +"%H:%M:%S %Z"; systemctl --user list-timers --all 2>&1 | grep xxxxxxxxxxx
+ │ | cut -xx-xxx
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: SP="/tmp/claude-xxxx/-home-someuser--local-share
+      -xxxxxx-project-workspaces-filesystem-managed-sessions--2Fhome-2Fsomeuser-2F-c
+      onfig-2Fxxxxxx-2Fsession-definitions-2Fxxxxx-xxxxxxxxxxx-json/xxxxxxxx-xxxx-xx
+      xx-xxxx-xxxxxxxxxxxx/scratchpad"; [ -n "$SP" ] && [ -f "$SP/bk.db" ] && rm -f
+      "$SP/bk.db"; ls -la "$SP" | tail -5; date +"%H:%M:%S %Z"; systemctl --user
+      list-timers --all 2>&1 | grep xxxxxxxxxxx | cut -xx-xxx
+
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
