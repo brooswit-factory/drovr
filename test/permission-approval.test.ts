@@ -1664,20 +1664,15 @@ describe("autoAnswerPermissions", () => {
     expect(await readAudit(path)).toEqual([]);
   });
 
-  // FACTORY-603/604/605, criterion 3: pinning the ANSWER DECISION through the
-  // real autoAnswerPermissions path, not just optionFor in isolation — for
-  // both shapes FACTORY-603's real captures carry. This is the precise
-  // safety argument the PR description makes: these screens are invisible
-  // to drovr TODAY (classifyPermissionPrompt returns undefined for them, so
-  // autoAnswerPermissions never even sees them in `listPendingPermissions`);
-  // after this fix they are recognised, and whichever of these two
-  // assertions matches is PRE-EXISTING policy newly reached — the same
-  // option set drovr already presses on the unwrapped equivalent
-  // (DROVR-41's own fixture above). Neither assertion may ever read as
-  // "cannot grow the answered set": the `rm -f`/write-warning case DOES get
-  // pressed, by policy that already existed for the unwrapped screen.
+  // FACTORY-603/604/605: pinning the ANSWER DECISION through the real
+  // autoAnswerPermissions path, not just optionFor in isolation, for the
+  // synthetic "don't ask again for" shape — `optionFor` is untouched by
+  // this ticket, so these screens get exactly the decision their unwrapped
+  // twin already gets (DROVR-41's own fixture above), at either scope. The
+  // real-fixture equivalence tests above assert this same property against
+  // actual captures; these synthetic ones pin it at the unit level too.
   describe("FACTORY-603/604/605: the answer decision for a screen the blank-row fix newly recognises, pinned through autoAnswerPermissions", () => {
-    test("'Yes, and don't ask again for: <command>' shape (captures 02/03/05/06, including rm -f): scope always PRESSES the stored-rule option — this is pre-existing policy newly reached, not new policy", async () => {
+    test("'Yes, and don't ask again for: <command>' shape (captures 02/03/05/06, including rm -f): scope always presses the stored-rule option, same as its unwrapped twin", async () => {
       const path = await freshAuditPath();
       const { client, keysSent } = autoClient({ "w1:p1": { reads: [WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, WRAPPED_BASH_PROMPT_BLANK_AFTER_CONTINUATION, AFTER] } });
       const results = await autoAnswerPermissions(client, { auditPath: path });
