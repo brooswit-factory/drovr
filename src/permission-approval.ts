@@ -180,6 +180,15 @@ export interface PermissionPrompt {
    */
   path: string | undefined;
   /**
+   * True when the option-collection loop had to skip a blank or
+   * whitespace-only row INSIDE the option block to recognise this prompt at
+   * all (FACTORY-603/604/605) — never when the dialog's unwrapped twin
+   * would already recognise it without that skip. `optionFor` uses this,
+   * not `recognizedVia` or any other field, to decide which tolerated
+   * prompts it may answer: see the comment there.
+   */
+  blankRowTolerated: boolean;
+  /**
    * Which arm of `classifyPermissionPrompt` recognised this screen (GUARD 3,
    * FACTORY-460/580): `"separator"` for the general rule-gated arm,
    * `"no-separator-mcp-tool"`/`"no-separator-bash"` for the two pre-existing
@@ -297,6 +306,7 @@ function makePermissionPrompt(
   options: string[],
   cursor: number,
   recognizedVia: PermissionPrompt["recognizedVia"],
+  blankRowTolerated: boolean,
 ): PermissionPrompt {
   const promptId = createHash("sha256").update(JSON.stringify([tool, promptIdRequest, question, options])).digest("hex").slice(0, 16);
   let path: string | undefined;
@@ -305,7 +315,7 @@ function makePermissionPrompt(
     const directory = options[1] !== undefined ? FILE_EDIT_OPTION_2.exec(options[1])?.[1] : undefined;
     if (basename && directory) path = `${directory}/${basename[2]}`;
   }
-  return { tool, request, question, options, cursor, promptId, path, recognizedVia };
+  return { tool, request, question, options, cursor, promptId, path, recognizedVia, blankRowTolerated };
 }
 
 /**
@@ -411,6 +421,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   let cursor = -1;
   let end = q + 1;
   let lastOptionNumber = -1;
+  let blankRowTolerated = false;
   for (; end < lines.length; end++) {
     const line = lines[end]!;
     const match = OPTION.exec(line);
@@ -456,6 +467,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
         const resumeMatch = OPTION.exec(resumeLine);
         if (resumeMatch) {
           if (Number(resumeMatch[2]) === lastOptionNumber + 1) {
+            blankRowTolerated = true;
             end = probe - 1;
             continue;
           }
@@ -463,6 +475,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
           const resumeContinuation = CONTINUATION.test(resumeLine) && !SEPARATOR.test(resumeLine) && !QUESTION.test(resumeLine) && !/Esc to cancel/.test(resumeLine);
           if (resumeContinuation) {
             options[options.length - 1] = `${options[options.length - 1]} ${resumeLine.trim()}`;
+            blankRowTolerated = true;
             end = probe;
             continue;
           }
@@ -589,7 +602,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
         // reason text never applies here), not a `│`-prefixed run.
         const fileEdit = classifyFileEditNoSeparator(lines, q, question, options);
         if (fileEdit === undefined) return undefined;
-        return makePermissionPrompt(fileEdit.tool, fileEdit.request, fileEdit.request, question, options, cursor, "no-separator-file-edit");
+        return makePermissionPrompt(fileEdit.tool, fileEdit.request, fileEdit.request, question, options, cursor, "no-separator-file-edit", blankRowTolerated);
       }
       recognizedVia = "no-separator-bash";
       tool = lines[titleLine]!.trim();
@@ -629,7 +642,7 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
   // the framed request body) won't have. Unlike a position check, this
   // survives real trailing chatter landing on a still-live pane.
   if (!hasFooterLine && hasInlineEscHintOption && !WEBFETCH_BODY_MARKER.test(request)) return undefined;
-  return makePermissionPrompt(tool!, request, promptIdRequest, question, options, cursor, recognizedVia!);
+  return makePermissionPrompt(tool!, request, promptIdRequest, question, options, cursor, recognizedVia!, blankRowTolerated);
 }
 
 /**
@@ -647,6 +660,36 @@ export type PermissionScope = "once" | "always";
  * anything.
  */
 export function optionFor(prompt: PermissionPrompt, scope: PermissionScope): number {
+  // GUARD 8 (FACTORY-594/603/604/605, director decision 2026-10-02): a
+  // prompt recognised ONLY because the option-collection loop had to skip a
+  // blank row (`blankRowTolerated`) is answered at BOTH scopes — "once" AND
+  // "always" — only when it is the read-only "Yes, allow reading from
+  // <dir>" shape, exactly like its unwrapped twin already is. Every other
+  // tolerated prompt (the "Yes, and don't ask again for: <command>" shape
+  // included — an `rm -f` approval and a Claude Code "manual approval
+  // required" warning among FACTORY-603's real captures) is
+  // recognised-but-unanswerable at both scopes, routing to the existing
+  // escalation path instead of being pressed: unwrapped behaviour for that
+  // shape does not change at all, because this check only ever fires for a
+  // prompt the blank-row tolerance itself made reachable. An earlier
+  // version of this guard tried to carry the same intent by matching
+  // `optionFor`'s "Yes, and …" result against the Bash "don't ask again"
+  // wording — rejected on review: it only ever touched `scope: "always"`,
+  // while the live caller's default is `scope: "once"` (which this guard
+  // now also covers), and its own regex silently failed to match the real
+  // captures' typographic apostrophe (U+2019, not ASCII). Keying on
+  // `blankRowTolerated` instead sidesteps both defects: it needs no wording
+  // match at all for the shapes it refuses, and it is scope-independent by
+  // construction.
+  if (prompt.blankRowTolerated) {
+    const isReadOnlyAllow = prompt.tool === "Bash command" && prompt.options.some((option) => option.startsWith("Yes, allow reading from "));
+    if (!isReadOnlyAllow) return -1;
+    // Falls through: this shape's answer decision is exactly what the
+    // normal logic below already gives its unwrapped twin (scope "once"
+    // presses plain "Yes"; scope "always" finds no "Yes, and …" match,
+    // since this label is "Yes, allow", never "Yes, and") — no separate
+    // branch needed here to reproduce it.
+  }
   if (scope === "once") {
     // GUARD 1 (FACTORY-580 ask/decision thread, FACTORY-584): an Edit/Create-
     // file dialog whose `path` could not be derived (no directory in option 2
