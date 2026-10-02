@@ -1232,6 +1232,93 @@ function fixture(screens: string[], options: { auditFails?: boolean | number; th
 const idOf = (screen: string) => classifyPermissionPrompt(screen)!.promptId;
 const base = { paneId: "w1:p1", operator: "brooswit", auditPath: "/audit.jsonl" };
 
+// FACTORY-603/604/605: real daemon captures (test/fixtures/permission-blank-row/,
+// scrubbed for this public repo — see that directory's own README.md for the
+// scrubbing method and per-pane provenance), landed after the Jira attachment
+// channel carrying them turned out to be unreadable from this host. Director's
+// final scope ("option 3"): the blank-row screen must behave EXACTLY like its
+// own unwrapped twin, at both scopes, whatever that behaviour already is — no
+// hard-coded per-screen expectation, since the hard-coding is exactly what a
+// future change to `optionFor` would silently stop being caught by. All 8
+// pairs measured: recognised via the general `separator` arm, tool "Bash
+// command", cursor 0, path undefined, matching the director's own report.
+describe("real captures (FACTORY-603/604/605): a blank-row screen behaves exactly like its unwrapped twin", () => {
+  const blankRowFixture = (nn: string) => readFileSync(new URL(`./fixtures/permission-blank-row/pane-factory603-${nn}-blank-row.txt`, import.meta.url), "utf8");
+  const unwrappedTwinFixture = (nn: string) => readFileSync(new URL(`./fixtures/permission-blank-row/pane-factory603-${nn}-unwrapped-twin.txt`, import.meta.url), "utf8");
+  // 03/08 are re-captures of 02/07 (byte-identical fixtures) — kept and tested
+  // anyway per the fixtures' own README: cheap, and a real re-capture is still
+  // a real capture.
+  const PAIRS = ["01", "02", "03", "04", "05", "06", "07", "08"];
+
+  for (const nn of PAIRS) {
+    test(`pane-factory603-${nn}: recognised identically to its unwrapped twin (same tool/request/question/options/cursor/recognizedVia/path)`, () => {
+      const blankRow = classifyPermissionPrompt(blankRowFixture(nn));
+      const twin = classifyPermissionPrompt(unwrappedTwinFixture(nn));
+      expect(twin).toBeDefined();
+      expect(blankRow).toBeDefined();
+      expect(blankRow).toEqual(twin);
+      expect(blankRow!.tool).toBe("Bash command");
+      expect(blankRow!.recognizedVia).toBe("separator");
+      expect(blankRow!.cursor).toBe(0);
+    });
+
+    test(`pane-factory603-${nn}: optionFor agrees with its unwrapped twin at BOTH scopes`, () => {
+      const blankRow = classifyPermissionPrompt(blankRowFixture(nn))!;
+      const twin = classifyPermissionPrompt(unwrappedTwinFixture(nn))!;
+      expect(optionFor(blankRow, "once")).toBe(optionFor(twin, "once"));
+      expect(optionFor(blankRow, "always")).toBe(optionFor(twin, "always"));
+    });
+  }
+
+  // Full-path equivalence (criterion: "AND the same through autoAnswerPermissions
+  // (press / no press identical)") — one representative screen of each measured
+  // label shape (01: read-only; 05: the other wrapped label), both scopes, run
+  // through the real autoAnswerPermissions path rather than optionFor alone.
+  describe("the same equivalence holds through the real autoAnswerPermissions path", () => {
+    async function pressFor(screen: string, scope: "once" | "always") {
+      const auditPath = `/tmp/drovr-factory603-equiv-${Math.random().toString(36).slice(2)}.jsonl`;
+      const reads = [screen, screen, "❯ "];
+      const client = {
+        agent: {
+          list: async () => ({ agents: [{ pane_id: "w1:p1", agent: "claude" }] }) as never,
+          get: async (target: string) => ({ agent: { pane_id: target } }) as never,
+          read: async () => ({ read: { text: reads.length > 1 ? reads.shift()! : reads[0] } }) as never,
+          sendKeys: async () => ({}) as never,
+        },
+      };
+      const [result] = await autoAnswerPermissions(client, { auditPath, scope });
+      return result!.outcome;
+    }
+
+    for (const nn of ["01", "05"]) {
+      for (const scope of ["once", "always"] as const) {
+        test(`pane-factory603-${nn}, scope ${scope}: same outcome (answered/skipped) as its unwrapped twin`, async () => {
+          const blankRowOutcome = await pressFor(blankRowFixture(nn), scope);
+          const twinOutcome = await pressFor(unwrappedTwinFixture(nn), scope);
+          expect(blankRowOutcome).toBe(twinOutcome);
+        });
+      }
+    }
+  });
+
+  // Mutation proof (criterion 3): a tolerance that drops an option, or picks a
+  // different option index, breaks the equivalence check above.
+  test("mutation proof: dropping an option from the blank-row result breaks the equivalence the tests above depend on", () => {
+    const blankRow = classifyPermissionPrompt(blankRowFixture("01"))!;
+    const twin = classifyPermissionPrompt(unwrappedTwinFixture("01"))!;
+    const mutated = { ...blankRow, options: blankRow.options.slice(0, -1) }; // drop "No"
+    expect(mutated).not.toEqual(twin);
+    expect(mutated.options).not.toEqual(twin.options);
+  });
+
+  test("mutation proof: a different cursor position on the blank-row result breaks the equivalence the tests above depend on", () => {
+    const blankRow = classifyPermissionPrompt(blankRowFixture("01"))!;
+    const twin = classifyPermissionPrompt(unwrappedTwinFixture("01"))!;
+    const mutated = { ...blankRow, cursor: blankRow.cursor + 1 };
+    expect(mutated).not.toEqual(twin);
+  });
+});
+
 describe("listPendingPermissions", () => {
   test("reads every Claude pane's screen and returns only those showing the dialog", async () => {
     const f = fixture([BASH_PROMPT]);
