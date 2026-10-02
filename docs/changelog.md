@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.10
+
+Approval dialogs whose option-2 label wraps and leaves a whitespace-only row
+inside the option block are now recognised (FACTORY-603/604/605). Before, the
+blank row ended the option list early, so the whole dialog was invisible
+(`classifyPermissionPrompt` returned `undefined`) and sat unanswered. The
+option-collection loop now skips a bounded run of such rows
+(`MAX_OPTION_BLANK_RUN = 2`) and continues only when the next non-blank row is
+a wrapped continuation or the next numbered option; a blank run followed by
+`1.` (a second dialog), the footer, a question or a separator still ends the
+list. Which option gets pressed is unchanged: a blank-row screen now behaves
+exactly like its unwrapped twin at both scopes, so recognition now reaches the
+wrapped "Yes, and don't ask again for: <command>" shape too, with the answer
+decision it already had. Eight real, scrubbed captures (and their unwrapped
+twins) back the equivalence tests under `test/fixtures/permission-blank-row/`.
+
 ## 0.16.9
 
 macOS support for the native transcript readers (Claude, Codex, AGY, and the
