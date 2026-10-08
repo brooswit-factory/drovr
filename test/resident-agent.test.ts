@@ -252,8 +252,9 @@ describe("ClaudeBackgroundSessionsCache (FACTORY-818/FACTORY-821)", () => {
     const calls = [h.cache.list(), h.cache.list()];
     expect(h.spawnCalls()).toBe(1);
     h.reject("spawn failed");
-    await expect(calls[0]).rejects.toThrow("spawn failed");
-    await expect(calls[1]).rejects.toThrow("spawn failed");
+    // The spawn step wraps any failure into this message, same as before coalescing existed.
+    await expect(calls[0]).rejects.toThrow("Claude background session listing could not run");
+    await expect(calls[1]).rejects.toThrow("Claude background session listing could not run");
 
     const again = h.cache.list();
     expect(h.spawnCalls()).toBe(2); // a fresh spawn, not the cached failure
