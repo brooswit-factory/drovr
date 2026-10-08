@@ -7,6 +7,8 @@ export {
   ClaudeResidentMessenger,
   ResidentMessageRefusal,
   listClaudeBackgroundSessions,
+  ClaudeBackgroundSessionsCache,
+  processClaudeBackgroundSessions,
   openClaudeAttach,
   claudeResidentActivity,
   type ClaudeResidentActivity,
@@ -19,6 +21,8 @@ export {
   type ResidentTerminal,
   type ClaudeBackgroundListing,
   type ClaudeResidentDeps,
+  type ListClaudeBackgroundSessionsOptions,
+  type ListBackgroundSessionsDeps,
 } from "./resident-agent.js";
 export {
   deliverToResident,

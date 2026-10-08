@@ -67,23 +67,114 @@ export const RESIDENT_MESSAGE_MAX_CHARS = 16_000;
 const DEFAULT_REPLY_TIMEOUT_MS = 5 * 60_000;
 const ATTACH_QUIET_MS = 800;
 
-export async function listClaudeBackgroundSessions(): Promise<ClaudeBackgroundListing[]> {
-  let stdout: string;
-  let exitCode: number;
-  try {
+export interface ListClaudeBackgroundSessionsOptions {
+  /**
+   * How old, in ms, a cached listing may be for this call. Default 0 is
+   * fresh-or-in-flight: this call may join an in-flight spawn even one that
+   * started before it (bounded by that one spawn, and every consumer here —
+   * the launch poll, `readFollowing` — is a retry loop that absorbs a listing
+   * sampled a moment early as one extra iteration), but it is never served a
+   * COMPLETED, stored listing older than its own call start: that would
+   * repeat unboundedly, which is the silent-global-TTL failure this option
+   * exists to avoid (FACTORY-818/FACTORY-821).
+   */
+  maxAgeMs?: number;
+}
+
+export interface ListBackgroundSessionsDeps {
+  /** Runs `claude agents --json` and returns its raw result, unparsed. */
+  spawn(): Promise<{ exitCode: number; stdout: string }>;
+  now(): number;
+}
+
+const defaultListBackgroundSessionsDeps: ListBackgroundSessionsDeps = {
+  spawn: async () => {
     const child = Bun.spawn(["claude", "agents", "--json"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
-    [exitCode, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+    const [exitCode, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+    return { exitCode, stdout };
+  },
+  now: Date.now,
+};
+
+async function spawnAndParseListing(spawn: ListBackgroundSessionsDeps["spawn"]): Promise<ClaudeBackgroundListing[]> {
+  let result: { exitCode: number; stdout: string };
+  try {
+    result = await spawn();
   } catch {
     throw new Error("Claude background session listing could not run");
   }
-  if (exitCode !== 0) throw new Error("Claude background session listing exited unsuccessfully");
+  if (result.exitCode !== 0) throw new Error("Claude background session listing exited unsuccessfully");
   let value: unknown;
-  try { value = JSON.parse(stdout); } catch { throw new Error("Claude background session listing returned invalid JSON"); }
+  try { value = JSON.parse(result.stdout); } catch { throw new Error("Claude background session listing returned invalid JSON"); }
   if (!Array.isArray(value)) throw new Error("Claude background session listing was not an array");
   return value.flatMap((entry: any) => entry?.kind === "background" && typeof entry.id === "string"
     && typeof entry.sessionId === "string" && typeof entry.cwd === "string"
     ? [{ id: entry.id, sessionId: entry.sessionId, cwd: entry.cwd, ...(typeof entry.status === "string" ? { status: entry.status } : {}) }]
     : []);
+}
+
+/**
+ * Coalesces concurrent callers into one in-flight `claude agents --json`
+ * spawn, and caches its result for an explicit, per-caller max age
+ * (FACTORY-818/FACTORY-821): one spawn is ~0.7s CPU / ~174MB RSS, so letting
+ * concurrent or rapid-fire callers each spawn their own saturates a host.
+ * There is deliberately no silent default TTL on top of this — see
+ * `ListClaudeBackgroundSessionsOptions.maxAgeMs`.
+ */
+export class ClaudeBackgroundSessionsCache {
+  private readonly deps: ListBackgroundSessionsDeps;
+  private inFlight: Promise<ClaudeBackgroundListing[]> | undefined;
+  private lastGood: { completedAt: number; listing: ClaudeBackgroundListing[] } | undefined;
+
+  constructor(deps: Partial<ListBackgroundSessionsDeps> = {}) {
+    this.deps = { ...defaultListBackgroundSessionsDeps, ...deps };
+  }
+
+  list(options: ListClaudeBackgroundSessionsOptions = {}): Promise<ClaudeBackgroundListing[]> {
+    const maxAgeMs = options.maxAgeMs ?? 0;
+    const callStart = this.deps.now();
+    // A stored entry only ever qualifies if it is strictly younger than the
+    // requested max age: at maxAgeMs 0 this can never be true for a
+    // previously-completed entry, so a fresh-or-in-flight caller is never
+    // served stale, stored data — see the rule on FACTORY-818/FACTORY-821.
+    if (this.lastGood !== undefined && callStart - this.lastGood.completedAt < maxAgeMs) {
+      return Promise.resolve(this.lastGood.listing);
+    }
+    // Joining an in-flight spawn is always allowed, including one that
+    // started before this call: it is bounded by that one spawn and cannot
+    // repeat, unlike a stale stored entry.
+    if (this.inFlight !== undefined) return this.inFlight;
+    const promise = spawnAndParseListing(this.deps.spawn).then(
+      listing => {
+        this.lastGood = { completedAt: this.deps.now(), listing };
+        this.inFlight = undefined;
+        return listing;
+      },
+      error => {
+        // A failed spawn is never cached: the next caller starts fresh.
+        this.inFlight = undefined;
+        throw error;
+      },
+    );
+    this.inFlight = promise;
+    return promise;
+  }
+
+  /** Drops all cached/in-flight state. Tests use this between cases for isolation. */
+  reset(): void {
+    this.inFlight = undefined;
+    this.lastGood = undefined;
+  }
+}
+
+/** Shared by default across all consumers of this module in one process. */
+export const processClaudeBackgroundSessions = new ClaudeBackgroundSessionsCache();
+
+export function listClaudeBackgroundSessions(
+  options?: ListClaudeBackgroundSessionsOptions,
+  cache: ClaudeBackgroundSessionsCache = processClaudeBackgroundSessions,
+): Promise<ClaudeBackgroundListing[]> {
+  return cache.list(options);
 }
 
 export function openClaudeAttach(shortId: string, cwd: string): ResidentTerminal {

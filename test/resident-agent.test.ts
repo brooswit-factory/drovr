@@ -4,7 +4,7 @@ import { realTmpdir } from "./support/tmp";
 import { join } from "node:path";
 import { NativeTranscriptUnavailableError, readClaudeTranscriptTail } from "../src/native-transcript.js";
 import {
-  ClaudeResidentMessenger, claudeResidentActivity, createResidentAgentMessenger, ResidentMessageRefusal,
+  ClaudeBackgroundSessionsCache, ClaudeResidentMessenger, claudeResidentActivity, createResidentAgentMessenger, ResidentMessageRefusal,
   type ClaudeBackgroundListing, type ClaudeResidentDeps, type ResidentAgentTarget,
 } from "../src/resident-agent.js";
 
@@ -206,6 +206,106 @@ describe("resident agent messaging", () => {
       await expect(messenger.message({ ...target, provider }, "hello")).rejects.toMatchObject({ reason: "unsupported-provider" });
     }
     expect(listed).toBe(false);
+  });
+});
+
+describe("ClaudeBackgroundSessionsCache (FACTORY-818/FACTORY-821)", () => {
+  // Each stub spawn result is held open until the test resolves or rejects
+  // it, so a test can assert spawn count before completion — the only way to
+  // observe coalescing rather than just its eventual outcome.
+  function harness() {
+    let clock = 0;
+    let spawnCalls = 0;
+    let pending: { resolve: (r: { exitCode: number; stdout: string }) => void; reject: (e: unknown) => void } | undefined;
+    const cache = new ClaudeBackgroundSessionsCache({
+      spawn: () => {
+        spawnCalls++;
+        return new Promise((resolve, reject) => { pending = { resolve, reject }; });
+      },
+      now: () => clock,
+    });
+    const listingJson = (listing: ClaudeBackgroundListing[]) => JSON.stringify(listing.map(l => ({ kind: "background", ...l })));
+    return {
+      cache,
+      spawnCalls: () => spawnCalls,
+      advance: (ms: number) => { clock += ms; },
+      resolve: (listing: ClaudeBackgroundListing[]) => { pending!.resolve({ exitCode: 0, stdout: listingJson(listing) }); pending = undefined; },
+      reject: (message: string) => { pending!.reject(new Error(message)); pending = undefined; },
+    };
+  }
+
+  const a: ClaudeBackgroundListing = { id: "a", sessionId: "11111111-1111-1111-1111-111111111111", cwd: "/w" };
+  const b: ClaudeBackgroundListing = { id: "b", sessionId: "22222222-2222-2222-2222-222222222222", cwd: "/w2" };
+
+  test("K concurrent callers while one is in flight produce exactly one spawn, all resolving with the same listing", async () => {
+    const h = harness();
+    const calls = [h.cache.list(), h.cache.list(), h.cache.list()];
+    expect(h.spawnCalls()).toBe(1);
+    h.resolve([a]);
+    const results = await Promise.all(calls);
+    expect(results).toEqual([[a], [a], [a]]);
+    expect(h.spawnCalls()).toBe(1);
+  });
+
+  test("a failed in-flight spawn rejects every coalesced caller and is never cached", async () => {
+    const h = harness();
+    const calls = [h.cache.list(), h.cache.list()];
+    expect(h.spawnCalls()).toBe(1);
+    h.reject("spawn failed");
+    await expect(calls[0]).rejects.toThrow("spawn failed");
+    await expect(calls[1]).rejects.toThrow("spawn failed");
+
+    const again = h.cache.list();
+    expect(h.spawnCalls()).toBe(2); // a fresh spawn, not the cached failure
+    h.resolve([a]);
+    expect(await again).toEqual([a]);
+  });
+
+  test("sequential calls separated by less than the requested max age reuse one spawn; separated by more, a second spawn happens", async () => {
+    const h = harness();
+    const first = h.cache.list({ maxAgeMs: 1_000 });
+    h.resolve([a]);
+    expect(await first).toEqual([a]);
+    expect(h.spawnCalls()).toBe(1);
+
+    h.advance(500); // < 1000ms since completion
+    const second = h.cache.list({ maxAgeMs: 1_000 });
+    expect(h.spawnCalls()).toBe(1); // reused the cached entry, no new spawn
+    expect(await second).toEqual([a]);
+
+    h.advance(600); // 1100ms since completion, > 1000ms
+    const third = h.cache.list({ maxAgeMs: 1_000 });
+    expect(h.spawnCalls()).toBe(2);
+    h.resolve([b]);
+    expect(await third).toEqual([b]);
+  });
+
+  test("a maxAge-0 caller is never served a completed, stored entry that predates its own call — it spawns fresh", async () => {
+    const h = harness();
+    const first = h.cache.list({ maxAgeMs: 1_000 });
+    h.resolve([a]);
+    await first;
+    expect(h.spawnCalls()).toBe(1);
+
+    // Clock unchanged: the stored entry is as fresh as it will ever be, yet a
+    // fresh-or-in-flight (default) caller must still not be served it.
+    const second = h.cache.list();
+    expect(h.spawnCalls()).toBe(2);
+    h.resolve([b]);
+    expect(await second).toEqual([b]);
+  });
+
+  test("a maxAge-0 caller may join an in-flight spawn that started before it", async () => {
+    const h = harness();
+    const first = h.cache.list({ maxAgeMs: 1_000 }); // no cache yet, starts the only spawn
+    expect(h.spawnCalls()).toBe(1);
+    h.advance(10);
+    const second = h.cache.list(); // maxAgeMs 0, arrives mid-flight
+    expect(h.spawnCalls()).toBe(1); // joined, did not start a second spawn
+    h.resolve([a]);
+    expect(await first).toEqual([a]);
+    expect(await second).toEqual([a]);
+    expect(h.spawnCalls()).toBe(1);
   });
 });
 

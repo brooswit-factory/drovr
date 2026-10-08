@@ -88,6 +88,32 @@ Codex and AGY refuse with `unsupported-provider` until a same-session transport
 is proven for them. Their `ManagedConversationRunner` resume starts a separate
 CLI turn and is not a resident transport.
 
+## `listClaudeBackgroundSessions` coalescing and caching
+
+`claude agents --json` is a full Claude Code startup: ~0.7s CPU and ~174MB RSS
+per run (measured, FACTORY-818). Every caller of `listClaudeBackgroundSessions`
+— this messenger's own listing read, and `launchBackgroundSession`'s poll —
+shares one process-wide `ClaudeBackgroundSessionsCache` (FACTORY-818/FACTORY-821):
+
+- **Coalescing** is unconditional: concurrent callers share one in-flight
+  spawn. This holds at every `maxAgeMs`, including 0.
+- **Staleness is explicit and per-caller** via `maxAgeMs` (default `0`).
+  `maxAgeMs: 0` is fresh-or-in-flight: it may join an in-flight spawn even one
+  that started before it, but it is never served a completed, stored entry
+  from before its own call. The two are different in kind, not degree — a
+  joined in-flight spawn is bounded by that one spawn and cannot repeat; a
+  stale stored hit would be served again on every call, which is exactly the
+  silent-global-TTL failure this design avoids: a default cache older than
+  `launchBackgroundSession`'s `listTimeoutMs` poll would make it watch a
+  listing that can never contain the session it just started, and the same
+  staleness would hide a `readFollowing` cwd move. Both of those call sites
+  therefore use the default `maxAgeMs: 0`.
+- A failed spawn is never cached: the next call starts a fresh one.
+
+A test needing to isolate cache state constructs its own
+`new ClaudeBackgroundSessionsCache({ spawn, now })` rather than relying on the
+shared `processClaudeBackgroundSessions` singleton.
+
 ## A channel acknowledgement is not delivery
 
 A notification channel that hands a frame to a live stream knows only that the

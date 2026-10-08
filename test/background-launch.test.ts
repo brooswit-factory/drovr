@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildBackgroundLaunchArgv, buildProviderLaunchArgs, launchBackgroundSession, parseBackgroundLaunchId,
+  buildBackgroundLaunchArgv, buildProviderLaunchArgs, ClaudeBackgroundSessionsCache, launchBackgroundSession, parseBackgroundLaunchId,
   type BackgroundLaunchDeps, type ClaudeBackgroundListing, type ClaudeDaemonState,
 } from "../src/index.js";
 
@@ -136,6 +136,24 @@ describe("launchBackgroundSession", () => {
     expect(await launchBackgroundSession({ provider: "claude", cwd: "/work/repo", prompt: "hi" }, deps)).toMatchObject({
       ok: false, reason: "blocked", blocking: { kind: "login-expired", detail: "⎿  Login expired · Please run /login" },
     });
+  });
+
+  test("the launch poll still finds a session that appears only after launch, wired through the real coalescing cache (FACTORY-818/FACTORY-821)", async () => {
+    // Regression test: a naive global TTL on the shared cache would make the
+    // poll see an empty listing taken before the launch for its whole
+    // listTimeoutMs budget, never the session that showed up afterward.
+    let polls = 0;
+    const cache = new ClaudeBackgroundSessionsCache({
+      now: () => 0,
+      spawn: async () => {
+        polls++;
+        const sessions = polls < 3 ? [] : [listed];
+        return { exitCode: 0, stdout: JSON.stringify(sessions.map(s => ({ kind: "background", ...s }))) };
+      },
+    });
+    const { deps } = harness({ listBackground: () => cache.list() });
+    expect((await launchBackgroundSession({ provider: "claude", cwd: "/work/repo" }, deps)).ok).toBe(true);
+    expect(polls).toBeGreaterThanOrEqual(3);
   });
 
   test("codex and agy have no background session to start", async () => {

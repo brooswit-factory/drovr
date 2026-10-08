@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+`listClaudeBackgroundSessions()` no longer unconditionally spawns `claude
+agents --json` on every call (FACTORY-818/FACTORY-821). On a loaded host one
+spawn is ~0.7s CPU and ~174MB RSS, and with no cache or coalescing, concurrent
+callers — the launch poll, resident messaging, any host-side caller — each
+started their own, which was measured sustaining ~50% of a core. Concurrent
+callers now coalesce into one in-flight spawn, and a new optional
+`maxAgeMs` lets a caller accept a cached listing up to that old; the default,
+`maxAgeMs: 0`, is fresh-or-in-flight — it may join an in-flight spawn (even
+one that started before it) but is never served a completed, stored listing
+from before its own call. There is deliberately no silent default TTL: a
+cache older than `launchBackgroundSession`'s `listTimeoutMs` poll would make
+it watch a listing that could never contain the session it just started, and
+the same staleness would hide a `readFollowing` cwd move, so both call sites
+keep the default `maxAgeMs: 0`. See `docs/resident-agent.md` and
+`docs/background-launch.md`.
+
 ## 0.16.10
 
 Approval dialogs whose option-2 label wraps and leaves a whitespace-only row
