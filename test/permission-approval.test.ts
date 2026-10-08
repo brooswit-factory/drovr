@@ -1319,6 +1319,135 @@ describe("real captures (FACTORY-603/604/605): a blank-row screen behaves exactl
   });
 });
 
+// FACTORY-809/FACTORY-774: at a pane width of exactly 40 columns, claude
+// 2.1.294 overdraws the dialog's own last option over a wrapped continuation
+// row still occupying that row — `No` lands over `fo` of a trailing "for
+// you", leaving the row reading `4. Nor you`. `/^No\b/` doesn't match
+// ("No" immediately followed by "r", both word chars, so no boundary), so
+// the whole dialog was invisible to every caller. Fixture text is verbatim
+// from the ticket's own captured renders (FACTORY-774's DIAGNOSIS comment),
+// leading whitespace preserved exactly — only the wrapped path on option 2,
+// marked as elided in the ticket, is filled in with a placeholder, since its
+// exact text has no bearing on recognition.
+const OVERDRAWN_BASH_PROMPT = [
+  "❯ Run the shell command touch drovr-permission-probe.txt with the Bash tool. Nothing else.",
+  "",
+  "● Creating empty probe file",
+  "  ⎿  $ touch drovr-permission-probe.txt",
+  "",
+  "─────────────────────────────────────",
+  " Bash command",
+  " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+  "",
+  "   touch drovr-permission-probe.txt",
+  "   Create empty probe file",
+  "",
+  " Do you want to proceed?",
+  "❯ 1. Yes",
+  "  2. Yes, and always allow access to",
+  "     /tmp/drovr-factory-809-overdrawn-fixture-path",
+  "     from this project",
+  "  3. Yes, and switch to auto mode ·",
+  "     auto mode handles these prompts",
+  "  4. Nor you",
+  "",
+  "Esc to cancel · Tab to amend",
+].join("\n");
+
+// The version-control variant (FACTORY-774's claim (4), also confirmed at
+// width 40): 3 options, same overdraw on the last one.
+const OVERDRAWN_VC_PROMPT = [
+  "❯ Run cd /tmp/scratch && git log with the Bash tool. Nothing else.",
+  "",
+  "● Checking recent history",
+  "  ⎿  $ cd /tmp/scratch && git log",
+  "",
+  "─────────────────────────────────────",
+  " Bash command",
+  "",
+  "   This command changes directory before running a version-control command, which can pick up",
+  "   untrusted hooks or repository configuration from the target directory. Approve only if you",
+  "   trust it.",
+  "",
+  " Do you want to proceed?",
+  "❯ 1. Yes",
+  "  2. Yes, and switch to auto mode ·",
+  "     auto mode handles these prompts",
+  "  3. Nor you",
+  "",
+  "Esc to cancel · Tab to amend",
+].join("\n");
+
+describe("the overdrawn last option \"Nor you\" (FACTORY-809/FACTORY-774)", () => {
+  test("the 4-option Bash dialog is recognised: options[0] is Yes, cursor is 0", () => {
+    const prompt = classifyPermissionPrompt(OVERDRAWN_BASH_PROMPT);
+    expect(prompt).toBeDefined();
+    expect(prompt!.options[0]).toBe("Yes");
+    expect(prompt!.options.at(-1)).toBe("Nor you");
+    expect(prompt!.cursor).toBe(0);
+  });
+
+  test("the 3-option version-control variant is recognised: options[0] is Yes, cursor is 0", () => {
+    const prompt = classifyPermissionPrompt(OVERDRAWN_VC_PROMPT);
+    expect(prompt).toBeDefined();
+    expect(prompt!.options).toHaveLength(3);
+    expect(prompt!.options[0]).toBe("Yes");
+    expect(prompt!.options.at(-1)).toBe("Nor you");
+    expect(prompt!.cursor).toBe(0);
+  });
+
+  // Criterion 2: not just that parsing succeeded — the resolved "once"
+  // answer must be the genuine Yes, and the real key sequence sent (through
+  // approvePermission, never reimplementing keysFor) must be zero arrows
+  // plus enter. A dialog that parses but answers the wrong option is worse
+  // than one that doesn't parse at all.
+  for (const [name, screen] of [
+    ["4-option Bash", OVERDRAWN_BASH_PROMPT],
+    ["3-option version-control", OVERDRAWN_VC_PROMPT],
+  ] as const) {
+    test(`${name}: optionFor(once) resolves to the genuine Yes, and approvePermission presses it with zero arrows`, async () => {
+      const prompt = classifyPermissionPrompt(screen)!;
+      expect(optionFor(prompt, "once")).toBe(0);
+      expect(prompt.options[optionFor(prompt, "once")]).toBe("Yes");
+
+      const f = fixture([screen]);
+      const result = await approvePermission(f.client, { ...base, promptId: idOf(screen) }, f.deps);
+      expect(result).toMatchObject({ ok: true, scope: "once" });
+      expect(f.keys).toEqual([["enter"]]);
+      expect(f.audit[0]).toMatchObject({ option: "Yes", scope: "once" });
+    });
+  }
+
+  // Criterion 3: a wide render with a clean, un-overdrawn last "No" option
+  // must still parse exactly as before — the relaxed gate hasn't broken the
+  // ordinary case. BASH_PROMPT above is exactly that regression fixture.
+  test("regression: a wide render with a clean last \"No\" still parses (BASH_PROMPT)", () => {
+    const prompt = classifyPermissionPrompt(BASH_PROMPT);
+    expect(prompt).toBeDefined();
+    expect(prompt!.options.at(-1)).toBe("No");
+    expect(prompt!.options[0]).toBe("Yes");
+    expect(prompt!.cursor).toBe(0);
+  });
+
+  // Criterion 4: anchoring on the LAST option only (never `options.some(...)`)
+  // means an option that merely starts with "No"/"Not"/"November" earlier in
+  // the list still can't trigger acceptance by itself — only the shape of
+  // the actual last option matters. This is the non-dialog screen the broader
+  // `/^No/.some(...)` relaxation (considered and rejected) would have wrongly
+  // accepted.
+  test("an option starting with \"Not\" that is NOT the last option does not make an otherwise-unrecognised screen a dialog", () => {
+    const screen = [
+      "Do you want to subscribe to the newsletter?",
+      "❯ 1. Yes",
+      "  2. Not now, thanks",
+      "  3. Remind me later",
+      "",
+      "Esc to cancel · Tab to amend",
+    ].join("\n");
+    expect(classifyPermissionPrompt(screen)).toBeUndefined();
+  });
+});
+
 describe("listPendingPermissions", () => {
   test("reads every Claude pane's screen and returns only those showing the dialog", async () => {
     const f = fixture([BASH_PROMPT]);

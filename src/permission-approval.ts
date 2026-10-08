@@ -474,7 +474,17 @@ export function classifyPermissionPrompt(raw: string): PermissionPrompt | undefi
     if (!continuation) break;
     options[options.length - 1] = `${options[options.length - 1]} ${line.trim()}`;
   }
-  if (options.length < 2 || cursor < 0 || options[0] !== "Yes" || !options.some((option) => /^No\b/.test(option))) return undefined;
+  // FACTORY-809: at a pane width of exactly 40 columns, claude 2.1.294
+  // overdraws the LAST option's row over a wrapped continuation line still
+  // occupying it, so `No` lands over `fo` of a trailing "for you" and the
+  // row reads `4. Nor you` — `/^No\b/` doesn't match (`No` immediately
+  // followed by `r`, both word chars, so no boundary), and the whole dialog
+  // was invisible to every caller. Anchoring on the LAST option alone (never
+  // `options.some(...)`) accepts that overdrawn render while staying exactly
+  // as tight as the old `\b`-anchored gate everywhere else: an option
+  // starting with "No"/"Not"/"November" earlier in the list still can't
+  // trigger acceptance on its own, since only the final slot is consulted.
+  if (options.length < 2 || cursor < 0 || options[0] !== "Yes" || !/^No/.test(options[options.length - 1]!)) return undefined;
   const hasFooterLine = lines.slice(end, end + 3).some((line) => /Esc to cancel/.test(line));
   // WebFetch draws no `Esc to cancel` footer at all; its escape hint lives
   // inline in the "No, …" option's own text instead (FACTORY-365/6). Whether

@@ -137,7 +137,7 @@ export class ClaudeBackgroundSessionsCache {
     // requested max age: at maxAgeMs 0 this can never be true for a
     // previously-completed entry, so a fresh-or-in-flight caller is never
     // served stale, stored data — see the rule on FACTORY-818/FACTORY-821.
-    if (this.lastGood !== undefined && callStart - this.lastGood.completedAt < maxAgeMs) {
+    if (maxAgeMs > 0 && this.lastGood !== undefined && callStart - this.lastGood.completedAt < maxAgeMs) {
       return Promise.resolve(this.lastGood.listing);
     }
     // Joining an in-flight spawn is always allowed, including one that

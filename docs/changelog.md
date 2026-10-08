@@ -18,6 +18,22 @@ the same staleness would hide a `readFollowing` cwd move, so both call sites
 keep the default `maxAgeMs: 0`. See `docs/resident-agent.md` and
 `docs/background-launch.md`.
 
+## 0.16.11
+
+`classifyPermissionPrompt`'s accept gate now anchors on the LAST option
+starting with `No` instead of requiring ANY option to match `/^No\b/`
+(FACTORY-809/FACTORY-774). At a pane width of exactly 40 columns, Claude Code
+2.1.294 overdraws the dialog: a long option wraps onto a row that the next
+option's `No` is then drawn over, so `No` lands over `fo` of a trailing "for
+you" and the row reads `4. Nor you`. `/^No\b/` doesn't match `"Nor you"` (`No`
+immediately followed by `r`, both word chars, so no word boundary), so the
+whole dialog was invisible to every caller — `classifyPermissionPrompt`
+returned `undefined` and the pane sat blocked. The relaxed gate still requires
+`options[0] === "Yes"`, a live cursor and the `Esc to cancel` footer exactly as
+before; anchoring on the last option only (never `options.some(...)`) means an
+option that merely starts with "No"/"Not"/"November" earlier in the list still
+can't trigger acceptance by itself.
+
 ## 0.16.10
 
 Approval dialogs whose option-2 label wraps and leaves a whitespace-only row
