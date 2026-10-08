@@ -27,7 +27,13 @@ What Drovr owns so the caller does not:
   Drovr runs the CLI without `FORCE_COLOR` and strips escapes before parsing.
 - **Identity.** The short id is confirmed against `claude agents --json` and
   the full `sessionId` is taken from that listing, never derived or guessed
-  from the directory. An id that never lists is `unlisted`.
+  from the directory. An id that never lists is `unlisted`. The poll
+  (`pollMs` until `listTimeoutMs`) calls `listClaudeBackgroundSessions` at its
+  default `maxAgeMs: 0` — fresh-or-in-flight, may join an in-flight spawn,
+  never a completed entry from before the launch — so concurrent launches
+  coalesce into one spawn without the poll ever watching a listing taken
+  before this session existed. See "`listClaudeBackgroundSessions` coalescing
+  and caching" in `docs/resident-agent.md` (FACTORY-818/FACTORY-821).
 - **MCP approval.** Servers in `mcpNotificationServers` and
   `mcpServersApproved` are approved at launch (`--settings
   {"enabledMcpjsonServers": …}`). A workspace's `.claude/settings.local.json`
