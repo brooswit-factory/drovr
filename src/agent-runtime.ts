@@ -63,6 +63,7 @@ export function mergeDevelopmentChannels(
 
 export function checkManagedAgentArgv(expected: readonly string[], observed: readonly string[]): ManagedAgentArgvCheck {
   const missing: string[] = [];
+  const unwanted: string[] = [];
   // Valueless, like --dangerously-bypass-approvals-and-sandbox below: presence-only, no following value to compare.
   if (expected.includes(CLAUDE_STRICT_MCP_FLAG) && !observed.includes(CLAUDE_STRICT_MCP_FLAG)) missing.push(CLAUDE_STRICT_MCP_FLAG);
   if (expected.includes("--dangerously-bypass-approvals-and-sandbox")) {
@@ -72,6 +73,11 @@ export function checkManagedAgentArgv(expected: readonly string[], observed: rea
       const values = observed.flatMap((value, index) => value === flag ? [observed[index + 1]] : []);
       for (const want of wants) if (!values.includes(want)) missing.push(`${flag} ${want}`);
     }
+  } else if (observed.includes("--dangerously-bypass-approvals-and-sandbox")) {
+    // YOLO -> manual: expected dropped the flag but the live process still carries it,
+    // i.e. a pane that should have fallen back into manual-approval mode after a
+    // definition edit is still running unattended in bypass mode.
+    unwanted.push("--dangerously-bypass-approvals-and-sandbox");
   }
   for (const flag of REQUIRED_CLAUDE_FLAGS) {
     if (flag === CLAUDE_DEVELOPMENT_CHANNELS_FLAG) {
@@ -86,7 +92,12 @@ export function checkManagedAgentArgv(expected: readonly string[], observed: rea
     const want = flagValue(expected, flag);
     if (want !== undefined && flagValue(observed, flag) !== want) missing.push(`${flag} ${want}`);
   }
-  return missing.length ? { ok: false, reason: `argv lacks ${missing.join(", ")}` } : { ok: true };
+  if (!missing.length && !unwanted.length) return { ok: true };
+  const reason = [
+    missing.length ? `argv lacks ${missing.join(", ")}` : undefined,
+    unwanted.length ? `argv has unwanted ${unwanted.join(", ")}` : undefined,
+  ].filter((part): part is string => part !== undefined).join("; ");
+  return { ok: false, reason };
 }
 
 export interface McpServerLaunchConfig {
