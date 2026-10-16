@@ -422,6 +422,8 @@ export interface AutoAnswerCodexApprovalsOptions {
   operator?: string;
   /** Deadline for the whole per-pane `approveCodexApproval` attempt; see `AutoAnswerPermissionsOptions.readTimeoutMs` in `permission-approval.ts` for the same caveat: a `timeout` result means the outcome is UNKNOWN, not "nothing pressed". */
   readTimeoutMs?: number;
+  /** Forwarded verbatim to every `approveCodexApproval` call; see `AutoAnswerPermissionsOptions.deps` in `permission-approval.ts` — production callers never set this. */
+  deps?: Partial<PermissionApprovalDeps>;
 }
 
 interface AutoAnswerBase {
@@ -488,7 +490,7 @@ export async function autoAnswerCodexApprovals(
         promptId: approval.promptId,
         operator,
         auditPath: options.auditPath,
-      });
+      }, options.deps);
       attempt.catch(() => undefined);
       let result: ApproveCodexApprovalResult | typeof AUTO_ANSWER_TIMEOUT;
       if (options.readTimeoutMs === undefined) {

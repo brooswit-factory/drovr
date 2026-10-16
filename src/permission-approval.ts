@@ -919,6 +919,15 @@ export interface AutoAnswerPermissionsOptions {
    * … from this project", which `"always"` never recognised and skipped).
    */
   scope?: PermissionScope;
+  /**
+   * Forwarded verbatim to every `approvePermission` call (same shape:
+   * `Partial<PermissionApprovalDeps>`). Production callers never set this —
+   * it exists so a test asserting on `readTimeoutMs`'s own race can replace
+   * `appendAudit`'s real disk I/O with an in-memory stand-in, instead of the
+   * race ever depending on how long a real `mkdir`/`appendFile` takes under
+   * whatever else happens to be running at the time.
+   */
+  deps?: Partial<PermissionApprovalDeps>;
 }
 
 interface AutoAnswerBase {
@@ -972,7 +981,7 @@ export async function autoAnswerPermissions(
         operator,
         scope,
         auditPath: options.auditPath,
-      });
+      }, options.deps);
       attempt.catch(() => undefined);
       let result: ApprovePermissionResult | typeof AUTO_ANSWER_TIMEOUT;
       if (options.readTimeoutMs === undefined) {
