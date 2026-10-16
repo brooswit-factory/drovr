@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.12
 
 `checkManagedAgentArgv`'s Codex `--dangerously-bypass-approvals-and-sandbox`
 comparison is now bidirectional (FACTORY-579). Before, the whole nested
