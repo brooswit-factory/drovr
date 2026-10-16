@@ -1751,7 +1751,19 @@ describe("autoAnswerPermissions", () => {
       "w1:p1": { reads: [BASH_PROMPT, BASH_PROMPT, AFTER] },
       "w2:p1": { reads: [BASH_PROMPT], hangAfterReads: 1 }, // scan succeeds; approvePermission's own re-read never resolves
     });
-    const results = await autoAnswerPermissions(client, { auditPath: path, readTimeoutMs: 20 });
+    // FACTORY-485: this test's own 20ms readTimeoutMs races the whole w1:p1
+    // attempt (including approvePermission's real `appendAudit`, which does a
+    // real `mkdir`+`appendFile` per default deps) against a real `setTimeout`.
+    // Under full-suite load that real disk I/O occasionally took longer than
+    // 20ms on its own, independent of anything this test is actually
+    // asserting, and the race picked the timeout branch instead — flaking the
+    // happy-path pane's "answered" outcome ~1 in 3 full-suite runs. The 20ms
+    // bound is what this test means to exercise (a short, real race against a
+    // pane that genuinely never responds); real disk latency contending in
+    // the SAME race is not. Replacing `appendAudit` with an in-memory
+    // stand-in removes that unrelated source of wall-clock variance without
+    // widening the timeout itself.
+    const results = await autoAnswerPermissions(client, { auditPath: path, readTimeoutMs: 20, deps: { appendAudit: async () => undefined } });
     const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
     expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered", tool: "Bash command" });
     expect(byPane["w2:p1"]).toMatchObject({ outcome: "failed", reason: "timeout" });

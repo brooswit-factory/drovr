@@ -374,7 +374,13 @@ describe("autoAnswerCodexApprovals", () => {
       "w1:p1": { reads: [cmd] },
       "w2:p1": { reads: [cmd], hangAfterReads: 1 },
     });
-    const results = await autoAnswerCodexApprovals(client, { auditPath: path, readTimeoutMs: 20 });
+    // FACTORY-485: see the identical fix/comment on the sibling test in
+    // permission-approval.test.ts — this test's own 20ms readTimeoutMs races
+    // w1:p1's whole attempt (default `appendAudit` does a real
+    // `mkdir`+`appendFile`) against a real `setTimeout`, and real disk I/O
+    // occasionally lost that race under full-suite load, independent of
+    // anything this test means to assert.
+    const results = await autoAnswerCodexApprovals(client, { auditPath: path, readTimeoutMs: 20, deps: { appendAudit: async () => undefined } });
     const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
     expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered" });
     expect(byPane["w2:p1"]).toMatchObject({ outcome: "failed", reason: "timeout" });
