@@ -31,6 +31,27 @@ describe("provider-owned agent launch plans", () => {
     expect(checkManagedAgentArgv(withoutStrict, withoutStrict)).toEqual({ ok: true });
   });
 
+  test("FACTORY-579: Codex bypass-flag comparison is bidirectional", () => {
+    const bypassExpected = ["--cd", "/w", "--dangerously-bypass-approvals-and-sandbox", "--config", "a"];
+    const bypassObserved = ["--cd", "/w", "--dangerously-bypass-approvals-and-sandbox", "--config", "a"];
+    // Unchanged states: both agree bypass is on, or both agree it's off.
+    expect(checkManagedAgentArgv(bypassExpected, bypassObserved)).toEqual({ ok: true });
+    const manual = ["--cd", "/w"];
+    expect(checkManagedAgentArgv(manual, manual)).toEqual({ ok: true });
+
+    // manual -> YOLO: expected gained the flag, observed still lacks it.
+    expect(checkManagedAgentArgv(bypassExpected, manual)).toEqual({
+      ok: false,
+      reason: "argv lacks --dangerously-bypass-approvals-and-sandbox, --config a",
+    });
+
+    // YOLO -> manual: expected dropped the flag, observed still carries it.
+    expect(checkManagedAgentArgv(manual, bypassObserved)).toEqual({
+      ok: false,
+      reason: "argv has unwanted --dangerously-bypass-approvals-and-sandbox",
+    });
+  });
+
   test("parses and filters Codex MCP inventory", () => {
     const output = JSON.stringify([
       { name: "butchr", transport: { type: "streamable_http" } },

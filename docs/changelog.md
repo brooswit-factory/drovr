@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+`checkManagedAgentArgv`'s Codex `--dangerously-bypass-approvals-and-sandbox`
+comparison is now bidirectional (FACTORY-579). Before, the whole nested
+comparison — including the `--cd`/`--config` sub-checks — was gated behind
+`expected.includes(flag)`, so a manual -> YOLO drift (expected gains the
+flag, observed lacks it) was caught, but a YOLO -> manual drift (expected
+drops the flag, observed still carries it) reported `ok: true`: a pane that
+should fall back into manual-approval mode after a definition edit kept
+running unattended in bypass mode forever, with no diagnostic. Observing the
+flag with no matching expectation now reports `ok: false` with a reason
+naming it as unwanted, so a consumer like `HerdrHerd.staleIssues()` treats
+it as stale in both directions.
+
 `listClaudeBackgroundSessions()` no longer unconditionally spawns `claude
 agents --json` on every call (FACTORY-818/FACTORY-821). On a loaded host one
 spawn is ~0.7s CPU and ~174MB RSS, and with no cache or coalescing, concurrent
