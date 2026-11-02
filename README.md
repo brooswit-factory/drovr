@@ -182,3 +182,7 @@ option replaces defaults (`{}` disables them). See
 [`docs/correction-seam.md`](docs/correction-seam.md) for how the registry
 key is resolved, why it has to be the wire method name, how recursion
 through a correction is bounded, and a full worked example of adding one.
+
+### Fresh-session replacements
+
+`ManagedHerdrStartRequest.historyMode: "fresh"` explicitly starts a replacement without reading or importing its predecessor’s conversation. Existing history files and workspace files remain in place. The new native session must acknowledge readiness before the source pane is retired; only then is the normal kickoff delivered. The default remains complete-history import. Interrupted or ambiguous replacements fail closed and must be inspected rather than retried as new workers.

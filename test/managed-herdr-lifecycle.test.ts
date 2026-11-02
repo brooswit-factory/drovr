@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DrovrClient } from "../src/drovr-client.js";
-import { ManagedHerdrLifecycle, type ManagedHerdrStartRequest } from "../src/managed-herdr-lifecycle.js";
+import { ManagedHerdrLifecycle, stagedTargetName, type ManagedHerdrStartRequest } from "../src/managed-herdr-lifecycle.js";
 import { ProviderAvailabilityRegistry } from "../src/provider-fallback.js";
 import type { ManagedAgentProvider } from "../src/agent-runtime.js";
 
@@ -16,7 +16,7 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
   const source = options.source ?? (options.large ? "history".repeat(15_000) : "saved history with pending work");
   const histories = new Map<string, string>([["old", source]]);
   const row = (pane: string, provider: ManagedAgentProvider) => ({ pane_id: pane, cwd: "/work", agent: provider, agent_status: "idle", agent_session: { agent: provider, kind: "id", value: pane, source: "test" } });
-  let rows = [row("old", options.oldProvider ?? "claude")];
+  let rows = [{...row("old", options.oldProvider ?? "claude"),name:"role"}];
   let count = 0;
   const prompts: string[] = [];
   const launches: any[] = [];
@@ -42,8 +42,9 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
         events.push(`start:${params.pane_id}`);
         launches.push(params);
         if (params.args.some((arg: string) => arg.includes("\n"))) throw new Error("Herdr cannot encode multiline launch arguments");
+        if(rows.some(a=>a.name===params.name))throw new Error('agent_name_taken');
         if (options.startFail) throw new Error("start failed");
-        rows.push(row(params.pane_id, params.kind));
+        rows.push({...row(params.pane_id, params.kind),name:params.name});
         await gate;
         respond(params.pane_id, params.args[params.kind === "agy" ? 1 : 0], params.kind);
       },
@@ -371,4 +372,58 @@ test('ACK-looking historical data remains exact even across chunk boundaries', a
   expect(decoded[0]).toEndWith(marker.slice(0, 10));
   expect(decoded[1]).toStartWith(marker.slice(10));
   expect(f.events.filter(e => e === 'close:old')).toHaveLength(1);
+});
+
+test('staged names are deterministic per transaction, bounded, and skip existing global conflicts',()=>{
+ const source={paneId:'old',provider:'codex' as const,cwd:'/work'},empty=new Set<string>();
+ const first=stagedTargetName('role',source,'new-1','claude',empty);expect(first).toMatch(/^[a-z0-9_-]{1,32}$/);expect(stagedTargetName('role',source,'new-1','claude',empty)).toBe(first);
+ expect(stagedTargetName('role',source,'new-2','claude',empty)).not.toBe(first);
+ const occupied=new Set([first]);const second=stagedTargetName('role',source,'new-1','claude',occupied);expect(second).not.toBe(first);expect(stagedTargetName('role',source,'new-1','claude',occupied)).toBe(second);
+ for(let i=1;i<16;i++)occupied.add(stagedTargetName('role',source,'new-1','claude',occupied));expect(()=>stagedTargetName('role',source,'new-1','claude',occupied)).toThrow('source remains current');
+});
+test('real Herdr name uniqueness semantics allow staged handoff with source live until history ACK',async()=>{
+ const f=fixture({oldProvider:'codex',provider:'claude'});const result=await f.lifecycle.start(f.request);expect(result.status).toBe('success');expect(f.launches).toHaveLength(1);expect(f.launches[0].name).not.toBe('role');expect(f.launches[0].name).toMatch(/^handoff-[a-f0-9]{24}$/);
+ expect(f.events.indexOf('close:old')).toBeGreaterThan(f.events.indexOf('prompt:new-1:other'));expect(f.rows().map(a=>a.pane_id)).toEqual(['new-1']);
+});
+test('shell-busy retry keeps the same staged identity and never retires source on refused launch',async()=>{
+ const f=fixture({oldProvider:'codex',provider:'claude'});const original=f.client.agent.start.bind(f.client.agent),names:string[]=[];let attempts=0;
+ const {HerdrError}=await import('@brooswit/herdr-sdk');f.client.agent.start=async(params)=>{names.push(params.name);if(attempts++===0)throw new HerdrError('agent_pane_busy','fixture shell busy','agent.start',{code:'agent_pane_busy',message:'fixture shell busy'});return original(params);};
+ const result=await f.lifecycle.start(f.request);expect(result.status).toBe('success');expect(names).toHaveLength(2);expect(names[0]).toBe(names[1]);expect(f.launches).toHaveLength(1);
+});
+test('a preexisting conflicting staged name is preserved and never adopted or closed',async()=>{
+ const f=fixture({oldProvider:'codex',provider:'claude'}),conflict=stagedTargetName('role',{paneId:'old',provider:'codex',cwd:'/work'},'new-1','claude',new Set());
+ f.rows().push({...f.rows()[0]!,pane_id:'foreign',cwd:'/other',name:conflict});
+ const result=await f.lifecycle.start(f.request);expect(result.status).toBe('success');expect(f.launches[0].name).not.toBe(conflict);expect(f.rows().find(a=>a.pane_id==='foreign')?.name).toBe(conflict);expect(f.events).not.toContain('close:foreign');
+});
+
+
+describe("explicit fresh-session handoffs",()=>{
+  test("oversized or unreadable source is not read or replayed; native target ACK precedes retirement and brief",async()=>{
+    const f=fixture({readFail:true,source:"secret historical data".repeat(300000)});
+    const result=await f.lifecycle.start({...f.request,historyMode:"fresh"});
+    expect(result.status).toBe("success");
+    expect(f.events).not.toContain("read:old");
+    expect(f.prompts.some(p=>p.includes("secret historical data")||p.includes("Transcript chunk"))).toBe(false);
+    expect(f.prompts[0]).toContain("history is intentionally not imported");
+    expect(f.events.indexOf("close:old")).toBeGreaterThan(f.events.indexOf("read:new-1"));
+    expect(f.events.indexOf("prompt:new-1:kickoff")).toBeGreaterThan(f.events.indexOf("close:old"));
+    expect(f.histories.get("old")).toContain("secret historical data");
+    const again=await f.lifecycle.start({...f.request,historyMode:"fresh"});
+    expect(again.status).toBe("blocked");expect(f.events.filter(e=>e==="create")).toHaveLength(1);
+  });
+  test("unacknowledged fresh target cannot retire source or dispatch work",async()=>{
+    const f=fixture({ack:"missing"});expect(await f.lifecycle.start({...f.request,historyMode:"fresh"})).toMatchObject({status:"blocked",requiresInspection:true});
+    expect(f.events).not.toContain("close:old");expect(f.events).not.toContain("prompt:new-1:kickoff");expect(f.lifecycle.current?.paneId).toBe("old");
+  });
+  test("source retirement failure preserves acknowledged target and refuses duplicate replacement",async()=>{
+    const f=fixture({closeFail:true});expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");
+    expect(f.lifecycle.current?.paneId).toBe("new-1");expect(f.events).not.toContain("close:new-1");expect(f.events).not.toContain("prompt:new-1:kickoff");
+    expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");expect(f.events.filter(e=>e==="create")).toHaveLength(1);
+    const restarted=new ManagedHerdrLifecycle({client:f.client,cwd:"/work"});
+    expect((await restarted.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");expect(f.events.filter(e=>e==="create")).toHaveLength(1);
+  });
+  test("changed source native identity refuses fresh commit",async()=>{
+    const f=fixture();const prompt=f.client.agent.start.bind(f.client.agent);f.client.agent.start=async(...args:any[])=>{const result=await (prompt as any)(...args);f.rows()[0]!.agent_session.value="changed";return result;};
+    expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");expect(f.events).not.toContain("close:old");expect(f.lifecycle.current?.paneId).toBe("old");
+  });
 });

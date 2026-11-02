@@ -35,6 +35,8 @@ export interface ManagedHerdrLifecycleOptions {
 export interface ManagedHerdrStartRequest {
   priority: readonly ProviderAccount[];
   continuation?: OwnedTargetContinuation;
+  /** Fresh replacements omit source history, preserve files, and verify a native readiness ACK before retirement. Default imports complete history. */
+  historyMode?: "import" | "fresh";
   label: string;
   /** Required to replace an existing worker; stale handles fail closed. */
   replacePaneId?: string;
@@ -67,6 +69,8 @@ export interface ManagedHerdrStartRequest {
 export type ManagedHerdrResult = ProviderFallbackResult<string> | {
   status: "blocked";
   reason: string;
+  /** A fresh launch may have spent quota; do not auto-launch another target without inspection. */
+  requiresInspection?: true;
   current: ManagedHerdrIdentity | undefined;
 };
 
@@ -88,6 +92,18 @@ function applyNeutralLaunchInputs(launch: ManagedAgentLaunch, request: ManagedHe
     ...(developmentChannels.length ? { developmentChannels } : {}),
     ...(mcpNotificationServers.length ? { mcpNotificationServers } : {}),
   };
+}
+
+/** Herdr names are global and limited to 32 lowercase characters. A replacement
+ * cannot reuse the still-live source's display name. Pane IDs scope this name
+ * to one staged transaction; shell-busy retries reuse it, and a new transaction
+ * gets a different name. Never adopt an agent merely because its name matches. */
+export function stagedTargetName(logicalName:string,source:ManagedHerdrIdentity,targetPane:string,targetProvider:ManagedAgentProvider,occupied:ReadonlySet<string>):string{
+  for(let slot=0;slot<16;slot++){
+    const name='handoff-'+createHash('sha256').update(JSON.stringify([logicalName,source.cwd,source.paneId,source.provider,targetPane,targetProvider,slot])).digest('hex').slice(0,24);
+    if(!occupied.has(name))return name;
+  }
+  throw new HandoffBlocked('No unclaimed transaction target name; source remains current');
 }
 
 const clientQueues = new WeakMap<DrovrClient, Map<string, Promise<unknown>>>();
@@ -159,10 +175,13 @@ export class ManagedHerdrLifecycle {
   }
 
   start(request: ManagedHerdrStartRequest): Promise<ManagedHerdrResult> {
+    let freshLaunchAttempted=false;
     const continuationSourcePane=request.replacePaneId,continuationProvider=request.priority[0]?.provider;
     const continuation=request.continuation?{...request.continuation,target:{...request.continuation.target},snapshot:{...request.continuation.snapshot}}:undefined;
     return this.exclusive(async () => {
       try {
+        if(request.historyMode!==undefined && request.historyMode!=="import" && request.historyMode!=="fresh")throw new HandoffBlocked("Unsupported history mode");
+        if(request.historyMode==="fresh" && continuation)throw new HandoffBlocked("Fresh handoff cannot replay an owned-target continuation");
         const existing = await this.resolveCurrent();
         if(continuation){
           const config=continuation,old=this.current;
@@ -191,7 +210,14 @@ export class ManagedHerdrLifecycle {
             const old = this.current;
             // Read before preparation, pane creation, or launch. Never import a screen snapshot.
             let transcript: string | undefined;
-            if (old) {
+            let sourceReference: string | undefined;
+            if (old && request.historyMode==="fresh") {
+              await this.assertStable(old);
+              const {agent}=await this.options.client.agent.get(old.paneId);
+              if(agent.pane_id!==old.paneId || agent.cwd!==old.cwd || agent.agent!==old.provider || !agent.agent_session || agent.agent_session.agent!==old.provider)throw new HandoffBlocked("Source native identity is unavailable");
+              sourceReference=JSON.stringify(agent.agent_session);
+            }
+            if (old && request.historyMode!=="fresh") {
               await this.assertStable(old);
               try {
                 transcript = await this.nativeTranscript(old);
@@ -210,6 +236,21 @@ export class ManagedHerdrLifecycle {
             let committed = false;
             try {
               if (old) {
+                const {agents}=await this.options.client.agent.list();
+                const targetLaunch={...launch,name:stagedTargetName(launch.name,old,paneId,account.provider,new Set(agents.map(a=>a.name).filter((n):n is string=>typeof n==='string')))};
+                if(request.historyMode==="fresh"){
+                  const token=`${HANDOFF_ACK}_${randomUUID()}`;
+                  const bootstrap="Drovr fresh-session handoff. Previous conversation history is intentionally not imported. Keep existing workspace files unchanged. Do not use tools or continue work until the separate task brief arrives. "
+                    + `Begin your response with ${token} on its own line, followed by Ready for the task brief.`;
+                  freshLaunchAttempted=true;
+                  await startManagedAgent(this.options.client,buildAgentStartParams({...targetLaunch,paneId,prompt:bootstrap}),this.options.startOptions);
+                  await this.awaitAcknowledgement(target,token);
+                  await this.assertStable(old);
+                  const {agent}=await this.options.client.agent.get(old.paneId);
+                  if(JSON.stringify(agent.agent_session)!==sourceReference)throw new HandoffBlocked("Source native identity changed before fresh handoff commit");
+                  await this.assertStable(target);
+                  this.active=target;committed=true;
+                }else{
                 const session = new ManagedConversationSession({
                   cwd: this.options.cwd,
                   readTranscript: async () => transcript!,
@@ -234,7 +275,7 @@ export class ManagedHerdrLifecycle {
                       const readyToken = `${HANDOFF_ACK}_${randomUUID()}`;
                       const bootstrap = "Drovr context handoff bootstrap. Do not use tools, change files, or continue work. "
                         + `Begin your response with ${readyToken} on its own line, followed by Ready to import historical context. No history has been imported yet.`;
-                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...launch, paneId, prompt: bootstrap }), this.options.startOptions);
+                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...targetLaunch, paneId, prompt: bootstrap }), this.options.startOptions);
                       await this.awaitAcknowledgement(target, readyToken);
                     }
                     await this.options.client.agent.prompt({ target: paneId, text: importPrompt });
@@ -250,6 +291,7 @@ export class ManagedHerdrLifecycle {
                   },
                 });
                 await session.switchProvider(account.provider, request.reason ?? `Replace ${old.provider} worker with imported history`);
+                }
                 // Retirement failure leaves the acknowledged target current, but dispatches no work.
                 await this.options.client.pane.close(old.paneId);
                 await this.options.client.agent.prompt({ target: paneId, text: request.kickoff(account.provider) });
@@ -282,7 +324,7 @@ export class ManagedHerdrLifecycle {
           },
         });
       } catch (error) {
-        if (error instanceof HandoffBlocked) return { status: "blocked", reason: error.message, current: this.current };
+        if (error instanceof HandoffBlocked) return { status: "blocked", reason: error.message, current: this.current, ...(freshLaunchAttempted?{requiresInspection:true as const}:{}) };
         throw error;
       }
     });
