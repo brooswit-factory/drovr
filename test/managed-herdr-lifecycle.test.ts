@@ -395,3 +395,35 @@ test('a preexisting conflicting staged name is preserved and never adopted or cl
  f.rows().push({...f.rows()[0]!,pane_id:'foreign',cwd:'/other',name:conflict});
  const result=await f.lifecycle.start(f.request);expect(result.status).toBe('success');expect(f.launches[0].name).not.toBe(conflict);expect(f.rows().find(a=>a.pane_id==='foreign')?.name).toBe(conflict);expect(f.events).not.toContain('close:foreign');
 });
+
+
+describe("explicit fresh-session handoffs",()=>{
+  test("oversized or unreadable source is not read or replayed; native target ACK precedes retirement and brief",async()=>{
+    const f=fixture({readFail:true,source:"secret historical data".repeat(300000)});
+    const result=await f.lifecycle.start({...f.request,historyMode:"fresh"});
+    expect(result.status).toBe("success");
+    expect(f.events).not.toContain("read:old");
+    expect(f.prompts.some(p=>p.includes("secret historical data")||p.includes("Transcript chunk"))).toBe(false);
+    expect(f.prompts[0]).toContain("history is intentionally not imported");
+    expect(f.events.indexOf("close:old")).toBeGreaterThan(f.events.indexOf("read:new-1"));
+    expect(f.events.indexOf("prompt:new-1:kickoff")).toBeGreaterThan(f.events.indexOf("close:old"));
+    expect(f.histories.get("old")).toContain("secret historical data");
+    const again=await f.lifecycle.start({...f.request,historyMode:"fresh"});
+    expect(again.status).toBe("blocked");expect(f.events.filter(e=>e==="create")).toHaveLength(1);
+  });
+  test("unacknowledged fresh target cannot retire source or dispatch work",async()=>{
+    const f=fixture({ack:"missing"});expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");
+    expect(f.events).not.toContain("close:old");expect(f.events).not.toContain("prompt:new-1:kickoff");expect(f.lifecycle.current?.paneId).toBe("old");
+  });
+  test("source retirement failure preserves acknowledged target and refuses duplicate replacement",async()=>{
+    const f=fixture({closeFail:true});expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");
+    expect(f.lifecycle.current?.paneId).toBe("new-1");expect(f.events).not.toContain("close:new-1");expect(f.events).not.toContain("prompt:new-1:kickoff");
+    expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");expect(f.events.filter(e=>e==="create")).toHaveLength(1);
+    const restarted=new ManagedHerdrLifecycle({client:f.client,cwd:"/work"});
+    expect((await restarted.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");expect(f.events.filter(e=>e==="create")).toHaveLength(1);
+  });
+  test("changed source native identity refuses fresh commit",async()=>{
+    const f=fixture();const prompt=f.client.agent.start.bind(f.client.agent);f.client.agent.start=async(...args:any[])=>{const result=await (prompt as any)(...args);f.rows()[0]!.agent_session.value="changed";return result;};
+    expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");expect(f.events).not.toContain("close:old");expect(f.lifecycle.current?.paneId).toBe("old");
+  });
+});
