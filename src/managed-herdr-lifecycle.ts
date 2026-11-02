@@ -90,6 +90,18 @@ function applyNeutralLaunchInputs(launch: ManagedAgentLaunch, request: ManagedHe
   };
 }
 
+/** Herdr names are global and limited to 32 lowercase characters. A replacement
+ * cannot reuse the still-live source's display name. Pane IDs scope this name
+ * to one staged transaction; shell-busy retries reuse it, and a new transaction
+ * gets a different name. Never adopt an agent merely because its name matches. */
+export function stagedTargetName(logicalName:string,source:ManagedHerdrIdentity,targetPane:string,targetProvider:ManagedAgentProvider,occupied:ReadonlySet<string>):string{
+  for(let slot=0;slot<16;slot++){
+    const name='handoff-'+createHash('sha256').update(JSON.stringify([logicalName,source.cwd,source.paneId,source.provider,targetPane,targetProvider,slot])).digest('hex').slice(0,24);
+    if(!occupied.has(name))return name;
+  }
+  throw new HandoffBlocked('No unclaimed transaction target name; source remains current');
+}
+
 const clientQueues = new WeakMap<DrovrClient, Map<string, Promise<unknown>>>();
 
 /** One instance per logical workspace. All mutations route to exact pane IDs. */
@@ -210,6 +222,8 @@ export class ManagedHerdrLifecycle {
             let committed = false;
             try {
               if (old) {
+                const {agents}=await this.options.client.agent.list();
+                const targetLaunch={...launch,name:stagedTargetName(launch.name,old,paneId,account.provider,new Set(agents.map(a=>a.name).filter((n):n is string=>typeof n==='string')))};
                 const session = new ManagedConversationSession({
                   cwd: this.options.cwd,
                   readTranscript: async () => transcript!,
@@ -234,7 +248,7 @@ export class ManagedHerdrLifecycle {
                       const readyToken = `${HANDOFF_ACK}_${randomUUID()}`;
                       const bootstrap = "Drovr context handoff bootstrap. Do not use tools, change files, or continue work. "
                         + `Begin your response with ${readyToken} on its own line, followed by Ready to import historical context. No history has been imported yet.`;
-                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...launch, paneId, prompt: bootstrap }), this.options.startOptions);
+                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...targetLaunch, paneId, prompt: bootstrap }), this.options.startOptions);
                       await this.awaitAcknowledgement(target, readyToken);
                     }
                     await this.options.client.agent.prompt({ target: paneId, text: importPrompt });
