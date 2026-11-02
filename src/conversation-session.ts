@@ -1,3 +1,4 @@
+import { transcriptLimit, assertTranscriptCharacters } from './transcript-limits.js';
 import type { ManagedAgentProvider } from "./agent-runtime.js";
 import type { ManagedConversationResult } from "./managed-conversation.js";
 
@@ -5,6 +6,8 @@ export interface ConversationIdentity { provider: ManagedAgentProvider; conversa
 export interface ConversationSessionOptions {
   current?: ConversationIdentity;
   cwd: string;
+  /** Complete snapshot UTF-16 code-unit limit, default4Mi and maximum64Mi. */
+  maxTranscriptChars?: number;
   /** Read a consistent snapshot of saved history, not terminal-screen contents. */
   readTranscript: () => Promise<string>;
   createRunner: (provider: ManagedAgentProvider) => { message(text: string, id?: string): Promise<ManagedConversationResult> };
@@ -14,7 +17,7 @@ export interface ConversationSessionOptions {
 
 export const HANDOFF_ACK = "DROVR_HANDOFF_READY";
 export const HANDOFF_CHUNK_CHARS = 48_000;
-const MAX_TRANSCRIPT_CHARS = 4 * 1024 * 1024;
+
 
 function identity(value: ConversationIdentity): ConversationIdentity {
   if (!["agy", "codex", "claude"].includes(value.provider)
@@ -26,8 +29,10 @@ function identity(value: ConversationIdentity): ConversationIdentity {
 export class ManagedConversationSession {
   private active: ConversationIdentity | undefined;
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly maxTranscriptChars: number;
 
   constructor(private readonly options: ConversationSessionOptions) {
+    this.maxTranscriptChars = transcriptLimit(options.maxTranscriptChars, "maxTranscriptChars");
     this.active = options.current ? identity(options.current) : undefined;
   }
 
@@ -45,9 +50,7 @@ export class ManagedConversationSession {
     if (this.active?.provider === provider) return { ...this.active };
     // Snapshot before creating any target conversation; failure must not discard context.
     const transcript = await this.options.readTranscript();
-    if (typeof transcript !== "string" || transcript.length > MAX_TRANSCRIPT_CHARS) {
-      throw new Error("Transcript exceeds the handoff limit; refusing to silently truncate history");
-    }
+    assertTranscriptCharacters(transcript, this.maxTranscriptChars);
     if (this.active && (!transcript.trim() || transcript.trim() === "[]")) {
       throw new Error("No saved transcript for the current session; refusing a context-free handoff");
     }

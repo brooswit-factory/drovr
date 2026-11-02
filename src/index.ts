@@ -292,3 +292,8 @@ export {
   type InboxRelayEvent,
   type ChannelSourceOptions,
 } from "./inbox-relay.js";
+
+export type { TranscriptLimits } from "./transcript-limits.js";
+
+export {CONTINUATION_BOUNDS,continuationChunkCount,continuationDeadline,type OwnedTargetContinuation,type ContinuationSnapshot,type ContinuationProgress,type ContinuationClock} from './owned-target-continuation.js';
+export {createClaudeAckCursor,CLAUDE_ACK_LIMITS,type ClaudeAckCursor} from './native-transcript.js';

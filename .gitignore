@@ -1,9 +1,6 @@
 node_modules/
 dist/
-*.log
-.DS_Store
+coverage/
+*.tgz
 .env
 .env.*
-!.env.example
-/coverage/
-/artifacts/

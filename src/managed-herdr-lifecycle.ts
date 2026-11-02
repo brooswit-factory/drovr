@@ -1,4 +1,6 @@
-import { randomUUID } from "node:crypto";
+import {continueOwnedTarget,type OwnedTargetContinuation} from './owned-target-continuation.js';
+import { transcriptLimit, assertTranscriptCharacters, type TranscriptLimits } from './transcript-limits.js';
+import { createHash, randomUUID } from "node:crypto";
 import type { results } from "@brooswit/herdr-sdk";
 import { buildAgentStartParams, mergeDevelopmentChannels, type ManagedAgentLaunch, type ManagedAgentProvider } from "./agent-runtime.js";
 import { startManagedAgent, type AgentStartOptions } from "./agent-start.js";
@@ -18,6 +20,8 @@ export interface ManagedHerdrLifecycleOptions {
   client: DrovrClient;
   cwd: string;
   current?: ManagedHerdrIdentity;
+  /** Explicit complete-history limits. Omitted limits retain4MiB/4Mi defaults. */
+  transcriptLimits?: TranscriptLimits;
   availability?: ProviderAvailabilityRegistry;
   startOptions?: AgentStartOptions;
   wait?: (ms: number) => Promise<void>;
@@ -30,6 +34,7 @@ export interface ManagedHerdrLifecycleOptions {
 
 export interface ManagedHerdrStartRequest {
   priority: readonly ProviderAccount[];
+  continuation?: OwnedTargetContinuation;
   label: string;
   /** Required to replace an existing worker; stale handles fail closed. */
   replacePaneId?: string;
@@ -89,12 +94,17 @@ const clientQueues = new WeakMap<DrovrClient, Map<string, Promise<unknown>>>();
 
 /** One instance per logical workspace. All mutations route to exact pane IDs. */
 export class ManagedHerdrLifecycle {
+  private readonly transcriptBytes: number;
+  private readonly transcriptChars: number;
   private active: ManagedHerdrIdentity | undefined;
   private readonly nativeSessions = new Map<string, string>();
   private readonly wait: (ms: number) => Promise<void>;
   private readonly availability: ProviderAvailabilityRegistry;
 
   constructor(private readonly options: ManagedHerdrLifecycleOptions) {
+    if (options.transcriptLimits !== undefined && (!options.transcriptLimits || typeof options.transcriptLimits !== "object" || Array.isArray(options.transcriptLimits))) throw new Error("transcriptLimits must be an object");
+    this.transcriptBytes = transcriptLimit(options.transcriptLimits?.maxBytes, "maxBytes");
+    this.transcriptChars = transcriptLimit(options.transcriptLimits?.maxChars, "maxChars");
     if (options.current && options.current.cwd !== options.cwd) throw new Error("Current worker belongs to another workspace");
     this.active = options.current ? { ...options.current } : undefined;
     this.wait = options.wait ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
@@ -149,9 +159,28 @@ export class ManagedHerdrLifecycle {
   }
 
   start(request: ManagedHerdrStartRequest): Promise<ManagedHerdrResult> {
+    const continuationSourcePane=request.replacePaneId,continuationProvider=request.priority[0]?.provider;
+    const continuation=request.continuation?{...request.continuation,target:{...request.continuation.target},snapshot:{...request.continuation.snapshot}}:undefined;
     return this.exclusive(async () => {
       try {
         const existing = await this.resolveCurrent();
+        if(continuation){
+          const config=continuation,old=this.current;
+          if(!old||existing?.pane_id!==old.paneId||continuationSourcePane!==old.paneId||continuationProvider!=='claude')throw new HandoffBlocked('Continuation source/priority binding differs');
+          const assertTarget=async()=>{
+            const {agent}=await this.options.client.agent.get(config.target.paneId);
+            if(agent.pane_id!==config.target.paneId||agent.cwd!==old.cwd||agent.agent!=='claude'||agent.agent_session?.agent!=='claude'||agent.agent_session.kind!=='id'||typeof agent.agent_session.value!=='string'||createHash('sha256').update(JSON.stringify([agent.agent_session.agent,agent.agent_session.kind,agent.agent_session.value])).digest('hex')!==config.targetSessionHash)throw new HandoffBlocked('Continuation target native identity/status differs');
+            return {sessionId:agent.agent_session.value,ready:['idle','done'].includes(agent.agent_status)};
+          };
+          const assertSource=async()=>{
+            await this.assertStable(old);const {agent}=await this.options.client.agent.get(old.paneId),ref=agent.agent_session;
+            if(!ref||createHash('sha256').update(JSON.stringify([ref.agent,ref.kind,ref.value])).digest('hex')!==config.sourceSessionHash)throw new HandoffBlocked('Continuation source native identity differs');
+          };
+          try{
+            await continueOwnedTarget(config,{client:this.options.client,source:old,maxChars:this.transcriptChars,readSource:()=>this.nativeTranscript(old),assertSource,assertTarget,commit:()=>{this.active={...config.target};},kickoff:request.kickoff('claude')});
+            return {status:'success',value:config.target.paneId,account:{provider:'claude',accountId:'default'},attempted:[{provider:'claude',accountId:'default'}]};
+          }catch(error){throw new HandoffBlocked('Owned-target continuation stopped: '+String(error));}
+        }
         if (request.replacePaneId && existing?.pane_id !== request.replacePaneId) throw new HandoffBlocked("Replacement worker changed or disappeared");
         if (existing && !request.replacePaneId) return { status: "success", value: existing.pane_id, account: { provider: this.active!.provider, accountId: "default" }, attempted: [] };
         if (!existing && this.active) throw new HandoffBlocked("Current worker disappeared; refusing implicit replacement");
@@ -166,6 +195,7 @@ export class ManagedHerdrLifecycle {
               await this.assertStable(old);
               try {
                 transcript = await this.nativeTranscript(old);
+                assertTranscriptCharacters(transcript, this.transcriptChars);
                 if (!transcript.trim() || transcript.trim() === "[]") throw new Error("Saved transcript is empty");
               } catch (error) { throw new HandoffBlocked(`Cannot read current native transcript: ${String(error)}`); }
             }
@@ -183,18 +213,31 @@ export class ManagedHerdrLifecycle {
                 const session = new ManagedConversationSession({
                   cwd: this.options.cwd,
                   readTranscript: async () => transcript!,
+                  maxTranscriptChars: this.transcriptChars,
                   createRunner: () => ({ message: async (prompt, conversationId) => {
                     const token = `${HANDOFF_ACK}_${randomUUID()}`;
-                    const importPrompt = prompt.replaceAll(HANDOFF_ACK, token);
-                    if (conversationId) {
-                      if (conversationId !== paneId) throw new HandoffBlocked("Import target changed");
-                      await this.options.client.agent.prompt({ target: paneId, text: importPrompt });
-                    } else {
-                      // Herdr 0.8.2 rejects literal newlines in launch argv.
-                      // Transcript data is already JSON-escaped by the session;
-                      // only the surrounding instruction separators change.
-                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...launch, paneId, prompt: importPrompt.replaceAll("\n", " ") }), this.options.startOptions);
+                    // Only generated instruction text may receive this token.
+                    // The final JSON line is historical data and can legitimately
+                    // contain HANDOFF_ACK (or entire instruction-looking strings).
+                    const instruction = `\nBegin your response with ${HANDOFF_ACK} on its own line, followed by the working summary.\n`;
+                    const instructionAt = prompt.lastIndexOf(instruction);
+                    if (instructionAt < 0) throw new HandoffBlocked("Import acknowledgement instruction missing");
+                    const importPrompt = prompt.slice(0, instructionAt)
+                      + instruction.replace(HANDOFF_ACK, token)
+                      + prompt.slice(instructionAt + instruction.length);
+                    if (conversationId && conversationId !== paneId) throw new HandoffBlocked("Import target changed");
+                    if (!conversationId) {
+                      // Herdr launches through an interactive shell. Keep history out
+                      // of its command line: large pasted argv can stall fish before
+                      // the provider starts. A distinct native ACK proves readiness
+                      // before the unchanged import travels over agent.prompt.
+                      const readyToken = `${HANDOFF_ACK}_${randomUUID()}`;
+                      const bootstrap = "Drovr context handoff bootstrap. Do not use tools, change files, or continue work. "
+                        + `Begin your response with ${readyToken} on its own line, followed by Ready to import historical context. No history has been imported yet.`;
+                      await startManagedAgent(this.options.client, buildAgentStartParams({ ...launch, paneId, prompt: bootstrap }), this.options.startOptions);
+                      await this.awaitAcknowledgement(target, readyToken);
                     }
+                    await this.options.client.agent.prompt({ target: paneId, text: importPrompt });
                     const response = await this.awaitAcknowledgement(target, token);
                     return { conversationId: paneId, response: response.replace(token, HANDOFF_ACK) };
                   } }),
@@ -260,7 +303,9 @@ export class ManagedHerdrLifecycle {
     const pinned = this.nativeSessions.get(identity.paneId);
     if (pinned && pinned !== reference) throw new Error("Native session reference changed during lifecycle");
     this.nativeSessions.set(identity.paneId, reference);
-    return (this.options.readTranscript ?? readNativeTranscript)({ provider: identity.provider, session: { kind: session.kind, value: session.value }, cwd: identity.cwd, ...(identity.home ? { home: identity.home } : {}) });
+    const text = await (this.options.readTranscript ?? readNativeTranscript)({ provider: identity.provider, session: { kind: session.kind, value: session.value }, cwd: identity.cwd, maxBytes: this.transcriptBytes, ...(identity.home ? { home: identity.home } : {}) });
+    if (typeof text !== "string" || Buffer.byteLength(text, "utf8") > this.transcriptBytes) throw new Error("Native transcript exceeds the byte limit; refusing truncation");
+    return text;
   }
 
   private async awaitAcknowledgement(target: ManagedHerdrIdentity, token: string): Promise<string> {
