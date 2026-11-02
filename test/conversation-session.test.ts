@@ -54,3 +54,5 @@ test("concurrent signals serialize using the last committed provider", async () 
   await Promise.all([session.switchProvider("codex", "first"), session.switchProvider("agy", "second")]);
   expect(previous[1]).toContain("Previous provider: codex"); expect(session.current?.provider).toBe("agy");
 });
+
+for(const limit of [0,-1,1.5,NaN,Infinity,64*1024*1024+1,null] as any[])test('invalid conversation cap refuses before reading: '+String(limit),()=>{expect(()=>new ManagedConversationSession({cwd:'/not-read',maxTranscriptChars:limit,readTranscript:async()=>{throw Error('must not read')},createRunner:()=>{throw Error('must not create')},commit:async()=>{}})).toThrow('maxTranscriptChars');});

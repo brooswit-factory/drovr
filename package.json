@@ -1,6 +1,6 @@
 {
   "name": "@brooswit/drovr",
-  "version": "0.16.12",
+  "version": "0.16.11-recovery.1",
   "description": "Provider-neutral managed-agent runtime and correction layer over the Herdr SDK",
   "license": "MIT",
   "repository": {
@@ -29,15 +29,17 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun --sourcemap=external && tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "bun build src/index.ts --outdir dist --target bun --sourcemap=external && bun x --no-install tsc -p tsconfig.build.json",
+    "typecheck": "bun x --no-install tsc -p tsconfig.json --noEmit",
     "test": "bun test",
     "prepack": "bun run check",
     "check": "bun run typecheck && bun test && bun run build"
   },
   "dependencies": {
-    "@brooswit/herdr-sdk": "^0.3.0",
-    "@modelcontextprotocol/sdk": "^1.30.0"
+    "@brooswit/herdr-sdk": "0.3.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.6.5",
+    "fast-uri": "3.1.8"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
@@ -45,5 +47,10 @@
   },
   "engines": {
     "bun": ">=1.1"
+  },
+  "overrides": {
+    "zod": "4.6.5",
+    "fast-uri": "3.1.8",
+    "@brooswit/herdr-sdk": "0.3.0"
   }
 }

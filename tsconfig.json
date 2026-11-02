@@ -3,13 +3,16 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
-    "types": ["bun-types"],
     "strict": true,
+    "skipLibCheck": true,
+    "types": [
+      "bun"
+    ],
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitOverride": true,
-    "skipLibCheck": true
+    "exactOptionalPropertyTypes": true
   },
-  "include": ["src", "test", "scripts"]
+  "include": [
+    "src",
+    "test"
+  ]
 }

@@ -4,7 +4,7 @@ import { realTmpdir } from "./support/tmp";
 import { dirname, join } from "node:path";
 import { nativeTranscriptReply, readNativeTranscript } from "../src/native-transcript.js";
 
-const id = "01a097e9-8423-76f2-9e3d-b3c7918b9380";
+const id = "00000000-0000-4000-8000-474ccc1aa687";
 const cwd = "/factory/work dir/project_name";
 let home: string;
 const header = (sessionId = id, directory = cwd) => JSON.stringify({
@@ -149,3 +149,8 @@ describe("native transcript disk reader", () => {
     await expect(readNativeTranscript({provider:"agy",session:{kind:"path",value:path},cwd,home})).rejects.toThrow("unsupported record");
   });
 });
+
+test('explicit native byte cap preserves larger complete files and its exact boundary',async()=>{
+ const dir=await mkdtemp(join(realTmpdir(),'drovr-native-large-'));try{const path=join(dir,'synthetic.jsonl'),text='a'.repeat(5*1024*1024);await writeFile(path,text);const options={provider:'codex' as const,session:{kind:'path' as const,value:path},cwd:dir,maxBytes:Buffer.byteLength(text)};expect(await readNativeTranscript(options)).toBe(text);await writeFile(path,text+'x');await expect(readNativeTranscript(options)).rejects.toThrow('refusing truncation');}finally{await rm(dir,{recursive:true,force:true});}
+});
+for(const limit of [0,-1,1.5,NaN,Infinity,64*1024*1024+1,null] as any[])test('invalid byte limit refuses before file discovery: '+String(limit),async()=>{await expect(readNativeTranscript({provider:'codex',session:{kind:'path',value:'/not-read'},cwd:'/not-read',maxBytes:limit})).rejects.toThrow('maxBytes');});
