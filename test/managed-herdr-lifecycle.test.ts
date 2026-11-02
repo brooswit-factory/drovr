@@ -412,7 +412,7 @@ describe("explicit fresh-session handoffs",()=>{
     expect(again.status).toBe("blocked");expect(f.events.filter(e=>e==="create")).toHaveLength(1);
   });
   test("unacknowledged fresh target cannot retire source or dispatch work",async()=>{
-    const f=fixture({ack:"missing"});expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");
+    const f=fixture({ack:"missing"});expect(await f.lifecycle.start({...f.request,historyMode:"fresh"})).toMatchObject({status:"blocked",requiresInspection:true});
     expect(f.events).not.toContain("close:old");expect(f.events).not.toContain("prompt:new-1:kickoff");expect(f.lifecycle.current?.paneId).toBe("old");
   });
   test("source retirement failure preserves acknowledged target and refuses duplicate replacement",async()=>{

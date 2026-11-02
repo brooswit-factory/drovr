@@ -69,6 +69,8 @@ export interface ManagedHerdrStartRequest {
 export type ManagedHerdrResult = ProviderFallbackResult<string> | {
   status: "blocked";
   reason: string;
+  /** A fresh launch may have spent quota; do not auto-launch another target without inspection. */
+  requiresInspection?: true;
   current: ManagedHerdrIdentity | undefined;
 };
 
@@ -173,6 +175,7 @@ export class ManagedHerdrLifecycle {
   }
 
   start(request: ManagedHerdrStartRequest): Promise<ManagedHerdrResult> {
+    let freshLaunchAttempted=false;
     const continuationSourcePane=request.replacePaneId,continuationProvider=request.priority[0]?.provider;
     const continuation=request.continuation?{...request.continuation,target:{...request.continuation.target},snapshot:{...request.continuation.snapshot}}:undefined;
     return this.exclusive(async () => {
@@ -239,6 +242,7 @@ export class ManagedHerdrLifecycle {
                   const token=`${HANDOFF_ACK}_${randomUUID()}`;
                   const bootstrap="Drovr fresh-session handoff. Previous conversation history is intentionally not imported. Keep existing workspace files unchanged. Do not use tools or continue work until the separate task brief arrives. "
                     + `Begin your response with ${token} on its own line, followed by Ready for the task brief.`;
+                  freshLaunchAttempted=true;
                   await startManagedAgent(this.options.client,buildAgentStartParams({...targetLaunch,paneId,prompt:bootstrap}),this.options.startOptions);
                   await this.awaitAcknowledgement(target,token);
                   await this.assertStable(old);
@@ -320,7 +324,7 @@ export class ManagedHerdrLifecycle {
           },
         });
       } catch (error) {
-        if (error instanceof HandoffBlocked) return { status: "blocked", reason: error.message, current: this.current };
+        if (error instanceof HandoffBlocked) return { status: "blocked", reason: error.message, current: this.current, ...(freshLaunchAttempted?{requiresInspection:true as const}:{}) };
         throw error;
       }
     });
