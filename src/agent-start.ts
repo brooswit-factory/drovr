@@ -121,17 +121,26 @@ async function diagnose(client: StartClient, paneId: string, diagnosticWait?: (m
  * a deliberately slow shell startup -- see that ticket's evidence).
  *
  * Polls checkCanonicalMode (a ground-truth /proc + stty read, not herdr's
- * self-report) until it reports anything other than "canonical", or the
- * bound passes. "unavailable" (no /proc entry, no stty, a non-Linux host,
- * herdr not yet reporting a shell_pid) is NOT treated as "ready" OR as
- * "refuse" -- it means this mechanism cannot verify anything here, so it
- * degrades to the pre-existing, unprotected behavior (proceed immediately)
- * rather than ever blocking a platform this check doesn't support. Only a
- * POSITIVE "canonical" reading holds the gate.
+ * self-report) until it reports "raw", or the bound passes. Only TWO things
+ * ever let this proceed without exhausting the bound: a confirmed "raw"
+ * reading, or "unsupported" (a STATIC, permanent fact about this host --
+ * see CanonicalModeState's own doc comment -- where polling could never
+ * produce a different answer, so there is nothing to wait for).
  *
- * Past the bound while still confirmed "canonical", this throws rather than
- * proceeding: by then we have DIRECT, repeated confirmation injection is
- * unsafe, so proceeding anyway would defeat the entire point of the gate.
+ * Everything else -- "canonical", "unknown" (a transient read failure, which
+ * commonly resolves on the very next poll), AND a pane whose shell_pid
+ * herdr has not reported YET (including a processInfo call that itself
+ * failed or timed out) -- is treated as NOT YET CONFIRMED SAFE and kept
+ * polling within the bound. This is FACTORY-1037's own review finding: an
+ * earlier draft returned immediately (proceeding, unprotected) the moment
+ * shell_pid was merely absent, which is EXACTLY the newly-created-pane
+ * window this ticket targets -- a brand new pane very often has no
+ * shell_pid for the first instant of its life, not because it can never be
+ * checked, but because herdr hasn't reported it yet.
+ *
+ * Past the bound while still unconfirmed, this throws rather than
+ * proceeding: a caller must never inject on a mere absence of contrary
+ * evidence, since that is precisely what defeats the gate's own purpose.
  */
 async function awaitNonCanonical(
   client: StartClient,
@@ -143,12 +152,17 @@ async function awaitNonCanonical(
   const deadline = started + timeoutMs;
   for (;;) {
     // Bounded the same way diagnose()'s own read is: a hung or failed
-    // processInfo call must never defeat this gate's own bound.
+    // processInfo call must never defeat this gate's own bound -- but,
+    // unlike diagnose() (read-only, best-effort), a failure HERE must never
+    // be read as "safe to proceed" either; it falls through to the same
+    // bounded retry as an explicit "canonical"/"unknown" reading below.
     const info = await boundedProcessInfo(client, paneId, diagnosticWait);
     const shellPid = pid(info?.type === "pane_process_info" ? info.process_info.shell_pid : undefined);
-    if (shellPid === undefined) return; // cannot resolve a shell yet to check -- nothing more this gate can verify
-    const state = await check(shellPid);
-    if (state !== "canonical") return; // "raw" (safe) or "unavailable" (cannot verify) -- proceed either way
+    if (shellPid !== undefined) {
+      const state = await check(shellPid);
+      if (state === "raw" || state === "unsupported") return;
+      // "canonical" or "unknown" -- fall through to the bounded retry below.
+    }
     const remaining = deadline - now();
     if (remaining <= 0) throw new AgentTerminalNotReadyError(paneId, Math.max(0, Math.round(now() - started)));
     await wait(Math.min(intervalMs, remaining));

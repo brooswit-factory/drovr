@@ -93,7 +93,17 @@ function fixture(opts: { screens?: string[]; agents?: Agent[]; workspaces?: { wo
     },
     pane: {
       processInfo: async (p: { pane_id: string }) => {
-        if (p.pane_id !== "w1:p1") throw new Error("no process info");
+        if (p.pane_id !== "w1:p1") {
+          // FACTORY-1037: startManagedAgent's own canonical-mode gate reads
+          // this before every launch, including into the fresh "w9:p1"
+          // pane workspace.create() below always mints. A valid shell_pid
+          // here (paired with startOptions.checkCanonicalMode: "raw" below)
+          // keeps every test unrelated to that gate on its pre-existing,
+          // zero-delay fast path -- "w1:p1"'s own distinct, deliberately
+          // narrower response (used elsewhere for a different, existing
+          // pane's process-info assertions) is unchanged.
+          return { type: "pane_process_info", process_info: { pane_id: p.pane_id, shell_pid: 1 } } as never;
+        }
         return { type: "pane_process_info", process_info: { shell_pid: 10, foreground_processes: [{ pid: 10, name: "bash" }, { pid: 4242, name: "claude" }] } } as never;
       },
       read: async (p: unknown) => { calls.push({ method: "pane.read", args: p }); return { type: "pane_read", read: { text: "" } } as never; },
@@ -105,7 +115,7 @@ function fixture(opts: { screens?: string[]; agents?: Agent[]; workspaces?: { wo
     },
   };
   const now = () => time, wait = async (ms: number) => { time += ms; };
-  const options = { now, wait, mintSessionId: () => "minted-session", readyTimeoutMs: 10_000, pollIntervalMs: 1_000, startOptions: { now, wait } };
+  const options = { now, wait, mintSessionId: () => "minted-session", readyTimeoutMs: 10_000, pollIntervalMs: 1_000, startOptions: { now, wait, checkCanonicalMode: async () => "raw" as const } };
   const called = (method: string) => calls.filter((c) => c.method === method).map((c) => c.args);
   return { client, calls, called, options };
 }
@@ -354,7 +364,10 @@ describe("readiness", () => {
         start: async () => ({ type: "agent_started" }) as never,
         prompt: async () => ({ type: "agent_prompted" }) as never,
       },
-      pane: { processInfo: async () => { throw new Error("unused"); }, read: async () => ({ type: "pane_read", read: { text: "" } }) as never },
+      // FACTORY-1037: startManagedAgent's own canonical-mode gate now reads
+      // processInfo before every launch (paired with checkCanonicalMode:
+      // "raw" in startOptions below) -- no longer genuinely "unused".
+      pane: { processInfo: async () => ({ type: "pane_process_info", process_info: { pane_id: "w9:p1", shell_pid: 1 } }) as never, read: async () => ({ type: "pane_read", read: { text: "" } }) as never },
       workspace: {
         create: async () => ({ type: "workspace_created", root_pane: { pane_id: "w9:p1" }, workspace: { workspace_id: "w9" } }) as never,
         close: async () => ({ type: "ok" }) as never,
@@ -362,7 +375,7 @@ describe("readiness", () => {
       },
     };
     let time = 0;
-    const options = { now: () => time, wait: async (ms: number) => { time += ms; }, mintSessionId: () => "minted", readyTimeoutMs: 30_000, pollIntervalMs: 1_000, startOptions: { now: () => time, wait: async (ms: number) => { time += ms; } } };
+    const options = { now: () => time, wait: async (ms: number) => { time += ms; }, mintSessionId: () => "minted", readyTimeoutMs: 30_000, pollIntervalMs: 1_000, startOptions: { now: () => time, wait: async (ms: number) => { time += ms; }, checkCanonicalMode: async () => "raw" as const } };
     return { client, keys, options, reads: () => i };
   }
 

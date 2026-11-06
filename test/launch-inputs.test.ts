@@ -21,12 +21,18 @@ function fixture(provider: ManagedAgentProvider, prepared: Record<string, unknow
     pane: {
       close: async () => {},
       read: async () => { throw new Error("Screen must never be read during launch"); },
+      // FACTORY-1037: startManagedAgent's own canonical-mode gate reads
+      // this before every launch; a valid shell_pid (paired with
+      // checkCanonicalMode: "raw" below) keeps this unrelated fixture on
+      // the gate's pre-existing, zero-delay fast path.
+      processInfo: async () => ({ type: "pane_process_info" as const, process_info: { pane_id: "new-1", shell_pid: 1 } }),
     },
   };
   const lifecycle = new ManagedHerdrLifecycle({
     client: client as unknown as DrovrClient,
     cwd: "/work",
     availability: new ProviderAvailabilityRegistry(),
+    startOptions: { checkCanonicalMode: async () => "raw" as const },
     wait: async () => {},
   });
   const base = { cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch" };

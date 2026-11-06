@@ -80,10 +80,16 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
         events.push(`screen:${pane_id}`);
         return { read: { text: screens.get(pane_id) ?? "" } };
       },
+      // FACTORY-1037: startManagedAgent's own canonical-mode gate now reads
+      // this before every launch. A fixed, valid shell_pid here (paired
+      // with checkCanonicalMode: "raw" below) keeps every test in this
+      // file -- none of which are about that gate -- on its pre-existing,
+      // zero-delay fast path, exactly like a real already-ready pane.
+      processInfo: async () => ({ type: "pane_process_info" as const, process_info: { pane_id: "new-pane", shell_pid: 1 } }),
     },
   };
   const availability = options.availability ?? new ProviderAvailabilityRegistry();
-  const lifecycle = new ManagedHerdrLifecycle({ client: client as unknown as DrovrClient, cwd: "/work", availability, ...(options.transcriptLimits ? { transcriptLimits: options.transcriptLimits } : {}), ...(options.launchPendingTimeoutMs !== undefined ? { launchPendingTimeoutMs: options.launchPendingTimeoutMs } : {}), wait: async () => {}, pollIntervalMs: 1, acknowledgementTimeoutMs: options.slowRead ? 2 : 100,
+  const lifecycle = new ManagedHerdrLifecycle({ client: client as unknown as DrovrClient, cwd: "/work", availability, ...(options.transcriptLimits ? { transcriptLimits: options.transcriptLimits } : {}), ...(options.launchPendingTimeoutMs !== undefined ? { launchPendingTimeoutMs: options.launchPendingTimeoutMs } : {}), startOptions: { checkCanonicalMode: async () => "raw" as const }, wait: async () => {}, pollIntervalMs: 1, acknowledgementTimeoutMs: options.slowRead ? 2 : 100,
     readTranscript: async ({ session }) => {
       events.push(`read:${session.value}`);
       if (options.readFail && session.value === "old") throw new Error("missing transcript");
