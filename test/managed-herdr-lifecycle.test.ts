@@ -4,7 +4,7 @@ import { ManagedHerdrLifecycle, type ManagedHerdrStartRequest } from "../src/man
 import { ProviderAvailabilityRegistry } from "../src/provider-fallback.js";
 import type { ManagedAgentProvider } from "../src/agent-runtime.js";
 
-function fixture(options: { source?: string; transcriptLimits?: import("../src/transcript-limits.js").TranscriptLimits; ackAt?: number; readFail?: boolean; startFail?: boolean; ack?: "missing" | "empty" | "prompt"; closeFail?: boolean; kickoffFail?: boolean; provider?: ManagedAgentProvider; large?: boolean; fastDone?: boolean; disappear?: boolean; slowRead?: boolean; oldProvider?: ManagedAgentProvider; priority?: ManagedAgentProvider[]; availability?: ProviderAvailabilityRegistry; kickoffScreen?: (provider: ManagedAgentProvider) => string | undefined } = {}) {
+function fixture(options: { source?: string; transcriptLimits?: import("../src/transcript-limits.js").TranscriptLimits; ackAt?: number; readFail?: boolean; startFail?: boolean; ack?: "missing" | "empty" | "prompt"; closeFail?: boolean; kickoffFail?: boolean; provider?: ManagedAgentProvider; large?: boolean; fastDone?: boolean; disappear?: boolean; slowRead?: boolean; oldProvider?: ManagedAgentProvider; priority?: ManagedAgentProvider[]; availability?: ProviderAvailabilityRegistry; kickoffScreen?: (provider: ManagedAgentProvider) => string | undefined; launchPending?: boolean; launchPendingClearsAfterPolls?: number; launchPendingTimeoutMs?: number } = {}) {
   const events: string[] = [];
   const kickedOff = new Set<string>();
   const screens = new Map<string, string>();
@@ -15,9 +15,10 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
   };
   const source = options.source ?? (options.large ? "history".repeat(15_000) : "saved history with pending work");
   const histories = new Map<string, string>([["old", source]]);
-  const row = (pane: string, provider: ManagedAgentProvider) => ({ pane_id: pane, cwd: "/work", agent: provider, agent_status: "idle", agent_session: { agent: provider, kind: "id", value: pane, source: "test" } });
+  const row = (pane: string, provider: ManagedAgentProvider, launchPending?: boolean) => ({ pane_id: pane, cwd: "/work", agent: provider, agent_status: "idle", agent_session: { agent: provider, kind: "id", value: pane, source: "test" }, ...(launchPending ? { launch_pending: true } : {}) });
   let rows = [row("old", options.oldProvider ?? "claude")];
   let count = 0;
+  let launchPendingPolls = 0;
   const prompts: string[] = [];
   const launches: any[] = [];
   let gate: Promise<void> = Promise.resolve();
@@ -36,14 +37,22 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
   }
   const client = {
     agent: {
-      list: async () => ({ agents: rows }),
+      list: async () => {
+        if (options.launchPending && options.launchPendingClearsAfterPolls !== undefined) {
+          launchPendingPolls++;
+          if (launchPendingPolls > options.launchPendingClearsAfterPolls) {
+            for (const r of rows) (r as { launch_pending?: boolean }).launch_pending = false;
+          }
+        }
+        return { agents: rows };
+      },
       get: async (pane: string) => { events.push(`get:${pane}`); return { agent: rows.find(a => a.pane_id === pane)! }; },
       start: async (params: any) => {
         events.push(`start:${params.pane_id}`);
         launches.push(params);
         if (params.args.some((arg: string) => arg.includes("\n"))) throw new Error("Herdr cannot encode multiline launch arguments");
         if (options.startFail) throw new Error("start failed");
-        rows.push(row(params.pane_id, params.kind));
+        rows.push(row(params.pane_id, params.kind, options.launchPending));
         await gate;
         respond(params.pane_id, params.args[params.kind === "agy" ? 1 : 0], params.kind);
       },
@@ -74,7 +83,7 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
     },
   };
   const availability = options.availability ?? new ProviderAvailabilityRegistry();
-  const lifecycle = new ManagedHerdrLifecycle({ client: client as unknown as DrovrClient, cwd: "/work", availability, ...(options.transcriptLimits ? { transcriptLimits: options.transcriptLimits } : {}), wait: async () => {}, pollIntervalMs: 1, acknowledgementTimeoutMs: options.slowRead ? 2 : 100,
+  const lifecycle = new ManagedHerdrLifecycle({ client: client as unknown as DrovrClient, cwd: "/work", availability, ...(options.transcriptLimits ? { transcriptLimits: options.transcriptLimits } : {}), ...(options.launchPendingTimeoutMs !== undefined ? { launchPendingTimeoutMs: options.launchPendingTimeoutMs } : {}), wait: async () => {}, pollIntervalMs: 1, acknowledgementTimeoutMs: options.slowRead ? 2 : 100,
     readTranscript: async ({ session }) => {
       events.push(`read:${session.value}`);
       if (options.readFail && session.value === "old") throw new Error("missing transcript");
@@ -371,4 +380,38 @@ test('ACK-looking historical data remains exact even across chunk boundaries', a
   expect(decoded[0]).toEndWith(marker.slice(0, 10));
   expect(decoded[1]).toStartWith(marker.slice(10));
   expect(f.events.filter(e => e === 'close:old')).toHaveLength(1);
+});
+
+describe("ManagedHerdrLifecycle launch_pending verification (FACTORY-1037)", () => {
+  // Incident: herdr can accept a launch (no thrown error) and still leave
+  // the pane `launch_pending: true` indefinitely — e.g. the shell was not
+  // actually ready for the injected command when herdr wrote it. Before
+  // this guard, `resolveCurrent()` finding ANY matching entry was enough
+  // to report success, so a stuck, truncated launch was reported as a
+  // launched agent. These pin the fix: a launch stuck past the ceiling is
+  // "blocked", never "success"; a launch that clears within the ceiling
+  // (an ordinary slow start) is unaffected.
+  test("a launch still launch_pending past the ceiling is reported blocked, never success", async () => {
+    const f = fixture({ launchPending: true, launchPendingTimeoutMs: 5 });
+    const result = await f.lifecycle.start(f.request);
+    expect(result.status).toBe("blocked");
+    expect((result as { reason?: string }).reason).toContain("launch_pending");
+    // Already committed and the old pane already closed — a verification
+    // failure after that point cannot and must not resurrect "old".
+    expect(f.lifecycle.current?.paneId).toBe("new-1");
+    expect(f.events).toContain("close:old");
+  });
+
+  test("a launch_pending pane that clears within the ceiling still reports success", async () => {
+    const f = fixture({ launchPending: true, launchPendingClearsAfterPolls: 2, launchPendingTimeoutMs: 500 });
+    const result = await f.lifecycle.start(f.request);
+    expect(result.status).toBe("success");
+    expect(f.lifecycle.current?.paneId).toBe("new-1");
+  });
+
+  test("a launch that is never launch_pending is unaffected (no new polling, unchanged timing)", async () => {
+    const f = fixture();
+    const result = await f.lifecycle.start(f.request);
+    expect(result.status).toBe("success");
+  });
 });

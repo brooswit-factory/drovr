@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.13
+
+`ManagedHerdrLifecycle.start()` no longer reports a launch as `"success"`
+while the pane is still `launch_pending` (FACTORY-1037). herdr accepting a
+launch only means it decided to try; incident evidence showed a shell not
+yet ready for the injected command can leave a pane permanently
+`launch_pending` — no process, no thrown error — while the only existing
+post-launch check (`resolveCurrent()` finding any matching entry) still
+passed, so a stuck, truncated launch was reported as a launched agent. A
+new `awaitLaunchSettled()` polls (bounded by the new `launchPendingTimeoutMs`
+option, default 60s) until the flag clears or the ceiling is reached, at
+which point the launch is reported `"blocked"` with a clear reason instead.
+Ordinary launches that never report `launch_pending` are unaffected — the
+added check is a single boolean read on the result `resolveCurrent()` was
+already fetching, with no new poll on that path.
+
 ## 0.16.12
 
 `checkManagedAgentArgv`'s Codex `--dangerously-bypass-approvals-and-sandbox`
