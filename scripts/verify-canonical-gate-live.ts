@@ -32,6 +32,7 @@
  *
  * Cleans up both workspaces and all scratch files, even on failure.
  */
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,6 +41,22 @@ import { startManagedAgent } from "../src/agent-start.js";
 import { checkCanonicalMode } from "../src/terminal-readiness.js";
 
 const SLOW_STARTUP_SECONDS = Number(process.env.FACTORY_1037_SLOW_SECONDS ?? 4);
+
+/**
+ * herdr resolves a new pane's shell from the SAME env object passed to
+ * `workspace.create()`, not merged with its own daemon process's
+ * environment -- confirmed live (CI): a workspace created with NO `env`
+ * override inherited the daemon's fish just fine, but the exact same
+ * daemon, given an explicit `env: { HOME: ... }` override with no `SHELL`
+ * key, fell back to bash regardless of this host's passwd shell or the
+ * daemon's own $SHELL. So every slow pane below must set SHELL itself,
+ * explicitly, rather than relying on inheritance.
+ */
+const FISH_PATH = (() => {
+  try { return execFileSync("sh", ["-c", "command -v fish"], { encoding: "utf8" }).trim() || undefined; }
+  catch { return undefined; }
+})();
+if (!FISH_PATH) throw new Error("fish not found on PATH -- this script needs fish installed to reproduce a real slow shell startup (see .github/workflows/ci.yml's canonical-gate-smoke job)");
 
 const scratch = mkdtempSync(join(tmpdir(), "drovr-canonical-gate-smoke-"));
 const fishHome = join(scratch, "fish-home");
@@ -55,7 +72,7 @@ async function cleanup(): Promise<void> {
 }
 
 async function createSlowPane(label: string): Promise<string> {
-  const created = await client.workspace.create({ label, cwd: scratch, env: { HOME: fishHome } });
+  const created = await client.workspace.create({ label, cwd: scratch, env: { HOME: fishHome, SHELL: FISH_PATH } });
   workspaceIds.push(created.workspace.workspace_id);
   const root = created.root_pane;
   const paneId = typeof root === "string" ? root : root?.pane_id;
