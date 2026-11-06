@@ -34,7 +34,9 @@ jobs:
       - name: "install fish and make it this runner's login shell -- herdr spawns the pane's OWN login shell from /etc/passwd, not $SHELL or whatever is merely on PATH (confirmed live -- installing fish without this step still left panes on the runner's existing bash, so the script's fish config.fish slow-startup trick was never read at all)"
         run: |
           sudo apt-get update -y && sudo apt-get install -y fish
+          echo "fish at: $(command -v fish)"
           sudo usermod -s "$(command -v fish)" "$(whoami)"
+          echo "passwd entry after usermod: $(getent passwd "$(whoami)")"
       - name: install herdr 0.8.2 (pinned -- same deployed version this ticket's incident was measured against)
         run: |
           curl -fsSL -o /usr/local/bin/herdr https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64
@@ -45,6 +47,13 @@ jobs:
           herdr server > herdr-server.log 2>&1 &
           for i in $(seq 1 30); do herdr api snapshot >/dev/null 2>&1 && exit 0; sleep 1; done
           echo "herdr server never became ready:"; cat herdr-server.log; exit 1
+      - name: "diagnose: which shell does a fresh herdr pane actually run (debugging aid if the smoke step below fails -- remove once this job is confirmed stable)"
+        run: |
+          out=$(herdr workspace create --cwd /tmp --label diag --no-focus)
+          pane=$(echo "$out" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);const r=j.result.root_pane;console.log(typeof r==='string'?r:r.pane_id)})")
+          sleep 1
+          herdr pane process-info --pane "$pane"
+          herdr workspace close "$(echo "$pane" | cut -d: -f1)" || true
       - run: bun run verify:canonical-gate-live
       - name: stop herdr server
         if: always()
