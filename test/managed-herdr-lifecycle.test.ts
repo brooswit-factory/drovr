@@ -402,6 +402,18 @@ describe("ManagedHerdrLifecycle launch_pending verification (FACTORY-1037)", () 
     expect(f.events).toContain("close:old");
   });
 
+  test("review fix: the stuck pane itself is closed, not left holding truncated input forever", async () => {
+    const f = fixture({ launchPending: true, launchPendingTimeoutMs: 5 });
+    const result = await f.lifecycle.start(f.request);
+    expect(result.status).toBe("blocked");
+    // Actually torn down, not merely reported -- a close:new-1 event AND
+    // the row genuinely gone from the fake herdr's own pane table, the same
+    // proof the "disappearance" test above uses for a pane herdr itself
+    // dropped. Here WE must be the one to drop it: nothing else will.
+    expect(f.events).toContain("close:new-1");
+    expect(f.rows().some((row) => row.pane_id === "new-1")).toBe(false);
+  });
+
   test("a launch_pending pane that clears within the ceiling still reports success", async () => {
     const f = fixture({ launchPending: true, launchPendingClearsAfterPolls: 2, launchPendingTimeoutMs: 500 });
     const result = await f.lifecycle.start(f.request);

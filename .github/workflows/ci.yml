@@ -13,3 +13,35 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
+  canonical-gate-smoke:
+    name: canonical-mode gate smoke (FACTORY-1037)
+    # Real end-to-end proof against a REAL, isolated, ephemeral herdr server
+    # (same pattern as butchr's spawn-smoke job) with a deliberately slow
+    # shell startup: confirms the readiness gate in src/agent-start.ts holds
+    # agent.start until the pane's shell has genuinely left kernel canonical
+    # TTY mode, using live /proc + stty state, not a mock. Never calls
+    # herdr's real agent.start with kind "claude" (that launches the real
+    # Claude Code binary regardless of any PATH override -- verified while
+    # investigating this ticket) -- client.agent.start is a local stub; only
+    # client.pane.processInfo talks to the real herdr. See
+    # scripts/verify-canonical-gate-live.ts for the full script.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.11" }
+      - run: bun install --frozen-lockfile
+      - name: install herdr 0.8.2 (pinned -- same deployed version this ticket's incident was measured against)
+        run: |
+          curl -fsSL -o /usr/local/bin/herdr https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64
+          chmod +x /usr/local/bin/herdr
+          herdr --version
+      - name: start herdr server
+        run: |
+          herdr server > herdr-server.log 2>&1 &
+          for i in $(seq 1 30); do herdr api snapshot >/dev/null 2>&1 && exit 0; sleep 1; done
+          echo "herdr server never became ready:"; cat herdr-server.log; exit 1
+      - run: bun run verify:canonical-gate-live
+      - name: stop herdr server
+        if: always()
+        run: herdr server stop || true

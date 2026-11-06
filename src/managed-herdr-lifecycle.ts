@@ -303,7 +303,23 @@ export class ManagedHerdrLifecycle {
               throw error;
             }
             await this.wait(this.options.kickoffVerifyMs ?? 12_000);
-            const current = await this.awaitLaunchSettled(paneId);
+            let current: results.AgentInfo;
+            try {
+              current = await this.awaitLaunchSettled(paneId);
+            } catch (error) {
+              // FACTORY-1037 (review finding): a launch that never actually
+              // started (a stuck canonical-mode truncation, or any other
+              // reason launch_pending never clears) must not leave the
+              // truncated, half-typed command sitting in the new pane's
+              // edit buffer forever -- closing it tears down its pty/process
+              // without ever executing whatever text is sitting unsubmitted
+              // there. Best-effort: a close failure is swallowed, not
+              // reported in place of the real (already more informative)
+              // launch failure -- same pattern as the pre-commit abort a
+              // few lines above.
+              await this.options.client.pane.close(paneId).catch(() => {});
+              throw error;
+            }
             if (current.agent_status === "idle" || current.agent_status === "done") {
               // Each provider with a measured classifier (Claude, Codex) can
               // refuse at kickoff; a recognised refusal moves on to the next
