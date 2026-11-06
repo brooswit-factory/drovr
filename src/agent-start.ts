@@ -1,5 +1,6 @@
 import { HerdrError, type ParamsOf, type ResultOf } from "@brooswit/herdr-sdk";
 import type { DrovrClient } from "./drovr-client.js";
+import { checkCanonicalMode, type CanonicalModeState } from "./terminal-readiness.js";
 
 export interface AgentStartOptions {
   /** Bounds retries after confirmed shell-busy rejections, not an in-flight launch. */
@@ -10,6 +11,28 @@ export interface AgentStartOptions {
   wait?: (ms: number) => Promise<void>;
   /** Test seam for the bounded, read-only timeout diagnostic. */
   diagnosticWait?: (ms: number) => Promise<void>;
+  /**
+   * FACTORY-1037: bounded ceiling for waiting on the pane's shell to actually
+   * leave kernel canonical TTY mode before agent.start is ever called -- see
+   * awaitNonCanonical's own doc comment for the failure this guards against.
+   * Separate from readinessTimeoutMs, which bounds retries AFTER an explicit
+   * agent_pane_busy refusal: this runs BEFORE the first attempt, because the
+   * failure here is silent truncation at injection time, not a rejected
+   * call. Default 5000ms is a conservative guess, not a measured herdr SLA
+   * (herdr publishes none for how long a pane may stay canonical).
+   */
+  canonicalModeTimeoutMs?: number;
+  /** Test seam; real implementation in terminal-readiness.ts. */
+  checkCanonicalMode?: (shellPid: number) => Promise<CanonicalModeState>;
+}
+
+export class AgentTerminalNotReadyError extends Error {
+  readonly code = "agent_terminal_canonical_mode_timeout";
+
+  constructor(readonly paneId: string, readonly elapsedMs: number) {
+    super(`Pane ${paneId}'s shell is still in kernel canonical TTY mode after ${elapsedMs}ms -- refusing to inject, since a line over the kernel's canonical-mode limit would be silently truncated with no error`);
+    this.name = "AgentTerminalNotReadyError";
+  }
 }
 
 export interface ShellReadinessDiagnostics {
@@ -43,15 +66,28 @@ const positive = (value: number, name: string): number => {
 const pid = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 
-async function diagnose(client: StartClient, paneId: string, diagnosticWait?: (ms: number) => Promise<void>): Promise<Omit<ShellReadinessDiagnostics, "attempts" | "elapsedMs">> {
+/**
+ * A hung or failed pane.processInfo read must never block real progress --
+ * bounded to at most `boundMs` (default 250ms) via the same diagnosticWait
+ * test seam every caller already uses, so a fake clock stays finite too.
+ */
+async function boundedProcessInfo(client: StartClient, paneId: string, diagnosticWait?: (ms: number) => Promise<void>, boundMs = 250) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const result = await Promise.race([
+    return await Promise.race([
       Promise.resolve().then(() => client.pane.processInfo({ pane_id: paneId })).catch(() => undefined),
       diagnosticWait
-        ? diagnosticWait(250).then(() => undefined)
-        : new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), 250); }),
+        ? diagnosticWait(boundMs).then(() => undefined)
+        : new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), boundMs); }),
     ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function diagnose(client: StartClient, paneId: string, diagnosticWait?: (ms: number) => Promise<void>): Promise<Omit<ShellReadinessDiagnostics, "attempts" | "elapsedMs">> {
+  try {
+    const result = await boundedProcessInfo(client, paneId, diagnosticWait);
     const info = result?.type === "pane_process_info" ? result.process_info : undefined;
     if (!info) return { processInfo: "unavailable" };
     const shellPid = pid(info.shell_pid);
@@ -71,8 +107,65 @@ async function diagnose(client: StartClient, paneId: string, diagnosticWait?: (m
     };
   } catch {
     return { processInfo: "unavailable" };
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * FACTORY-1037: herdr's own pre-launch busy check is foreground-process-based
+ * and cannot see a pane whose shell has no foreground child (so herdr
+ * considers it available) but has not yet called tcsetattr to leave kernel
+ * canonical TTY mode -- injecting into that window silently truncates any
+ * line over the kernel's canonical-mode limit, with no error and no
+ * terminating newline delivered, so the command never submits (reproduced
+ * both in isolation with a bare pty pair, and live against a real herdr with
+ * a deliberately slow shell startup -- see that ticket's evidence).
+ *
+ * Polls checkCanonicalMode (a ground-truth /proc + stty read, not herdr's
+ * self-report) until it reports "raw", or the bound passes. Only TWO things
+ * ever let this proceed without exhausting the bound: a confirmed "raw"
+ * reading, or "unsupported" (a STATIC, permanent fact about this host --
+ * see CanonicalModeState's own doc comment -- where polling could never
+ * produce a different answer, so there is nothing to wait for).
+ *
+ * Everything else -- "canonical", "unknown" (a transient read failure, which
+ * commonly resolves on the very next poll), AND a pane whose shell_pid
+ * herdr has not reported YET (including a processInfo call that itself
+ * failed or timed out) -- is treated as NOT YET CONFIRMED SAFE and kept
+ * polling within the bound. This is FACTORY-1037's own review finding: an
+ * earlier draft returned immediately (proceeding, unprotected) the moment
+ * shell_pid was merely absent, which is EXACTLY the newly-created-pane
+ * window this ticket targets -- a brand new pane very often has no
+ * shell_pid for the first instant of its life, not because it can never be
+ * checked, but because herdr hasn't reported it yet.
+ *
+ * Past the bound while still unconfirmed, this throws rather than
+ * proceeding: a caller must never inject on a mere absence of contrary
+ * evidence, since that is precisely what defeats the gate's own purpose.
+ */
+async function awaitNonCanonical(
+  client: StartClient,
+  paneId: string,
+  options: { timeoutMs: number; intervalMs: number; now: () => number; wait: (ms: number) => Promise<void>; diagnosticWait?: (ms: number) => Promise<void>; check: (shellPid: number) => Promise<CanonicalModeState> },
+): Promise<void> {
+  const { timeoutMs, intervalMs, now, wait, diagnosticWait, check } = options;
+  const started = now();
+  const deadline = started + timeoutMs;
+  for (;;) {
+    // Bounded the same way diagnose()'s own read is: a hung or failed
+    // processInfo call must never defeat this gate's own bound -- but,
+    // unlike diagnose() (read-only, best-effort), a failure HERE must never
+    // be read as "safe to proceed" either; it falls through to the same
+    // bounded retry as an explicit "canonical"/"unknown" reading below.
+    const info = await boundedProcessInfo(client, paneId, diagnosticWait);
+    const shellPid = pid(info?.type === "pane_process_info" ? info.process_info.shell_pid : undefined);
+    if (shellPid !== undefined) {
+      const state = await check(shellPid);
+      if (state === "raw" || state === "unsupported") return;
+      // "canonical" or "unknown" -- fall through to the bounded retry below.
+    }
+    const remaining = deadline - now();
+    if (remaining <= 0) throw new AgentTerminalNotReadyError(paneId, Math.max(0, Math.round(now() - started)));
+    await wait(Math.min(intervalMs, remaining));
   }
 }
 
@@ -82,6 +175,10 @@ async function diagnose(client: StartClient, paneId: string, diagnosticWait?: (m
  * cause a second launch. The native agent.start timeout remains unchanged.
  * On exhaustion, a best-effort diagnostic read adds at most 250ms.
  * The caller retains ownership of pane cleanup and provider fallback.
+ *
+ * Before any of that: awaitNonCanonical (FACTORY-1037) gates the FIRST call
+ * itself, since the failure it guards against is a silent kernel-level
+ * truncation at injection time, not something a post-hoc retry can undo.
  */
 export async function startManagedAgent(
   client: StartClient,
@@ -90,8 +187,17 @@ export async function startManagedAgent(
 ): Promise<ResultOf<"agent.start">> {
   const timeout = positive(options.readinessTimeoutMs ?? 5_000, "readinessTimeoutMs");
   const interval = positive(options.retryIntervalMs ?? 200, "retryIntervalMs");
+  const canonicalModeTimeout = positive(options.canonicalModeTimeoutMs ?? 5_000, "canonicalModeTimeoutMs");
   const now = options.now ?? (() => performance.now());
   const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  await awaitNonCanonical(client, params.pane_id, {
+    timeoutMs: canonicalModeTimeout,
+    intervalMs: interval,
+    now,
+    wait,
+    ...(options.diagnosticWait ? { diagnosticWait: options.diagnosticWait } : {}),
+    check: options.checkCanonicalMode ?? checkCanonicalMode,
+  });
   const started = now();
   const deadline = started + timeout;
   let attempts = 0;

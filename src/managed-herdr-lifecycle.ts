@@ -28,6 +28,16 @@ export interface ManagedHerdrLifecycleOptions {
   acknowledgementTimeoutMs?: number;
   pollIntervalMs?: number;
   kickoffVerifyMs?: number;
+  /**
+   * FACTORY-1037: bounded ceiling for how long a pane may keep reporting
+   * `launch_pending: true` after kickoff before the launch is treated as
+   * stuck rather than successful. herdr's own Pending phase has a start
+   * timeout (source-read at the pinned version: 30s default/300s cap), but
+   * its Blocked phase has none — see `awaitLaunchSettled` for why this
+   * class applies its own ceiling instead of trusting herdr to ever clear
+   * the flag.
+   */
+  launchPendingTimeoutMs?: number;
   /** Native history reader injection; never supply terminal-screen text. */
   readTranscript?: (options: NativeTranscriptOptions) => Promise<string>;
 }
@@ -109,7 +119,7 @@ export class ManagedHerdrLifecycle {
     this.active = options.current ? { ...options.current } : undefined;
     this.wait = options.wait ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
     this.availability = options.availability ?? processProviderAvailability;
-    for (const value of [options.acknowledgementTimeoutMs ?? 120_000, options.pollIntervalMs ?? 500]) {
+    for (const value of [options.acknowledgementTimeoutMs ?? 120_000, options.pollIntervalMs ?? 500, options.launchPendingTimeoutMs ?? 60_000]) {
       if (!Number.isFinite(value) || value <= 0) throw new Error("Lifecycle deadlines must be positive and finite");
     }
   }
@@ -139,6 +149,35 @@ export class ManagedHerdrLifecycle {
       this.active = { paneId: found.pane_id, provider: found.agent as ManagedAgentProvider, cwd: this.options.cwd };
     }
     return found;
+  }
+
+  /**
+   * FACTORY-1037: a herdr-accepted launch only means herdr decided to try —
+   * `launch_pending: true` means it has not yet confirmed the agent is
+   * actually up. Incident evidence: a shell not yet ready for the injected
+   * command can leave the pane permanently `launch_pending`, with no
+   * process and no error, while `start()`'s only other check
+   * (`resolveCurrent()` finding *any* matching entry) still passes — so
+   * without this, a stuck, truncated launch is reported as a success. This
+   * polls until the flag clears or `launchPendingTimeoutMs` elapses, never
+   * assuming herdr will clear it on its own (see that option's doc comment).
+   */
+  private async awaitLaunchSettled(paneId: string): Promise<results.AgentInfo> {
+    const current = await this.resolveCurrent();
+    if (!current) throw new HandoffBlocked("Current worker disappeared before kickoff verification");
+    if (!current.launch_pending) return current;
+    const interval = this.options.pollIntervalMs ?? 500;
+    const deadline = performance.now() + (this.options.launchPendingTimeoutMs ?? 60_000);
+    for (;;) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) {
+        throw new HandoffBlocked(`Pane ${paneId} is still launch_pending ${this.options.launchPendingTimeoutMs ?? 60_000}ms after kickoff — herdr never confirmed the agent started (a stuck or truncated launch)`);
+      }
+      await this.wait(Math.min(interval, remaining));
+      const polled = await this.resolveCurrent();
+      if (!polled) throw new HandoffBlocked("Current worker disappeared while waiting for launch_pending to clear");
+      if (!polled.launch_pending) return polled;
+    }
   }
 
   prompt(text: string): Promise<results.AgentInfo | undefined> {
@@ -264,9 +303,24 @@ export class ManagedHerdrLifecycle {
               throw error;
             }
             await this.wait(this.options.kickoffVerifyMs ?? 12_000);
-            const current = await this.resolveCurrent();
-            if (!current) throw new HandoffBlocked("Current worker disappeared before kickoff verification");
-            if (current && (current.agent_status === "idle" || current.agent_status === "done")) {
+            let current: results.AgentInfo;
+            try {
+              current = await this.awaitLaunchSettled(paneId);
+            } catch (error) {
+              // FACTORY-1037 (review finding): a launch that never actually
+              // started (a stuck canonical-mode truncation, or any other
+              // reason launch_pending never clears) must not leave the
+              // truncated, half-typed command sitting in the new pane's
+              // edit buffer forever -- closing it tears down its pty/process
+              // without ever executing whatever text is sitting unsubmitted
+              // there. Best-effort: a close failure is swallowed, not
+              // reported in place of the real (already more informative)
+              // launch failure -- same pattern as the pre-commit abort a
+              // few lines above.
+              await this.options.client.pane.close(paneId).catch(() => {});
+              throw error;
+            }
+            if (current.agent_status === "idle" || current.agent_status === "done") {
               // Each provider with a measured classifier (Claude, Codex) can
               // refuse at kickoff; a recognised refusal moves on to the next
               // provider in priority order.

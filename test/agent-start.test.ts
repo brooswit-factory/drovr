@@ -24,7 +24,12 @@ function fixture(start: () => Promise<ResultOf<"agent.start">>) {
   };
   return {
     client, calls, waits, reads: () => reads, advance: (ms: number) => { time += ms; },
-    options: { now: () => time, wait: async (ms: number) => { waits.push(ms); time += ms; } },
+    // Deterministic "already left canonical mode" default -- the common
+    // case this whole module existed to handle before FACTORY-1037 (an
+    // already-ready pane). Individual canonical-mode-gate tests override
+    // this explicitly; every other test here is about the UNCHANGED
+    // busy-retry behavior and must never depend on a real /proc + stty read.
+    options: { now: () => time, wait: async (ms: number) => { waits.push(ms); time += ms; }, checkCanonicalMode: async () => "raw" as const },
   };
 }
 
@@ -34,7 +39,8 @@ describe("bounded managed agent start", () => {
     expect(await startManagedAgent(f.client, launch, f.options)).toBe(success);
     expect(f.calls).toEqual([launch]);
     expect(f.waits).toEqual([]);
-    expect(f.reads()).toBe(0);
+    // One read: the canonical-mode gate's own single pre-flight check.
+    expect(f.reads()).toBe(1);
   });
 
   test("startup helpers taking longer than the former one-second budget can settle", async () => {
@@ -44,7 +50,7 @@ describe("bounded managed agent start", () => {
     expect(f.calls).toHaveLength(8);
     expect(f.calls.every((p) => p === launch)).toBe(true);
     expect(f.waits.reduce((a, b) => a + b, 0)).toBe(1400);
-    expect(f.reads()).toBe(0);
+    expect(f.reads()).toBe(1);
   });
 
   test("deadline caps retries and final wait; diagnostic data cannot expose secret fields", async () => {
@@ -56,7 +62,8 @@ describe("bounded managed agent start", () => {
     const error = caught as AgentShellReadinessError;
     expect(error.diagnostics).toEqual({ attempts: 3, elapsedMs: 500, processInfo: "available", shellPid: 10, foregroundProcessGroupId: 10, foregroundProcessCount: 2, otherForegroundProcessCount: 1 });
     expect(f.waits).toEqual([200, 200, 100]);
-    expect(f.reads()).toBe(1);
+    // Two reads: the gate's own pre-flight check, plus diagnose()'s on exhaustion.
+    expect(f.reads()).toBe(2);
     expect(error.message + JSON.stringify(error)).not.toContain("secret");
   });
 
@@ -79,7 +86,7 @@ describe("bounded managed agent start", () => {
       await expect(startManagedAgent(f.client, launch, f.options)).rejects.toBe(error);
       expect(f.calls).toHaveLength(1);
       expect(f.waits).toEqual([]);
-      expect(f.reads()).toBe(0);
+      expect(f.reads()).toBe(1);
     }
   });
 
@@ -94,9 +101,22 @@ describe("bounded managed agent start", () => {
   test("hung or failed diagnostic reads do not hide the bounded readiness error", async () => {
     for (const read of [async () => { throw new Error("secret"); }, () => new Promise<never>(() => {})]) {
       const f = fixture(async () => { throw busy(); });
-      f.client.pane.processInfo = read;
+      const original = f.client.pane.processInfo;
+      let calls = 0;
+      // Call 1 is the gate's own pre-flight check -- let it pass instantly
+      // (checkCanonicalMode defaults to "raw") so this test still reaches
+      // the busy-retry -> diagnose() path it exists to cover. Only calls
+      // AFTER that (diagnose()'s own, once busy-retry exhausts) exercise
+      // the hung/failing read this test is actually about.
+      f.client.pane.processInfo = ((...args: Parameters<typeof original>) => (++calls === 1 ? original(...args) : read())) as typeof original;
       let caught: unknown;
-      try { await startManagedAgent(f.client, launch, { ...f.options, readinessTimeoutMs: 1, diagnosticWait: async () => {} }); }
+      // No diagnosticWait override here (unlike the pre-FACTORY-1037 version
+      // of this test): with one in place, it would race call 1's OWN
+      // instantly-resolving read on equal microtask footing and could win,
+      // defeating the "let the gate's pre-flight check pass" setup below.
+      // The real 250ms setTimeout fallback still bounds the hung/failing
+      // variant's own wait -- just not instantly, which is fine for a test.
+      try { await startManagedAgent(f.client, launch, { ...f.options, readinessTimeoutMs: 1 }); }
       catch (error) { caught = error; }
       expect(caught).toBeInstanceOf(AgentShellReadinessError);
       expect((caught as AgentShellReadinessError).diagnostics.processInfo).toBe("unavailable");
@@ -108,7 +128,160 @@ describe("bounded managed agent start", () => {
       const f = fixture(async () => success);
       await expect(startManagedAgent(f.client, launch, { readinessTimeoutMs: value })).rejects.toBeInstanceOf(RangeError);
       await expect(startManagedAgent(f.client, launch, { retryIntervalMs: value })).rejects.toBeInstanceOf(RangeError);
+      await expect(startManagedAgent(f.client, launch, { canonicalModeTimeoutMs: value })).rejects.toBeInstanceOf(RangeError);
       expect(f.calls).toEqual([]);
     }
   });
+});
+
+describe("canonical-mode readiness gate (FACTORY-1037)", () => {
+  // Incident mechanism, reproduced in isolation and live against a real
+  // herdr with a deliberately slow shell startup: a pane can report "no
+  // foreground child, just the shell" (herdr's own busy check passes)
+  // before the shell has actually left kernel canonical TTY mode, in which
+  // case any single injected line over the kernel's 4096-byte canonical
+  // limit is silently capped with no error and no terminating newline --
+  // the command never submits. These pin the gate that gives agent.start a
+  // GROUND-TRUTH readiness signal (checkCanonicalMode) instead of trusting
+  // a bare foreground-process check.
+
+  test("never calls agent.start while the shell is confirmed still canonical, even once", async () => {
+    const f = fixture(async () => success);
+    const checked: number[] = [];
+    const caught = await startManagedAgent(f.client, launch, {
+      ...f.options, canonicalModeTimeoutMs: 50, retryIntervalMs: 5,
+      checkCanonicalMode: async (shellPid) => { checked.push(shellPid); return "canonical"; },
+    }).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as { code?: string }).code).toBe("agent_terminal_canonical_mode_timeout");
+    expect((caught as { paneId?: string }).paneId).toBe("w1:p1");
+    // Zero injection attempts -- exactly-once launch semantics hold trivially: nothing launched at all.
+    expect(f.calls).toEqual([]);
+    expect(checked.every((pid) => pid === 10)).toBe(true);
+    expect(checked.length).toBeGreaterThan(1); // actually polled, not a single check
+  });
+
+  test("a pane that leaves canonical mode partway through the bound proceeds, with full argv preserved", async () => {
+    const f = fixture(async () => success);
+    let calls = 0;
+    const paddedArg = "p".repeat(5970) + "_🙂_" + "'; echo not-injected #";
+    const longLaunch = { ...launch, args: [paddedArg] };
+    const result = await startManagedAgent(f.client, longLaunch, {
+      ...f.options, canonicalModeTimeoutMs: 1_000, retryIntervalMs: 1,
+      checkCanonicalMode: async () => (++calls <= 3 ? "canonical" : "raw"),
+    });
+    expect(result).toBe(success);
+    expect(calls).toBe(4);
+    expect(f.calls).toEqual([longLaunch]);
+    expect((f.calls[0] as { args: string[] }).args[0]).toBe(paddedArg); // byte-for-byte, not re-quoted or mangled
+  });
+
+  // Self-review finding: "unsupported" (a STATIC, permanent fact about this
+  // host -- not Linux, so polling could never produce a different answer)
+  // is the ONLY readiness-check reading that proceeds without exhausting
+  // the bound. It must still be checked (not assumed) and still proceeds
+  // on the very first read, with no polling -- there would be nothing to
+  // wait for.
+  test("a statically unsupported host (checkCanonicalMode: unsupported) proceeds on the first check, no polling", async () => {
+    const f = fixture(async () => success);
+    let checks = 0;
+    const result = await startManagedAgent(f.client, launch, {
+      ...f.options, checkCanonicalMode: async () => { checks++; return "unsupported"; },
+    });
+    expect(result).toBe(success);
+    expect(checks).toBe(1);
+    expect(f.calls).toEqual([launch]);
+  });
+
+  // Self-review finding (the actual review this responds to): a pane with
+  // no shell_pid yet, or a readiness check returning "unknown" (a
+  // TRANSIENT failure), must NEVER be treated as "safe to proceed" -- an
+  // earlier draft did exactly that, which is precisely the newly-created-
+  // pane window this ticket targets (a brand new pane very often has no
+  // shell_pid for the first instant of its life). Both must be retried
+  // within the bound, and REFUSED (never silently proceed) if the bound
+  // passes with the state still unconfirmed.
+  test("no shell_pid yet (interrupted/uncertain startup) is retried, never treated as safe, and refused once the bound passes", async () => {
+    const f = fixture(async () => success);
+    f.client.pane.processInfo = (async () => ({ type: "pane_process_info" as const, process_info: { pane_id: "w1:p1" } })) as typeof f.client.pane.processInfo;
+    let checked = false;
+    const caught = await startManagedAgent(f.client, launch, {
+      ...f.options, canonicalModeTimeoutMs: 20, retryIntervalMs: 5,
+      checkCanonicalMode: async () => { checked = true; return "raw"; },
+    }).catch((e: unknown) => e);
+    expect((caught as { code?: string })?.code).toBe("agent_terminal_canonical_mode_timeout");
+    expect(checked).toBe(false); // never even reaches the check -- there is no shell_pid to check
+    expect(f.calls).toEqual([]);
+  });
+
+  test("a missing shell_pid that becomes available partway through the bound proceeds normally once confirmed raw", async () => {
+    const f = fixture(async () => success);
+    let processInfoCalls = 0;
+    const realProcessInfo = f.client.pane.processInfo;
+    f.client.pane.processInfo = (async (...args: Parameters<typeof realProcessInfo>) => {
+      processInfoCalls++;
+      if (processInfoCalls <= 2) return { type: "pane_process_info" as const, process_info: { pane_id: "w1:p1" } };
+      return realProcessInfo(...args);
+    }) as typeof realProcessInfo;
+    const result = await startManagedAgent(f.client, launch, { ...f.options, retryIntervalMs: 1 });
+    expect(result).toBe(success);
+    expect(processInfoCalls).toBeGreaterThanOrEqual(3);
+    expect(f.calls).toEqual([launch]);
+  });
+
+  test("a readiness check stuck on 'unknown' (transient failure that never resolves) is refused, never treated as safe", async () => {
+    const f = fixture(async () => success);
+    const caught = await startManagedAgent(f.client, launch, {
+      ...f.options, canonicalModeTimeoutMs: 20, retryIntervalMs: 5,
+      checkCanonicalMode: async () => "unknown",
+    }).catch((e: unknown) => e);
+    expect((caught as { code?: string })?.code).toBe("agent_terminal_canonical_mode_timeout");
+    expect(f.calls).toEqual([]);
+  });
+
+  test("a readiness check that resolves from 'unknown' to 'raw' partway through the bound proceeds normally", async () => {
+    const f = fixture(async () => success);
+    let calls = 0;
+    const result = await startManagedAgent(f.client, launch, {
+      ...f.options, retryIntervalMs: 1,
+      checkCanonicalMode: async () => (++calls <= 3 ? "unknown" : "raw"),
+    });
+    expect(result).toBe(success);
+    expect(calls).toBe(4);
+    expect(f.calls).toEqual([launch]);
+  });
+
+  test("the gate itself never retries agent.start -- busy-retry afterward is unaffected and still exactly matches pre-FACTORY-1037 behavior", async () => {
+    let attempts = 0;
+    const f = fixture(async () => { if (++attempts <= 2) throw busy(); return success; });
+    const result = await startManagedAgent(f.client, launch, f.options);
+    expect(result).toBe(success);
+    expect(f.calls).toHaveLength(3);
+    expect(f.calls.every((p) => p === launch)).toBe(true); // no duplicate/mutated argv across retries
+  });
+
+  // The ticket's own measured boundary: Linux MAX_CANON is 4096 bytes: a
+  // line AT 4095 or below fits inside a single canonical-mode read, 4096
+  // lands exactly on it, and 4097+ is where the kernel silently drops the
+  // remainder with no error (reproduced in isolation; see the PR). None of
+  // these sizes should matter to THIS gate -- it acts on the shell's TTY
+  // mode, not on measuring argv length -- which is itself worth pinning:
+  // the gate must preserve the exact arg, unmangled, at every size.
+  for (const size of [4095, 4096, 4097, 6001]) {
+    test(`a ${size}-byte argument is preserved byte-for-byte once the gate clears`, async () => {
+      const f = fixture(async () => success);
+      const arg = "b".repeat(size);
+      const sized = { ...launch, args: [arg] };
+      let polls = 0;
+      const result = await startManagedAgent(f.client, sized, {
+        ...f.options, retryIntervalMs: 1,
+        checkCanonicalMode: async () => (++polls <= 2 ? "canonical" : "raw"),
+      });
+      expect(result).toBe(success);
+      expect(f.calls).toEqual([sized]);
+      const sentArg = (f.calls[0] as { args: string[] }).args[0]!;
+      expect(sentArg.length).toBe(size);
+      expect(sentArg).toBe(arg);
+    });
+  }
 });

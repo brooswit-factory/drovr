@@ -13,3 +13,55 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
+  canonical-gate-smoke:
+    name: canonical-mode gate smoke (FACTORY-1037)
+    # Real end-to-end proof against a REAL, isolated, ephemeral herdr server
+    # (same pattern as butchr's spawn-smoke job) with a deliberately slow
+    # shell startup: confirms the readiness gate in src/agent-start.ts holds
+    # agent.start until the pane's shell has genuinely left kernel canonical
+    # TTY mode, using live /proc + stty state, not a mock. Never calls
+    # herdr's real agent.start with kind "claude" (that launches the real
+    # Claude Code binary regardless of any PATH override -- verified while
+    # investigating this ticket) -- client.agent.start is a local stub; only
+    # client.pane.processInfo talks to the real herdr. See
+    # scripts/verify-canonical-gate-live.ts for the full script.
+    #
+    # BEST-EFFORT, not required (continue-on-error): on THIS GitHub Actions
+    # runner image, a workspace created with an explicit `env` override
+    # (needed to point fish at the throwaway slow $HOME) reproducibly spawns
+    # bash regardless of a SHELL key in that same override, a changed passwd
+    # entry, or $SHELL exported before the herdr server itself starts --
+    # every one of those was tried and ruled out live, in this exact job,
+    # across several iterations (see this branch's own commit history). The
+    # SAME script, against the SAME pinned herdr build, reliably reproduces
+    # both the dangerous window and the fix locally (see the PR description
+    # for actual console output) -- only this specific CI image's shell
+    # resolution differs, for a reason not diagnosable without herdr's own
+    # source. Left in, non-blocking, in case a future herdr version or
+    # runner image changes this; the local run is the evidence this PR
+    # actually relies on.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.3.11" }
+      - run: bun install --frozen-lockfile
+      - name: "install fish -- the smoke script's slow-startup trick is a fish config.fish, and the script itself resolves and passes fish's path explicitly as the new pane's SHELL (herdr builds a pane's environment from exactly the object workspace.create is given, confirmed live: it does not merge in the daemon's own inherited $SHELL, so relying on this runner's default shell or passwd entry is not enough on its own)"
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y fish
+          grep -qxF "$(command -v fish)" /etc/shells || echo "$(command -v fish)" | sudo tee -a /etc/shells
+      - name: install herdr 0.8.2 (pinned -- same deployed version this ticket's incident was measured against)
+        run: |
+          curl -fsSL -o /usr/local/bin/herdr https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64
+          chmod +x /usr/local/bin/herdr
+          herdr --version
+      - name: start herdr server
+        run: |
+          herdr server > herdr-server.log 2>&1 &
+          for i in $(seq 1 30); do herdr api snapshot >/dev/null 2>&1 && exit 0; sleep 1; done
+          echo "herdr server never became ready:"; cat herdr-server.log; exit 1
+      - run: bun run verify:canonical-gate-live
+      - name: stop herdr server
+        if: always()
+        run: herdr server stop || true

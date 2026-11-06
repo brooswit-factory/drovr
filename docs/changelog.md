@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.16.13
+
+`ManagedHerdrLifecycle.start()` no longer reports a launch as `"success"`
+while the pane is still `launch_pending` (FACTORY-1037). herdr accepting a
+launch only means it decided to try; incident evidence showed a shell not
+yet ready for the injected command can leave a pane permanently
+`launch_pending` — no process, no thrown error — while the only existing
+post-launch check (`resolveCurrent()` finding any matching entry) still
+passed, so a stuck, truncated launch was reported as a launched agent. A
+new `awaitLaunchSettled()` polls (bounded by the new `launchPendingTimeoutMs`
+option, default 60s) until the flag clears or the ceiling is reached, at
+which point the launch is reported `"blocked"` with a clear reason instead.
+Ordinary launches that never report `launch_pending` are unaffected — the
+added check is a single boolean read on the result `resolveCurrent()` was
+already fetching, with no new poll on that path. On timeout, the stuck pane
+is now also closed (review finding) rather than left holding truncated,
+unsubmitted input forever.
+
+`startManagedAgent` (`agent-start.ts`) now refuses to call `agent.start` at
+all while a pane's shell is confirmed still in kernel canonical TTY mode
+(FACTORY-1037 Work #2 — the actual native readiness/launch contract, not
+only detection after the fact). herdr's own pre-launch busy check is
+foreground-process-based and cannot see this: a pane can report "no
+foreground child, just the shell" before the shell has actually called
+`tcsetattr` to leave canonical mode, in which case a single injected line
+over the kernel's 4096-byte canonical-mode limit is silently capped with no
+error and no terminating newline, so the command never submits. The new
+`checkCanonicalMode` (`terminal-readiness.ts`) resolves the pane's already-
+reported `shell_pid` to its controlling tty via `/proc/<pid>/fd/0` and reads
+its real termios state with `stty -g` — ground truth, not herdr's
+self-report — bounded by a new `canonicalModeTimeoutMs` option (default
+5s). Reproduced both in isolation (a bare `pty.openpty()` pair) and live
+against a real herdr with a deliberately slow shell startup; see
+`scripts/verify-canonical-gate-live.ts` and the new `canonical-gate-smoke`
+CI job. A platform or pane this check cannot verify (no `/proc`, no `stty`,
+no `shell_pid` yet) degrades to the pre-existing, unprotected behavior
+rather than ever blocking somewhere this mechanism doesn't apply.
+
 ## 0.16.12
 
 `checkManagedAgentArgv`'s Codex `--dangerously-bypass-approvals-and-sandbox`
