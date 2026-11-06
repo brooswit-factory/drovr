@@ -31,6 +31,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.3.11" }
       - run: bun install --frozen-lockfile
+      - name: install fish and make it this runner's login shell (herdr spawns the pane's OWN login shell from /etc/passwd, not $SHELL or whatever is merely on PATH -- confirmed live: installing fish without this step still left panes on the runner's existing bash, so the script's fish config.fish slow-startup trick was never read at all)
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y fish
+          sudo usermod -s "$(command -v fish)" "$(whoami)"
       - name: install herdr 0.8.2 (pinned -- same deployed version this ticket's incident was measured against)
         run: |
           curl -fsSL -o /usr/local/bin/herdr https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-linux-x86_64
