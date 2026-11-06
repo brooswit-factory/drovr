@@ -33,10 +33,29 @@ its real termios state with `stty -g` — ground truth, not herdr's
 self-report — bounded by a new `canonicalModeTimeoutMs` option (default
 5s). Reproduced both in isolation (a bare `pty.openpty()` pair) and live
 against a real herdr with a deliberately slow shell startup; see
-`scripts/verify-canonical-gate-live.ts` and the new `canonical-gate-smoke`
-CI job. A platform or pane this check cannot verify (no `/proc`, no `stty`,
-no `shell_pid` yet) degrades to the pre-existing, unprotected behavior
-rather than ever blocking somewhere this mechanism doesn't apply.
+`scripts/verify-canonical-gate-live.ts`.
+
+Readiness is fail-closed, not fail-open: only a STATIC, permanent fact
+about the host (not Linux — nothing this mechanism could ever apply to)
+proceeds without exhausting the bound. Every other "can't tell yet" case —
+no `shell_pid` reported for this pane yet (including a `processInfo` call
+that itself failed or timed out), or a transient `/proc`/`stty` read
+failure — is retried within the bound and REFUSED (`AgentTerminalNotReadyError`)
+if it never resolves to a confirmed-safe reading. An earlier draft treated
+both cases the same and let the missing-`shell_pid` case proceed
+immediately, which is exactly the newly-created-pane window this change
+exists to cover; fixed before merge (see PR #100's own review history).
+
+Known limitation: the `canonical-gate-smoke` CI job (mirroring butchr's
+`spawn-smoke` pattern) is `continue-on-error: true`, not a passing,
+required end-to-end check. On the GitHub-hosted runner image, a workspace
+created with an explicit `env` override reproducibly spawns bash instead of
+the intended slow-starting fish, for a shell-resolution reason not
+diagnosable without herdr's own source (see that job's own comment in
+`.github/workflows/ci.yml`). The fail-before/pass-after proof this feature
+depends on was run, and passes, against the real deployed herdr host
+directly (`bun run verify:canonical-gate-live`) — not yet reproduced as an
+automated, required CI gate.
 
 ## 0.16.12
 
