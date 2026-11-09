@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   approveCodexApproval,
   autoAnswerCodexApprovals,
+  cancelCodexApproval,
   classifyCodexApprovalScreen,
   onceOptionIndex,
   scanPendingCodexApprovals,
@@ -141,6 +142,79 @@ describe("classifyCodexApprovalScreen", () => {
     const badMcpResult = classifyCodexApprovalScreen(badMcp) as { fingerprint: string };
     expect(bareFooter.fingerprint).not.toBe(badMcpResult.fingerprint);
   });
+
+  // FACTORY-1044 — the concrete incident: GitHub's MCP extension drops
+  // "the"/"MCP server" for its own short server name on a quoted tool call.
+  test("GitHub's 'run tool' wording (no 'the … MCP server') is recognised, server captured", async () => {
+    const prompt = classifyCodexApprovalScreen(await fixture("pane-github-mcp-convert-draft.txt")) as CodexPermissionPrompt;
+    expect(prompt.kind).toBe("mcp-tool");
+    expect(prompt.server).toBe("GitHub");
+    expect(prompt.detail).toBe("GitHub.github.convert_pull_request_to_draft");
+    expect(prompt.options.map((o) => o.split(/ {2,}/)[0])).toEqual(["Allow", "Allow for this session", "Always allow", "Cancel"]);
+  });
+
+  // FACTORY-1044 — the second incident dialog: a friendly action description,
+  // no quoted tool name at all, PLUS realistic scrollback above the dialog
+  // (a startup banner, the user's own turn) and line-wrapped body text below
+  // the question (the tool-call cell and the stale-head note both wrap) —
+  // neither of which this module parses into `detail`, so wrapping there
+  // must not break classification.
+  test("GitHub's friendly 'submit a pull request review' wording is recognised despite scrollback above/below and wrapped body text, and the stale PR/commit context survives into detail", async () => {
+    const raw = await fixture("pane-github-mcp-stale-review.txt");
+    expect(raw).toContain("36160c"); // sanity: the stale head is actually in this fixture
+    const prompt = classifyCodexApprovalScreen(raw) as CodexPermissionPrompt;
+    expect(prompt.kind).toBe("mcp-tool");
+    expect(prompt.server).toBe("GitHub");
+    // FACTORY-1044 review fix (comment 52566): the body block between the
+    // question and the option list (action/PR/commit, including the
+    // line-wrapped stale-head note) is folded into `detail`, not dropped —
+    // this is the one piece of context that actually matters once the
+    // dialog is recognised and gated rather than shown raw.
+    expect(prompt.detail).toBe(
+      'GitHub.submit a pull request review — action: REQUEST_CHANGES pull request: #4 commit: 36160c1b9a2e4f7d8c3b5a6e9f0d1c2b3a4e5f6a (this PR\'s current head has since moved past this commit — the review target below may no longer match what is actually open on GitHub)',
+    );
+  });
+
+  // A GitHub action never captured before (not one of the ticket's two
+  // examples) is still recognised the same way — the gate FACTORY-1044 adds
+  // is on the SERVER name, not an allowlist of actions, so "reasonable
+  // variants … other GitHub tool names in the same dialog family" need no
+  // separate entry.
+  test("an unseen GitHub action in the same dialog family is recognised the same way", async () => {
+    const prompt = classifyCodexApprovalScreen(await fixture("pane-github-mcp-merge-unseen-action.txt")) as CodexPermissionPrompt;
+    expect(prompt.kind).toBe("mcp-tool");
+    expect(prompt.server).toBe("GitHub");
+    expect(prompt.detail).toBe("GitHub.merge a pull request");
+  });
+
+  // Self-review correction: the friendly, unquoted-tool wording ("Allow X to
+  // Y?") has only ever been observed for GitHub's extension. A same-shaped
+  // dialog naming a DIFFERENT server must stay unrecognised rather than be
+  // guessed into `mcp-tool` — recognising it would hand it to `onceOptionIndex`,
+  // which presses "Allow" once for every `mcp-tool` prompt whose server is
+  // not GitHub, auto-approving an unseen vendor's action sight unseen. That
+  // is exactly the "unknown/out-of-scope actions remain gated" violation
+  // this ticket forbids.
+  test("a non-GitHub server's friendly, unquoted-tool wording stays unrecognised, never auto-pressed", async () => {
+    const raw = await fixture("pane-mcp-friendly-non-github.txt");
+    const screen = classifyCodexApprovalScreen(raw);
+    expect(screen?.kind).toBe("unrecognised");
+  });
+
+  // Parity: every pre-existing shape this module already recognised still
+  // classifies exactly as before FACTORY-1044 — the new GitHub wording
+  // variants and the new `server` field must never change an existing
+  // dialog's own `kind`/`detail`/`options`.
+  test("parity: existing command/file-edit/generic-mcp-tool shapes are completely unaffected", async () => {
+    const cmd = classifyCodexApprovalScreen(await fixture("pane-command-outside-cwd.txt")) as CodexPermissionPrompt;
+    expect(cmd.kind).toBe("command");
+    const edit = classifyCodexApprovalScreen(await fixture("pane-file-edit.txt")) as CodexPermissionPrompt;
+    expect(edit.kind).toBe("file-edit");
+    const mcp = classifyCodexApprovalScreen(await fixture("pane-mcp-tool.txt")) as CodexPermissionPrompt;
+    expect(mcp.kind).toBe("mcp-tool");
+    expect(mcp.detail).toBe("drovrprobe.danger_tool");
+    expect(mcp.server).toBe("drovrprobe");
+  });
 });
 
 describe("onceOptionIndex", () => {
@@ -163,12 +237,29 @@ describe("onceOptionIndex", () => {
     };
     expect(onceOptionIndex(prompt)).toBe(-1);
   });
+
+  // FACTORY-1044's hard constraint: recognising a GitHub mcp-tool dialog must
+  // NEVER make it pressable — "Allow" sits at options[0] exactly like every
+  // other mcp-tool dialog (so a bug that forgot the gate would otherwise
+  // silently approve it), yet onceOptionIndex must still refuse it.
+  test("-1 for a GitHub mcp-tool dialog even though its own 'Allow' option is right there at position 0", async () => {
+    for (const name of ["pane-github-mcp-convert-draft.txt", "pane-github-mcp-stale-review.txt", "pane-github-mcp-merge-unseen-action.txt"]) {
+      const prompt = classifyCodexApprovalScreen(await fixture(name)) as CodexPermissionPrompt;
+      expect(prompt.options[0]).toMatch(/^Allow\b/);
+      expect(onceOptionIndex(prompt)).toBe(-1);
+    }
+  });
+
+  test("a non-GitHub mcp-tool server is unaffected by the GitHub gate", async () => {
+    const prompt = classifyCodexApprovalScreen(await fixture("pane-mcp-tool.txt")) as CodexPermissionPrompt;
+    expect(onceOptionIndex(prompt)).toBe(0);
+  });
 });
 
 // Reading a pane never advances its own script — only a sent key does (the
 // pane's screen only changes once a key actually lands), matching
 // `permission-approval.test.ts`'s own fixture harness.
-function codexClient(panes: Record<string, { reads: string[]; agent?: string; hangAfterReads?: number; throwOnRead?: boolean }>) {
+function codexClient(panes: Record<string, { reads: string[]; agent?: string; hangAfterReads?: number; throwOnRead?: boolean; throwAfterReads?: number }>) {
   const keysSent: Record<string, string[][]> = {};
   const readCounts: Record<string, number> = {};
   const client = {
@@ -183,6 +274,10 @@ function codexClient(panes: Record<string, { reads: string[]; agent?: string; ha
         const count = (readCounts[p.target] = (readCounts[p.target] ?? 0) + 1);
         if (script?.hangAfterReads !== undefined && count > script.hangAfterReads) return new Promise<never>(() => undefined);
         if (script?.throwOnRead) throw new Error("read exploded");
+        // Throws starting from the (throwAfterReads + 1)th read of this pane — lets a test's
+        // INITIAL read succeed (to get a real promptId) while a LATER verification read fails,
+        // distinct from throwOnRead's unconditional-from-the-start throw.
+        if (script?.throwAfterReads !== undefined && count > script.throwAfterReads) throw new Error("verification read exploded");
         const text = script?.reads[0] ?? NO_PROMPT;
         return { type: "pane_read", read: { text } } as never;
       },
@@ -290,6 +385,29 @@ describe("approveCodexApproval", () => {
     expect(d.audit.map((r) => r.outcome)).toEqual(["no-prompt", "invalid-operator"]);
   });
 
+  // FACTORY-1044: authorization denial for a recognised-but-gated GitHub
+  // dialog — calling approveCodexApproval directly (as a human/host might,
+  // the same call path `autoAnswerCodexApprovals` uses internally) must
+  // refuse rather than press anything, even though the dialog classified
+  // successfully and even though its promptId is the exact one on screen.
+  test("a recognised GitHub mcp-tool prompt is refused as option-missing, nothing pressed", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review] } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await approveCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "option-missing" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["option-missing"]);
+    // The stale-head detail actually reached the refusal record — the whole
+    // point of recognising rather than leaving this "unrecognised". FACTORY-1044
+    // review fix (comment 52566): check the literal stale commit survived,
+    // not just the generic action name.
+    expect(d.audit[0]).toMatchObject({ kind: "mcp-tool" });
+    expect((d.audit[0] as { screenDetail: string }).screenDetail).toContain("GitHub.submit a pull request review");
+    expect((d.audit[0] as { screenDetail: string }).screenDetail).toContain("36160c1b9a2e4f7d8c3b5a6e9f0d1c2b3a4e5f6a");
+  });
+
   test("keys that leave the same prompt on screen are reported as not-cleared, never claimed as approved", async () => {
     const cmd = await fixture("pane-command-outside-cwd.txt");
     const { client } = codexClient({ "w1:p1": { reads: [cmd, cmd] } });
@@ -298,6 +416,145 @@ describe("approveCodexApproval", () => {
     const result = await approveCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
     expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
     expect(d.audit.map((r) => r.outcome)).toEqual(["approving", "not-cleared"]);
+  });
+});
+
+// FACTORY-1044 review fix (comment 52566): the ticket's "supported scoped
+// recovery can cancel safely" requirement — a deliberately SEPARATE,
+// explicitly-invoked operation from approveCodexApproval above, never
+// reached by autoAnswerCodexApprovals' own unattended sweep.
+describe("cancelCodexApproval", () => {
+  const base = { paneId: "w1:p1", operator: "brooswit", auditPath: "/audit.jsonl" };
+
+  function deps() {
+    const audit: Record<string, unknown>[] = [];
+    let clock = 0;
+    return {
+      appendAudit: async (_path: string, line: string) => { audit.push(JSON.parse(line)); },
+      now: () => new Date(Date.UTC(2026, 8, 26) + clock),
+      wait: async (ms: number) => { clock += ms; },
+      verifyTimeoutMs: 1_000,
+      pollMs: 250,
+      audit,
+    };
+  }
+
+  test("cancels the stale GitHub review dialog by selecting 'Cancel', verifies it cleared, audits before and after", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review] } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: true, kind: "mcp-tool" });
+    // Cancel sits at the last option (index 3), never the "Allow" at index 0 —
+    // the cursor starts on "Allow" (index 0), so pressing Cancel takes 3 "down"s.
+    expect(keysSent["w1:p1"]).toEqual([["down", "down", "down", "enter"]]);
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "cancelled"]);
+    expect(d.audit[0]).toMatchObject({ vendor: "codex", operator: "brooswit", paneId: "w1:p1", scope: "cancel", option: "Cancel                  Cancel this tool call" });
+    // The literal stale context (never pressed, but recorded) is the same
+    // thing a human reading this cancel's audit trail would want to see.
+    expect((d.audit[0] as { detail: string }).detail).toContain("36160c1b9a2e4f7d8c3b5a6e9f0d1c2b3a4e5f6a");
+  });
+
+  test("never selects 'Allow', 'Allow for this session', or 'Always allow' — only ever 'Cancel'", async () => {
+    const mcp = await fixture("pane-mcp-tool.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [mcp] } });
+    const prompt = classifyCodexApprovalScreen(mcp) as CodexPermissionPrompt;
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, deps());
+    expect(result).toMatchObject({ ok: true, kind: "mcp-tool" });
+    const keys = keysSent["w1:p1"]![0]!;
+    // Starting cursor is index 0 ("Allow"); Cancel is index 3 — 3 "down"s.
+    expect(keys).toEqual(["down", "down", "down", "enter"]);
+  });
+
+  test("a dialog with no 'Cancel' option at all is refused as cancel-missing, nothing pressed", async () => {
+    const cmd = await fixture("pane-command-outside-cwd.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [cmd] } });
+    const prompt = classifyCodexApprovalScreen(cmd) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "cancel-missing" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancel-missing"]);
+  });
+
+  test("a different prompt than the caller saw is refused, nothing pressed — never cancels a dialog that replaced the one the caller looked at", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const convert = await fixture("pane-github-mcp-convert-draft.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [convert] } });
+    const reviewPrompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: reviewPrompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "prompt-changed" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["prompt-changed"]);
+  });
+
+  test("an unrecognised dialog is refused, logged to the audit trail, and never pressed", async () => {
+    const badMcp = (await fixture("pane-mcp-tool.txt")).replace("    4. Cancel                  Cancel this tool call\n", "");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [badMcp] } });
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: "whatever" }, d);
+    expect(result).toMatchObject({ ok: false, reason: "unrecognised" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["unrecognised"]);
+  });
+
+  test("no prompt, or no operator, is refused and recorded, nothing pressed", async () => {
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [] } });
+    const d = deps();
+    expect(await cancelCodexApproval(client, { ...base, promptId: "x" }, d)).toMatchObject({ ok: false, reason: "no-prompt" });
+    expect(await cancelCodexApproval(client, { ...base, operator: " ", promptId: "x" }, d)).toMatchObject({ ok: false, reason: "invalid-operator" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["no-prompt", "invalid-operator"]);
+  });
+
+  test("keys that leave the same prompt on screen are reported as not-cleared, never claimed as cancelled", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const { client } = codexClient({ "w1:p1": { reads: [review, review] } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "not-cleared"]);
+  });
+
+  // FACTORY-1044 review fix (comments 52575/52576): a screen that reads
+  // successfully but fails to parse into a known dialog is NOT evidence
+  // the target dialog cleared — it could be the same approval-shaped
+  // dialog, merely garbled. Must stay "not-cleared" (with the ambiguous
+  // screen's fingerprint recorded), never "cancelled".
+  test("a still-visible but unparseable (unrecognised) screen after the keys are sent is reported as not-cleared with its fingerprint recorded, never claimed as cancelled", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const badMcp = (await fixture("pane-mcp-tool.txt")).replace("    4. Cancel                  Cancel this tool call\n", "");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review, badMcp] } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
+    expect(result.ok).toBe(false);
+    expect((result as { detail: string }).detail).toContain("unparseable");
+    expect(keysSent["w1:p1"]).toEqual([["down", "down", "down", "enter"]]); // keys were sent exactly once, never retried
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "not-cleared"]);
+    const finalRecord = d.audit[1] as { fingerprint?: string; screenDetail?: string };
+    expect(finalRecord.fingerprint).toBeDefined();
+    expect(finalRecord.screenDetail).toBeDefined();
+  });
+
+  // FACTORY-1044 review fix (comment 52576): a verification read that
+  // THROWS must never be silently swallowed into "no prompt" (hence
+  // false success) — it must surface as the existing, explicit
+  // verify-failed outcome, exactly like a thrown error anywhere else in
+  // this function.
+  test("a verification read that throws after the keys are sent is reported as verify-failed, never claimed as cancelled", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review], throwAfterReads: 1 } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "verify-failed" });
+    expect(keysSent["w1:p1"]).toEqual([["down", "down", "down", "enter"]]);
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "verify-failed"]);
   });
 });
 
@@ -363,6 +620,64 @@ describe("autoAnswerCodexApprovals", () => {
     const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
     expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered" });
     expect(byPane["w2:p1"]).toMatchObject({ outcome: "unrecognised" });
+    expect(keysSent["w1:p1"]).toEqual([["enter"]]);
+    expect(keysSent["w2:p1"]).toBeUndefined();
+  });
+
+  // FACTORY-1044: the full unattended path for the incident's own stale-PR
+  // dialog — recognised (so a human sees exactly what is waiting), never
+  // pressed, never bucketed as "answered", and never silently dropped.
+  test("a GitHub mcp-tool dialog is 'skipped' with the stale PR detail visible in the reason, never 'answered', nothing pressed", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const path = await freshAuditPath();
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review] } });
+    const results = await autoAnswerCodexApprovals(client, { auditPath: path });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    const reason = (results[0] as { reason: string }).reason;
+    expect(reason).toContain("GitHub.submit a pull request review");
+    // FACTORY-1044 review fix (comment 52566): the literal stale context —
+    // action, PR number, and the obsolete commit — must survive into the
+    // skip reason, not just the generic action name, or a human reading it
+    // has no way to tell this review target is stale without re-opening the
+    // pane themselves.
+    expect(reason).toContain("REQUEST_CHANGES");
+    expect(reason).toContain("#4");
+    expect(reason).toContain("36160c1b9a2e4f7d8c3b5a6e9f0d1c2b3a4e5f6a");
+    expect(reason).toContain("has since moved past this commit");
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    // No audit record at all: `onceOptionIndex` returning -1 is checked
+    // BEFORE `approveCodexApproval` is ever called (same as any other
+    // option-missing dialog), so nothing is written for it here — the only
+    // record of this sighting is the returned `skipped` result itself.
+    expect(await readAudit(path)).toEqual([]);
+  });
+
+  // The other incident dialog (quoted tool name, no friendly action text)
+  // takes the identical safe path.
+  test("the convert-to-draft GitHub dialog is also 'skipped', never 'answered'", async () => {
+    const convert = await fixture("pane-github-mcp-convert-draft.txt");
+    const path = await freshAuditPath();
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [convert] } });
+    const results = await autoAnswerCodexApprovals(client, { auditPath: path });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    expect(keysSent["w1:p1"]).toBeUndefined();
+  });
+
+  // One pane stuck on a gated GitHub dialog must never block another pane's
+  // ordinary (non-GitHub) approval — same isolation guarantee as the
+  // existing "unrecognised" case.
+  test("a gated GitHub dialog on one pane does not stop another pane from being answered", async () => {
+    const cmd = await fixture("pane-command-outside-cwd.txt");
+    const convert = await fixture("pane-github-mcp-convert-draft.txt");
+    const path = await freshAuditPath();
+    const { client, keysSent } = codexClient({
+      "w1:p1": { reads: [cmd] },
+      "w2:p1": { reads: [convert] },
+    });
+    const results = await autoAnswerCodexApprovals(client, { auditPath: path });
+    const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
+    expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered" });
+    expect(byPane["w2:p1"]).toMatchObject({ outcome: "skipped" });
     expect(keysSent["w1:p1"]).toEqual([["enter"]]);
     expect(keysSent["w2:p1"]).toBeUndefined();
   });

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.16.14
+
+`classifyCodexApprovalScreen` (`codex-permission-approval.ts`) now recognises
+GitHub's own MCP extension's two Codex tool-consent dialog wordings
+(FACTORY-1044) — `Allow GitHub to run tool "<tool>"?` (drops "the"/"MCP
+server" from the generic MCP-tool phrasing for its own short server name)
+and `Allow GitHub to <friendly action>?` (a friendly action description with
+no quoted tool name at all, e.g. "submit a pull request review"). Both
+classify as `kind: "mcp-tool"` with `server: "GitHub"`, but `onceOptionIndex`
+returns `-1` unconditionally for any `mcp-tool` prompt whose server is
+GitHub — matched on the SERVER name, not an allowlist of actions, so an
+unseen GitHub tool is gated by construction. Recognition is never
+authorization: GitHub review/PR-state actions write to a real PR other
+humans see, so they are held to a stricter bar than this module's own
+"approve-once is always fine" default for every other MCP server.
+`detail` for a GitHub `mcp-tool` prompt also folds in whatever body text
+Codex shows between the question and the option list (action, PR number,
+commit) rather than just the generic action name — e.g. a stale PR head
+survives into the skip/audit reason a human reads, instead of being
+dropped. The friendly, unquoted-tool wording is matched ONLY for GitHub
+(the only vendor it has ever been observed for); the same sentence naming
+any other server stays `kind: "unrecognised"` rather than being guessed
+into `mcp-tool` and auto-pressed.
+
+Added `cancelCodexApproval`: an explicitly-invoked, audited, prompt-identity-
+revalidated operation that selects a recognised dialog's own "Cancel" option
+(never "Allow", "Allow for this session", or "Always allow") — the scoped
+recovery path for a GitHub consent dialog whose target has gone stale (e.g.
+a queued PR review against a head the PR has since moved past). Verification
+requires the target dialog be demonstrably absent or replaced by a different,
+recognisable prompt; a still-visible but unparseable screen, or a
+verification read that throws, is never treated as a successful cancel.
+Deliberately a separate function from the unattended `autoAnswerCodexApprovals`
+sweep, which never decides on its own whether a pending review is safe to
+discard.
+
+Release asset: `brooswit-drovr-0.16.14.tgz`.
+
 ## 0.16.13
 
 `ManagedHerdrLifecycle.start()` no longer reports a launch as `"success"`

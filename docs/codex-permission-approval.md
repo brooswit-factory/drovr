@@ -109,6 +109,87 @@ padded onto each label; `onceOptionIndex`/the audit trail strip nothing —
 `mcpLabel()` (private) is how this module tells `"Allow"` apart from
 `"Allow for this session"` internally.
 
+#### GitHub's MCP extension: recognised, never auto-pressed (FACTORY-1044)
+
+The same `mcp-tool` shape also covers GitHub's own MCP extension, with two
+wording variants the original capture above did not have:
+
+```
+  Field 1/1
+  Allow GitHub to run tool "github.convert_pull_request_to_draft"?
+
+› 1. Allow                   Run the tool and continue.
+  2. Allow for this session  Run the tool and remember this choice for this session.
+  3. Always allow            Run the tool and remember this choice for future tool calls.
+  4. Cancel                  Cancel this tool call
+  enter to submit | esc to cancel
+```
+
+```
+  Field 1/1
+  Allow GitHub to submit a pull request review?
+
+› 1. Allow                   Run the tool and continue.
+  2. Allow for this session  Run the tool and remember this choice for this session.
+  3. Always allow            Run the tool and remember this choice for future tool calls.
+  4. Cancel                  Cancel this tool call
+  enter to submit | esc to cancel
+```
+
+A vendor-contributed extension (GitHub's) drops "the"/"MCP server" for its
+own short server name in the first variant, and for some actions (submitting
+or dismissing a PR review, converting a PR to draft, …) Codex shows a
+friendly action description instead of a raw tool name at all — no quoted
+tool, no "run tool" verb. Both are recognised into `kind: "mcp-tool"`,
+carrying the parsed server name on `server` and `"<server>.<tool-or-action>"`
+on `detail`.
+
+**The friendly, unquoted-tool wording is recognised ONLY for GitHub.**
+Unlike the quoted-tool variant (which names any server), the friendly
+"Allow X to Y?" sentence has only ever been captured for GitHub's own
+extension and carries no quoted tool name to tell a real action apart from
+an ordinary sentence. Recognising it for an unseen, arbitrary server would
+hand that dialog to `onceOptionIndex`, which presses "Allow" once for any
+`mcp-tool` prompt that is NOT GitHub — auto-approving an unknown vendor's
+action sight unseen. So the match itself is restricted to `server ===
+"GitHub"` at recognition time; the same sentence naming any other server
+stays `kind: "unrecognised"` rather than being guessed into `mcp-tool`.
+
+**Recognised is not the same as pressable.** `onceOptionIndex` returns `-1`
+unconditionally for any `mcp-tool` prompt whose `server` is `"GitHub"` —
+matched on the SERVER name, not an allowlist of actions, so a GitHub tool
+this module has never seen is still gated by construction. `approveCodexApproval`/
+`autoAnswerCodexApprovals` treat that exactly like any other
+no-approve-once-option dialog: refused/`skipped`, never pressed. The reason
+this module still bothers to recognise (rather than leave `"unrecognised"`)
+is that `detail` then carries the specific context a human needs to judge
+the pending action — not just the generic action name. For a GitHub
+`mcp-tool` prompt specifically, `detail` also folds in whatever body text
+Codex shows BETWEEN the question line and the option list — e.g.
+`action: REQUEST_CHANGES` / `pull request: #4` / `commit: <sha> (… has
+since moved past this commit …)` for a stale-head PR review — as
+`"<server>.<action> — <body>"`. Every other `mcp-tool` server's own body
+text (e.g. the generic capture's `note: probe test`) is deliberately left
+out of `detail`, to avoid changing that shape's existing "server.tool"
+format. GitHub review/PR-state actions write to a real PR other humans see;
+they are deliberately held to a stricter bar than this module's own
+"approve-once is always fine" default for every other MCP server.
+
+**Scoped recovery: `cancelCodexApproval`.** A gated GitHub `mcp-tool`
+dialog is never auto-pressed, but an operator who has READ the stale
+context above and decided the pending action should be thrown away (e.g. a
+PR review queued against a head the PR has since moved past) can cancel it
+explicitly with `cancelCodexApproval` — the same audit-first /
+re-read-and-refuse-a-changed-prompt / verify-cleared shape as
+`approveCodexApproval`, but selecting the dialog's own `"Cancel"` option
+instead of the approve-once one (never `"Allow"`, `"Allow for this
+session"`, or `"Always allow"`). It refuses with `"cancel-missing"` for any
+recognised dialog that has no `"Cancel"` option at all (only `mcp-tool`
+ever does). This is a SEPARATE function the caller must invoke on
+purpose — it is never reached by `autoAnswerCodexApprovals`'s own
+unattended sweep, which has no way to know on its own whether a pending
+review is actually safe to discard.
+
 ### Directory trust — a separate, pre-existing dialog
 
 The directory-trust dialog Codex shows on first entering an untrusted
@@ -124,7 +205,15 @@ corrected by the pre-existing `src/codex-trust.ts` (marks the agent
 | `Would you like to run the following command?` | `command` | `Yes, proceed` (position 1) | `Yes, and don't ask again for commands that start with …` |
 | `Would you like to make the following edits?` | `file-edit` | `Yes, proceed` (position 1) | `Yes, and don't ask again for these files` |
 | `Allow the <server> MCP server to run tool "<tool>"?` | `mcp-tool` | `Allow` (position 1) | `Allow for this session`, `Always allow` |
+| `Allow <server> to run tool "<tool>"?` | `mcp-tool` | `Allow` (position 1), unless `server` is `GitHub` (see below) | same as above |
+| `Allow GitHub to <friendly action>?` | `mcp-tool` | never — `server` is always `GitHub` here (see below) | same as above |
+| `Allow <any other server> to <friendly action>?` | `unrecognised` | — (never recognised, so never pressed) | — |
 | *(directory trust — separate dialog, see above)* | *(not this module)* | — | — |
+
+**GitHub is the one exception to "`mcp-tool` always has a pressable
+approve-once option":** any `mcp-tool` prompt whose `server` is `"GitHub"`
+has `onceOptionIndex` return `-1` regardless of wording or action — see
+"GitHub's MCP extension" above.
 
 Anything else that shows one of the two known footers (`Press enter to
 confirm or esc to cancel`, `enter to submit \| esc to cancel`) or a
