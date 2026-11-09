@@ -109,6 +109,55 @@ padded onto each label; `onceOptionIndex`/the audit trail strip nothing —
 `mcpLabel()` (private) is how this module tells `"Allow"` apart from
 `"Allow for this session"` internally.
 
+#### GitHub's MCP extension: recognised, never auto-pressed (FACTORY-1044)
+
+The same `mcp-tool` shape also covers GitHub's own MCP extension, with two
+wording variants the original capture above did not have:
+
+```
+  Field 1/1
+  Allow GitHub to run tool "github.convert_pull_request_to_draft"?
+
+› 1. Allow                   Run the tool and continue.
+  2. Allow for this session  Run the tool and remember this choice for this session.
+  3. Always allow            Run the tool and remember this choice for future tool calls.
+  4. Cancel                  Cancel this tool call
+  enter to submit | esc to cancel
+```
+
+```
+  Field 1/1
+  Allow GitHub to submit a pull request review?
+
+› 1. Allow                   Run the tool and continue.
+  2. Allow for this session  Run the tool and remember this choice for this session.
+  3. Always allow            Run the tool and remember this choice for future tool calls.
+  4. Cancel                  Cancel this tool call
+  enter to submit | esc to cancel
+```
+
+A vendor-contributed extension (GitHub's) drops "the"/"MCP server" for its
+own short server name in the first variant, and for some actions (submitting
+or dismissing a PR review, converting a PR to draft, …) Codex shows a
+friendly action description instead of a raw tool name at all — no quoted
+tool, no "run tool" verb. Both are still recognised into `kind: "mcp-tool"`,
+carrying the parsed server name on `server` and `"<server>.<tool-or-action>"`
+on `detail`.
+
+**Recognised is not the same as pressable.** `onceOptionIndex` returns `-1`
+unconditionally for any `mcp-tool` prompt whose `server` is `"GitHub"` —
+matched on the SERVER name, not an allowlist of actions, so a GitHub tool
+this module has never seen is still gated by construction. `approveCodexApproval`/
+`autoAnswerCodexApprovals` treat that exactly like any other
+no-approve-once-option dialog: refused/`skipped`, never pressed. The reason
+this module still bothers to recognise (rather than leave `"unrecognised"`)
+is that `detail` then carries the specific server/tool/action text — e.g. a
+stale PR head or a PR number embedded in Codex's own prompt text — so the
+skip reason tells a human exactly what is waiting instead of an opaque
+unparsed excerpt. GitHub review/PR-state actions write to a real PR other
+humans see; they are deliberately held to a stricter bar than this module's
+own "approve-once is always fine" default for every other MCP server.
+
 ### Directory trust — a separate, pre-existing dialog
 
 The directory-trust dialog Codex shows on first entering an untrusted
@@ -124,7 +173,14 @@ corrected by the pre-existing `src/codex-trust.ts` (marks the agent
 | `Would you like to run the following command?` | `command` | `Yes, proceed` (position 1) | `Yes, and don't ask again for commands that start with …` |
 | `Would you like to make the following edits?` | `file-edit` | `Yes, proceed` (position 1) | `Yes, and don't ask again for these files` |
 | `Allow the <server> MCP server to run tool "<tool>"?` | `mcp-tool` | `Allow` (position 1) | `Allow for this session`, `Always allow` |
+| `Allow <server> to run tool "<tool>"?` | `mcp-tool` | `Allow` (position 1), unless `server` is `GitHub` (see below) | same as above |
+| `Allow <server> to <friendly action>?` | `mcp-tool` | `Allow` (position 1), unless `server` is `GitHub` (see below) | same as above |
 | *(directory trust — separate dialog, see above)* | *(not this module)* | — | — |
+
+**GitHub is the one exception to "`mcp-tool` always has a pressable
+approve-once option":** any `mcp-tool` prompt whose `server` is `"GitHub"`
+has `onceOptionIndex` return `-1` regardless of wording or action — see
+"GitHub's MCP extension" above.
 
 Anything else that shows one of the two known footers (`Press enter to
 confirm or esc to cancel`, `enter to submit \| esc to cancel`) or a

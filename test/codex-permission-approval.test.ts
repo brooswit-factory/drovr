@@ -141,6 +141,58 @@ describe("classifyCodexApprovalScreen", () => {
     const badMcpResult = classifyCodexApprovalScreen(badMcp) as { fingerprint: string };
     expect(bareFooter.fingerprint).not.toBe(badMcpResult.fingerprint);
   });
+
+  // FACTORY-1044 — the concrete incident: GitHub's MCP extension drops
+  // "the"/"MCP server" for its own short server name on a quoted tool call.
+  test("GitHub's 'run tool' wording (no 'the … MCP server') is recognised, server captured", async () => {
+    const prompt = classifyCodexApprovalScreen(await fixture("pane-github-mcp-convert-draft.txt")) as CodexPermissionPrompt;
+    expect(prompt.kind).toBe("mcp-tool");
+    expect(prompt.server).toBe("GitHub");
+    expect(prompt.detail).toBe("GitHub.github.convert_pull_request_to_draft");
+    expect(prompt.options.map((o) => o.split(/ {2,}/)[0])).toEqual(["Allow", "Allow for this session", "Always allow", "Cancel"]);
+  });
+
+  // FACTORY-1044 — the second incident dialog: a friendly action description,
+  // no quoted tool name at all, PLUS realistic scrollback above the dialog
+  // (a startup banner, the user's own turn) and line-wrapped body text below
+  // the question (the tool-call cell and the stale-head note both wrap) —
+  // neither of which this module parses into `detail`, so wrapping there
+  // must not break classification.
+  test("GitHub's friendly 'submit a pull request review' wording is recognised despite scrollback above/below and wrapped body text", async () => {
+    const raw = await fixture("pane-github-mcp-stale-review.txt");
+    expect(raw).toContain("36160c"); // sanity: the stale head is actually in this fixture
+    const prompt = classifyCodexApprovalScreen(raw) as CodexPermissionPrompt;
+    expect(prompt.kind).toBe("mcp-tool");
+    expect(prompt.server).toBe("GitHub");
+    expect(prompt.detail).toBe("GitHub.submit a pull request review");
+  });
+
+  // A GitHub action never captured before (not one of the ticket's two
+  // examples) is still recognised the same way — the gate FACTORY-1044 adds
+  // is on the SERVER name, not an allowlist of actions, so "reasonable
+  // variants … other GitHub tool names in the same dialog family" need no
+  // separate entry.
+  test("an unseen GitHub action in the same dialog family is recognised the same way", async () => {
+    const prompt = classifyCodexApprovalScreen(await fixture("pane-github-mcp-merge-unseen-action.txt")) as CodexPermissionPrompt;
+    expect(prompt.kind).toBe("mcp-tool");
+    expect(prompt.server).toBe("GitHub");
+    expect(prompt.detail).toBe("GitHub.merge a pull request");
+  });
+
+  // Parity: every pre-existing shape this module already recognised still
+  // classifies exactly as before FACTORY-1044 — the new GitHub wording
+  // variants and the new `server` field must never change an existing
+  // dialog's own `kind`/`detail`/`options`.
+  test("parity: existing command/file-edit/generic-mcp-tool shapes are completely unaffected", async () => {
+    const cmd = classifyCodexApprovalScreen(await fixture("pane-command-outside-cwd.txt")) as CodexPermissionPrompt;
+    expect(cmd.kind).toBe("command");
+    const edit = classifyCodexApprovalScreen(await fixture("pane-file-edit.txt")) as CodexPermissionPrompt;
+    expect(edit.kind).toBe("file-edit");
+    const mcp = classifyCodexApprovalScreen(await fixture("pane-mcp-tool.txt")) as CodexPermissionPrompt;
+    expect(mcp.kind).toBe("mcp-tool");
+    expect(mcp.detail).toBe("drovrprobe.danger_tool");
+    expect(mcp.server).toBe("drovrprobe");
+  });
 });
 
 describe("onceOptionIndex", () => {
@@ -162,6 +214,23 @@ describe("onceOptionIndex", () => {
       options: ["Allow for this session  …", "Always allow  …", "Cancel  …"],
     };
     expect(onceOptionIndex(prompt)).toBe(-1);
+  });
+
+  // FACTORY-1044's hard constraint: recognising a GitHub mcp-tool dialog must
+  // NEVER make it pressable — "Allow" sits at options[0] exactly like every
+  // other mcp-tool dialog (so a bug that forgot the gate would otherwise
+  // silently approve it), yet onceOptionIndex must still refuse it.
+  test("-1 for a GitHub mcp-tool dialog even though its own 'Allow' option is right there at position 0", async () => {
+    for (const name of ["pane-github-mcp-convert-draft.txt", "pane-github-mcp-stale-review.txt", "pane-github-mcp-merge-unseen-action.txt"]) {
+      const prompt = classifyCodexApprovalScreen(await fixture(name)) as CodexPermissionPrompt;
+      expect(prompt.options[0]).toMatch(/^Allow\b/);
+      expect(onceOptionIndex(prompt)).toBe(-1);
+    }
+  });
+
+  test("a non-GitHub mcp-tool server is unaffected by the GitHub gate", async () => {
+    const prompt = classifyCodexApprovalScreen(await fixture("pane-mcp-tool.txt")) as CodexPermissionPrompt;
+    expect(onceOptionIndex(prompt)).toBe(0);
   });
 });
 
@@ -290,6 +359,25 @@ describe("approveCodexApproval", () => {
     expect(d.audit.map((r) => r.outcome)).toEqual(["no-prompt", "invalid-operator"]);
   });
 
+  // FACTORY-1044: authorization denial for a recognised-but-gated GitHub
+  // dialog — calling approveCodexApproval directly (as a human/host might,
+  // the same call path `autoAnswerCodexApprovals` uses internally) must
+  // refuse rather than press anything, even though the dialog classified
+  // successfully and even though its promptId is the exact one on screen.
+  test("a recognised GitHub mcp-tool prompt is refused as option-missing, nothing pressed", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review] } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await approveCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "option-missing" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["option-missing"]);
+    // The stale-head detail actually reached the refusal record — the whole
+    // point of recognising rather than leaving this "unrecognised".
+    expect(d.audit[0]).toMatchObject({ kind: "mcp-tool", screenDetail: "GitHub.submit a pull request review" });
+  });
+
   test("keys that leave the same prompt on screen are reported as not-cleared, never claimed as approved", async () => {
     const cmd = await fixture("pane-command-outside-cwd.txt");
     const { client } = codexClient({ "w1:p1": { reads: [cmd, cmd] } });
@@ -363,6 +451,54 @@ describe("autoAnswerCodexApprovals", () => {
     const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
     expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered" });
     expect(byPane["w2:p1"]).toMatchObject({ outcome: "unrecognised" });
+    expect(keysSent["w1:p1"]).toEqual([["enter"]]);
+    expect(keysSent["w2:p1"]).toBeUndefined();
+  });
+
+  // FACTORY-1044: the full unattended path for the incident's own stale-PR
+  // dialog — recognised (so a human sees exactly what is waiting), never
+  // pressed, never bucketed as "answered", and never silently dropped.
+  test("a GitHub mcp-tool dialog is 'skipped' with the stale PR detail visible in the reason, never 'answered', nothing pressed", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const path = await freshAuditPath();
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review] } });
+    const results = await autoAnswerCodexApprovals(client, { auditPath: path });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    expect((results[0] as { reason: string }).reason).toContain("GitHub.submit a pull request review");
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    // No audit record at all: `onceOptionIndex` returning -1 is checked
+    // BEFORE `approveCodexApproval` is ever called (same as any other
+    // option-missing dialog), so nothing is written for it here — the only
+    // record of this sighting is the returned `skipped` result itself.
+    expect(await readAudit(path)).toEqual([]);
+  });
+
+  // The other incident dialog (quoted tool name, no friendly action text)
+  // takes the identical safe path.
+  test("the convert-to-draft GitHub dialog is also 'skipped', never 'answered'", async () => {
+    const convert = await fixture("pane-github-mcp-convert-draft.txt");
+    const path = await freshAuditPath();
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [convert] } });
+    const results = await autoAnswerCodexApprovals(client, { auditPath: path });
+    expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+    expect(keysSent["w1:p1"]).toBeUndefined();
+  });
+
+  // One pane stuck on a gated GitHub dialog must never block another pane's
+  // ordinary (non-GitHub) approval — same isolation guarantee as the
+  // existing "unrecognised" case.
+  test("a gated GitHub dialog on one pane does not stop another pane from being answered", async () => {
+    const cmd = await fixture("pane-command-outside-cwd.txt");
+    const convert = await fixture("pane-github-mcp-convert-draft.txt");
+    const path = await freshAuditPath();
+    const { client, keysSent } = codexClient({
+      "w1:p1": { reads: [cmd] },
+      "w2:p1": { reads: [convert] },
+    });
+    const results = await autoAnswerCodexApprovals(client, { auditPath: path });
+    const byPane = Object.fromEntries(results.map((r) => [r.paneId, r]));
+    expect(byPane["w1:p1"]).toMatchObject({ outcome: "answered" });
+    expect(byPane["w2:p1"]).toMatchObject({ outcome: "skipped" });
     expect(keysSent["w1:p1"]).toEqual([["enter"]]);
     expect(keysSent["w2:p1"]).toBeUndefined();
   });

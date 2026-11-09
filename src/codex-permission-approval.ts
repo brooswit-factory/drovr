@@ -80,6 +80,25 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  * pressed; there is no "always" scope for Codex the way Claude's
  * `permission-approval.ts` has one; approve-once is the only behaviour this
  * module offers, by design (FACTORY-106/FACTORY-107).
+ *
+ * FACTORY-1044: the SAME `mcp-tool` shape above also covers GitHub's own
+ * MCP extension, with two wording variants neither the original capture nor
+ * the regex above matched: `Allow GitHub to run tool
+ * "github.convert_pull_request_to_draft"?` (drops "the"/"MCP server" for a
+ * vendor extension's own short name) and `Allow GitHub to submit a pull
+ * request review?` (a friendly action description, no quoted tool name at
+ * all, for an action Codex has special-cased text for). Both are now
+ * recognised into `kind: "mcp-tool"` the same as any other server's — but a
+ * prompt whose `server` is `"GitHub"` is NEVER auto-pressed: `onceOptionIndex`
+ * returns -1 for it unconditionally, so `approveCodexApproval`/
+ * `autoAnswerCodexApprovals` refuse it exactly like any other
+ * no-approve-once-option dialog, regardless of which GitHub action it names
+ * (a tool this module has never seen is still gated, by construction, since
+ * the match is on the SERVER name, not an allowlist of actions). Recognising
+ * the shape still matters even though it is never pressed: `detail` carries
+ * the parsed server+tool/action text (e.g. a stale PR head, a PR number) so
+ * a human reading the skip reason sees exactly what is waiting, instead of
+ * an opaque unparsed excerpt.
  */
 
 type ApprovalClient = {
@@ -97,6 +116,14 @@ export interface CodexPermissionPrompt {
   cursor: number;
   /** A hash of kind, detail and options: names this prompt, not the cursor position. */
   promptId: string;
+  /**
+   * `mcp-tool` only: the server name exactly as Codex's own question line
+   * names it (e.g. `"GitHub"`, `"drovrprobe"`) — FACTORY-1044, so a caller
+   * can gate on the SERVER (see `onceOptionIndex`'s GitHub carve-out) without
+   * re-parsing `detail`, which is a derived display string, not a parsed
+   * field. Absent for `command`/`file-edit`.
+   */
+  server?: string;
 }
 
 /** A screen that looks like a Codex approval dialog but matches none of the three known shapes — reported, never guessed at. */
@@ -124,7 +151,45 @@ const FOOTER_RUN = /^\s*Press enter to confirm or esc to cancel\s*$/;
 const FOOTER_MCP = /^\s*enter to submit \| esc to cancel\s*$/;
 const QUESTION_COMMAND = /^\s*Would you like to run the following command\?\s*$/;
 const QUESTION_EDIT = /^\s*Would you like to make the following edits\?\s*$/;
+/**
+ * The three on-screen phrasings observed for this one dialog SHAPE (same
+ * `Field N/N` cell, same options/footer) — FACTORY-1044. All three share
+ * the identical structural gate below (`FOOTER_MCP` + an `Allow`/`Cancel`
+ * option pair): the phrasing alone never decides `kind: "mcp-tool"`.
+ *
+ *  1. `Allow the drovrprobe MCP server to run tool "danger_tool"?` — the
+ *     original capture (generic MCP servers, codex-cli 0.145.0).
+ *  2. `Allow GitHub to run tool "github.convert_pull_request_to_draft"?` —
+ *     same "run tool" wording, but a vendor-contributed extension (GitHub's)
+ *     drops "the"/"MCP server" and shows its own short name instead.
+ *  3. `Allow GitHub to submit a pull request review?` — the SAME vendor
+ *     extension, for an action Codex has a friendly description for instead
+ *     of a raw tool name: no quoted tool, no "run tool" verb at all.
+ *
+ * Tried in this order (most specific first) since (3) is structurally a
+ * superset of (1)/(2)'s own wording ("Allow X to Y?") and would otherwise
+ * swallow them with the generic/unquoted detail text instead of the more
+ * specific one.
+ */
 const QUESTION_MCP = /^\s*Allow the (.+) MCP server to run tool "(.+)"\?\s*$/;
+const QUESTION_MCP_NAMED = /^\s*Allow (.+?) to run tool "(.+)"\?\s*$/;
+const QUESTION_MCP_FRIENDLY = /^\s*Allow (.+?) to (.+)\?\s*$/;
+/** Every MCP-tool question phrasing above, in try-order. */
+const QUESTION_MCP_VARIANTS = [QUESTION_MCP, QUESTION_MCP_NAMED, QUESTION_MCP_FRIENDLY];
+/**
+ * FACTORY-1044: the GitHub MCP extension's actions (submitting/dismissing a
+ * PR review, converting a PR to draft, merging, closing, …) write to a real
+ * PR other humans see — never the one-time-approval default this module
+ * otherwise presses for every other recognised `mcp-tool` dialog. Matched on
+ * the SERVER NAME alone (not a specific action), deliberately broad: a new
+ * GitHub tool this module has never seen still names the same server, so it
+ * is gated by construction rather than needing its own entry added later —
+ * "other GitHub tool names in the same dialog family, not just these two"
+ * per the ticket. `onceOptionIndex` below is what actually enforces this;
+ * recognising the dialog's shape and gating whether it can be pressed are
+ * two separate questions, and this constant only answers the second one.
+ */
+const GITHUB_MCP_SERVER = /^github$/i;
 /** A generic tripwire: something approval-shaped is on screen even if the specific shape above did not match. */
 const APPROVAL_TRIPWIRE = /Would you like to (run|make)|Field \d+\/\d+|enter to submit \| esc to cancel|Press enter to confirm or esc to cancel/;
 
@@ -218,25 +283,56 @@ export function classifyCodexApprovalScreen(raw: string): CodexApprovalScreen | 
     return { kind: "file-edit", detail, options: scan.options, cursor: scan.cursor, promptId: hashOf(["file-edit", detail, scan.options]) };
   }
 
-  const mcpQ = lines.findIndex((line) => QUESTION_MCP.test(line));
+  // First line (lowest index) matched by ANY variant, using the MOST
+  // SPECIFIC variant that matches THAT line — `QUESTION_MCP_FRIENDLY` is a
+  // textual superset of the other two ("Allow X to Y?"), so trying variants
+  // in specificity order per-line (rather than picking whichever variant
+  // happens to find the earliest match on its own) keeps a quoted-tool-name
+  // dialog from being read with the generic/unquoted detail text.
+  let mcpQ = -1;
+  let mcpMatch: RegExpExecArray | undefined;
+  for (let i = 0; i < lines.length; i++) {
+    const pattern = QUESTION_MCP_VARIANTS.find((p) => p.test(lines[i]!));
+    if (pattern) { mcpQ = i; mcpMatch = pattern.exec(lines[i]!)!; break; }
+  }
   if (mcpQ >= 0) {
-    const match = QUESTION_MCP.exec(lines[mcpQ]!)!;
+    const match = mcpMatch!;
+    const server = match[1]!.trim();
     const optionsStart = findOptionsStart(lines, mcpQ + 1);
     const scan = optionsStart >= 0 ? scanOptions(lines, optionsStart, FOOTER_MCP) : undefined;
     const footerNearby = scan && lines.slice(scan.end, scan.end + 2).some((line) => FOOTER_MCP.test(line));
     if (!scan || !footerNearby || mcpLabel(scan.options[0]!) !== "Allow" || !scan.options.some((option) => mcpLabel(option) === "Cancel")) {
       return unrecognisedOf(text);
     }
-    const detail = `${match[1]!.trim()}.${match[2]!.trim()}`;
-    return { kind: "mcp-tool", detail, options: scan.options, cursor: scan.cursor, promptId: hashOf(["mcp-tool", detail, scan.options]) };
+    const detail = `${server}.${match[2]!.trim()}`;
+    return { kind: "mcp-tool", detail, server, options: scan.options, cursor: scan.cursor, promptId: hashOf(["mcp-tool", detail, scan.options]) };
   }
 
   return APPROVAL_TRIPWIRE.test(text) ? unrecognisedOf(text) : undefined;
 }
 
-/** The option index that approves once and nothing more — never a stored-rule, session, or "always" option. -1 when the dialog has none, which the caller must treat as unanswerable, not as "press option 1 anyway". */
+/**
+ * The option index that approves once and nothing more — never a stored-rule,
+ * session, or "always" option. -1 when the dialog has none, which the caller
+ * must treat as unanswerable, not as "press option 1 anyway".
+ *
+ * FACTORY-1044: an `mcp-tool` prompt naming the GitHub MCP server is -1
+ * UNCONDITIONALLY, regardless of which tool/action it names or whether this
+ * module can even parse one out of the question text — recognising the
+ * dialog's shape (so a human sees exactly what it is, e.g. the stale PR head
+ * in `detail`) is a different question from whether it may ever be pressed
+ * automatically, and for this server the answer to the second question is
+ * always no. This is a hard gate, not a default a caller can opt out of:
+ * `approveCodexApproval`/`autoAnswerCodexApprovals` both refuse
+ * (`"option-missing"`/`skipped`) rather than press anything for a prompt
+ * this function returns -1 for, same as every other `option-missing` case
+ * already did before this ticket.
+ */
 export function onceOptionIndex(prompt: CodexPermissionPrompt): number {
-  if (prompt.kind === "mcp-tool") return prompt.options.findIndex((option) => mcpLabel(option) === "Allow");
+  if (prompt.kind === "mcp-tool") {
+    if (prompt.server !== undefined && GITHUB_MCP_SERVER.test(prompt.server)) return -1;
+    return prompt.options.findIndex((option) => mcpLabel(option) === "Allow");
+  }
   return prompt.options.findIndex((option) => /^Yes, proceed\b/.test(option));
 }
 
@@ -483,7 +579,13 @@ export async function autoAnswerCodexApprovals(
     try {
       const target = onceOptionIndex(approval);
       if (target < 0) {
-        return { ...base, outcome: "skipped", reason: `no plain approve-once option on this ${approval.kind} prompt (options: ${JSON.stringify(approval.options)})` };
+        // FACTORY-1044: `detail` is included here (never truncated — it is
+        // exactly what a human needs to see to act, e.g. a stale PR head or
+        // which GitHub action is waiting) precisely because a GitHub
+        // mcp-tool prompt lands in this branch unconditionally — this
+        // skip message is that dialog's ONLY visible surface now that it is
+        // no longer bucketed under "unrecognised".
+        return { ...base, outcome: "skipped", reason: `no plain approve-once option on this ${approval.kind} prompt (detail: ${approval.detail}; options: ${JSON.stringify(approval.options)})` };
       }
       const attempt = approveCodexApproval(client, {
         paneId: approval.paneId,

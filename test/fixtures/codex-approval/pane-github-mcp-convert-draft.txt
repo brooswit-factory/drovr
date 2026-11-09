@@ -1,0 +1,12 @@
+
+• Calling github.convert_pull_request_to_draft({"owner":"brooswit-factory","repo":"butchr","pullNumber":4})
+
+
+  Field 1/1
+  Allow GitHub to run tool "github.convert_pull_request_to_draft"?
+
+› 1. Allow                   Run the tool and continue.
+  2. Allow for this session  Run the tool and remember this choice for this session.
+  3. Always allow            Run the tool and remember this choice for future tool calls.
+  4. Cancel                  Cancel this tool call
+  enter to submit | esc to cancel
