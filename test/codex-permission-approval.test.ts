@@ -259,7 +259,7 @@ describe("onceOptionIndex", () => {
 // Reading a pane never advances its own script — only a sent key does (the
 // pane's screen only changes once a key actually lands), matching
 // `permission-approval.test.ts`'s own fixture harness.
-function codexClient(panes: Record<string, { reads: string[]; agent?: string; hangAfterReads?: number; throwOnRead?: boolean }>) {
+function codexClient(panes: Record<string, { reads: string[]; agent?: string; hangAfterReads?: number; throwOnRead?: boolean; throwAfterReads?: number }>) {
   const keysSent: Record<string, string[][]> = {};
   const readCounts: Record<string, number> = {};
   const client = {
@@ -274,6 +274,10 @@ function codexClient(panes: Record<string, { reads: string[]; agent?: string; ha
         const count = (readCounts[p.target] = (readCounts[p.target] ?? 0) + 1);
         if (script?.hangAfterReads !== undefined && count > script.hangAfterReads) return new Promise<never>(() => undefined);
         if (script?.throwOnRead) throw new Error("read exploded");
+        // Throws starting from the (throwAfterReads + 1)th read of this pane — lets a test's
+        // INITIAL read succeed (to get a real promptId) while a LATER verification read fails,
+        // distinct from throwOnRead's unconditional-from-the-start throw.
+        if (script?.throwAfterReads !== undefined && count > script.throwAfterReads) throw new Error("verification read exploded");
         const text = script?.reads[0] ?? NO_PROMPT;
         return { type: "pane_read", read: { text } } as never;
       },
@@ -513,6 +517,44 @@ describe("cancelCodexApproval", () => {
     const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
     expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
     expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "not-cleared"]);
+  });
+
+  // FACTORY-1044 review fix (comments 52575/52576): a screen that reads
+  // successfully but fails to parse into a known dialog is NOT evidence
+  // the target dialog cleared — it could be the same approval-shaped
+  // dialog, merely garbled. Must stay "not-cleared" (with the ambiguous
+  // screen's fingerprint recorded), never "cancelled".
+  test("a still-visible but unparseable (unrecognised) screen after the keys are sent is reported as not-cleared with its fingerprint recorded, never claimed as cancelled", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const badMcp = (await fixture("pane-mcp-tool.txt")).replace("    4. Cancel                  Cancel this tool call\n", "");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review, badMcp] } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
+    expect(result.ok).toBe(false);
+    expect((result as { detail: string }).detail).toContain("unparseable");
+    expect(keysSent["w1:p1"]).toEqual([["down", "down", "down", "enter"]]); // keys were sent exactly once, never retried
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "not-cleared"]);
+    const finalRecord = d.audit[1] as { fingerprint?: string; screenDetail?: string };
+    expect(finalRecord.fingerprint).toBeDefined();
+    expect(finalRecord.screenDetail).toBeDefined();
+  });
+
+  // FACTORY-1044 review fix (comment 52576): a verification read that
+  // THROWS must never be silently swallowed into "no prompt" (hence
+  // false success) — it must surface as the existing, explicit
+  // verify-failed outcome, exactly like a thrown error anywhere else in
+  // this function.
+  test("a verification read that throws after the keys are sent is reported as verify-failed, never claimed as cancelled", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review], throwAfterReads: 1 } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "verify-failed" });
+    expect(keysSent["w1:p1"]).toEqual([["down", "down", "down", "enter"]]);
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "verify-failed"]);
   });
 });
 

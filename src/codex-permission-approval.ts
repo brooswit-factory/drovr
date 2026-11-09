@@ -667,14 +667,43 @@ export async function cancelCodexApproval(
   try {
     const deadline = deps.now().getTime() + deps.verifyTimeoutMs;
     for (;;) {
-      const still = classifyCodexApprovalScreen(await readScreen(client, request.paneId).catch(() => ""));
-      if (!still || still.kind === "unrecognised" || still.promptId !== request.promptId) {
+      // FACTORY-1044 review fix (comments 52575/52576): two things this
+      // verify loop must NEVER mistake for "the dialog cleared":
+      //  1. A READ THAT THREW. The approve-side twin of this loop swallows
+      //     that error into an empty string (`.catch(() => "")`), which
+      //     classifies as `undefined` ("no prompt") and reports false
+      //     success — a transient/denied pane read after the keys were
+      //     sent must stay an UNKNOWN outcome, not a win. No `.catch` here:
+      //     a thrown error falls through to the catch block below, which
+      //     already has its own explicit `verify-failed` outcome.
+      //  2. A SUCCESSFULLY READ BUT UNPARSEABLE screen (`kind:
+      //     "unrecognised"`). An approval-shaped dialog can still be on
+      //     screen, merely garbled or in a transient render state —
+      //     "doesn't parse as the SAME dialog" is not "doesn't exist", and
+      //     the one place this operation most needs real evidence (a
+      //     deliberate safety recovery) is exactly where a false positive
+      //     would hurt. Only a definitively ABSENT prompt, or a different
+      //     prompt this module can actually RECOGNISE, counts as cleared.
+      const still = classifyCodexApprovalScreen(await readScreen(client, request.paneId));
+      if (!still || (still.kind !== "unrecognised" && still.promptId !== request.promptId)) {
         await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "cancelled" })).catch(() => undefined);
         return { ok: true, attemptId, kind: screen.kind, detail: screen.detail };
       }
       if (deps.now().getTime() >= deadline) {
-        await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "not-cleared" })).catch(() => undefined);
-        return { ok: false, attemptId, reason: "not-cleared", detail: `keys were sent but pane ${request.paneId} still shows the prompt` };
+        const ambiguous = still.kind === "unrecognised";
+        await deps.appendAudit(request.auditPath, record({
+          ...shown,
+          outcome: "not-cleared",
+          ...(ambiguous ? { screenDetail: still.excerpt.slice(0, AUDIT_DETAIL_CHARS), fingerprint: still.fingerprint } : {}),
+        })).catch(() => undefined);
+        return {
+          ok: false,
+          attemptId,
+          reason: "not-cleared",
+          detail: ambiguous
+            ? `keys were sent but pane ${request.paneId} now shows an unparseable approval-shaped screen (fingerprint ${still.fingerprint}); cancellation could not be verified`
+            : `keys were sent but pane ${request.paneId} still shows the prompt`,
+        };
       }
       await deps.wait(deps.pollMs);
     }
