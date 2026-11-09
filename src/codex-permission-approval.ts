@@ -340,7 +340,27 @@ export function classifyCodexApprovalScreen(raw: string): CodexApprovalScreen | 
     if (!scan || !footerNearby || mcpLabel(scan.options[0]!) !== "Allow" || !scan.options.some((option) => mcpLabel(option) === "Cancel")) {
       return unrecognisedOf(text);
     }
-    const detail = `${server}.${match[2]!.trim()}`;
+    const baseDetail = `${server}.${match[2]!.trim()}`;
+    // FACTORY-1044 review fix (comment 52566): a GitHub mcp-tool prompt can
+    // carry a body block BETWEEN its question line and its option list —
+    // e.g. `action: REQUEST_CHANGES` / `pull request: #4` / `commit: <sha>
+    // (… has since moved past this commit …)` for the stale-review incident
+    // — that `baseDetail` alone (just "GitHub.<action>") drops entirely.
+    // Since this dialog is never auto-pressed anyway (see `onceOptionIndex`
+    // below), recognising its shape only matters if the skip/audit reason a
+    // human reads afterwards still carries that context — a stale PR head,
+    // which review this is, which commit — not just the generic action
+    // name. Folded into `detail` itself (rather than a separate field) so
+    // every existing consumer that already reads `detail` for the skip/audit
+    // line picks it up with no further wiring. Restricted to GitHub, same as
+    // the friendly-wording gate above: a non-GitHub `mcp-tool` prompt's body
+    // (e.g. `pane-mcp-tool.txt`'s `note: probe test`) is deliberately left
+    // out of `detail` to avoid changing that shape's existing, asserted
+    // "server.tool" format for every other vendor.
+    const body = GITHUB_MCP_SERVER.test(server) && optionsStart > mcpQ + 1
+      ? flatten(lines.slice(mcpQ + 1, optionsStart).filter((line) => line.trim() !== ""))
+      : "";
+    const detail = body ? `${baseDetail} — ${body}` : baseDetail;
     return { kind: "mcp-tool", detail, server, options: scan.options, cursor: scan.cursor, promptId: hashOf(["mcp-tool", detail, scan.options]) };
   }
 
@@ -532,6 +552,124 @@ export async function approveCodexApproval(
       const still = classifyCodexApprovalScreen(await readScreen(client, request.paneId).catch(() => ""));
       if (!still || still.kind === "unrecognised" || still.promptId !== request.promptId) {
         await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "approved" })).catch(() => undefined);
+        return { ok: true, attemptId, kind: screen.kind, detail: screen.detail };
+      }
+      if (deps.now().getTime() >= deadline) {
+        await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "not-cleared" })).catch(() => undefined);
+        return { ok: false, attemptId, reason: "not-cleared", detail: `keys were sent but pane ${request.paneId} still shows the prompt` };
+      }
+      await deps.wait(deps.pollMs);
+    }
+  } catch (error) {
+    const detail = `keys were sent but whether pane ${request.paneId} shows the prompt is unknown: ${error instanceof Error ? error.message : String(error)}`;
+    await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "verify-failed", detail })).catch(() => undefined);
+    return { ok: false, attemptId, reason: "verify-failed", detail };
+  }
+}
+
+export type CancelCodexApprovalRefusalReason =
+  | "invalid-operator"
+  | "no-prompt"
+  | "unrecognised"
+  /** The screen shows a different prompt than the one the caller saw. */
+  | "prompt-changed"
+  /** The dialog has no "Cancel" option at all (not every recognised `kind` offers one — only `mcp-tool` does). */
+  | "cancel-missing"
+  | "audit-failed"
+  | "not-cleared"
+  | "keys-failed"
+  | "verify-failed";
+
+export type CancelCodexApprovalResult =
+  | { ok: true; attemptId: string; kind: CodexPermissionKind; detail: string }
+  | { ok: false; attemptId: string; reason: CancelCodexApprovalRefusalReason; detail: string };
+
+/**
+ * FACTORY-1044 review fix (comment 52566): the ticket's "supported scoped
+ * recovery can cancel safely" requirement — a DELIBERATE, explicitly
+ * operator-invoked twin of `approveCodexApproval` above, reusing its exact
+ * audit-first / re-read-and-refuse-a-changed-prompt / verify-cleared
+ * guarantee, but selecting the dialog's own "Cancel" option
+ * (`mcpLabel(option) === "Cancel"`) instead of `onceOptionIndex`'s
+ * approve-once target — never "Allow", "Allow for this session", or "Always
+ * allow". Re-validates by `promptId` exactly like `approveCodexApproval`, so
+ * a pane that moved on to a DIFFERENT dialog since the caller last looked
+ * never gets that new, unrelated dialog cancelled out from under it.
+ *
+ * Deliberately a SEPARATE function the caller must invoke on purpose — NOT
+ * wired into `autoAnswerCodexApprovals`'s own unattended sweep below, which
+ * only ever skips a GitHub `mcp-tool` prompt (never presses Cancel on its
+ * own): an unattended pass has no way to know whether a pending review is
+ * actually safe to throw away just because its target has gone stale, and
+ * guessing wrong would silently discard a human's in-flight work. This
+ * exists so an operator (or a narrowly-scoped recovery script a human
+ * triggers) CAN safely clear a confirmed-stale dialog without hand-typing
+ * keys into the pane, not so the daemon can decide to do so by itself.
+ */
+export async function cancelCodexApproval(
+  client: ApprovalClient,
+  request: ApproveCodexApprovalRequest,
+  overrides: Partial<PermissionApprovalDeps> = {},
+): Promise<CancelCodexApprovalResult> {
+  const deps = { ...defaultDeps, ...overrides };
+  const attemptId = randomUUID();
+  const agent = await client.agent.get(request.paneId).then((got) => got.agent, () => undefined);
+  const record = (fields: Record<string, unknown>) => JSON.stringify({
+    ts: deps.now().toISOString(),
+    attemptId,
+    vendor: "codex",
+    operator: request.operator,
+    paneId: request.paneId,
+    label: agent?.name ?? undefined,
+    sessionId: agent?.agent_session?.kind === "id" ? agent.agent_session.value : undefined,
+    promptId: request.promptId,
+    scope: "cancel",
+    ...fields,
+  }) + "\n";
+  const refuse = async (reason: CancelCodexApprovalRefusalReason, detail: string, screen?: CodexApprovalScreen): Promise<CancelCodexApprovalResult> => {
+    await deps.appendAudit(request.auditPath, record({
+      outcome: reason, detail,
+      ...(screen ? {
+        kind: screen.kind,
+        screenDetail: screen.kind === "unrecognised" ? screen.excerpt.slice(0, AUDIT_DETAIL_CHARS) : screen.detail.slice(0, AUDIT_DETAIL_CHARS),
+        ...(screen.kind === "unrecognised" ? { fingerprint: screen.fingerprint } : {}),
+      } : {}),
+    })).catch(() => undefined);
+    return { ok: false, attemptId, reason, detail };
+  };
+
+  if (!request.operator.trim()) return refuse("invalid-operator", "a cancel must name its operator");
+  const screen = classifyCodexApprovalScreen(await readScreen(client, request.paneId).catch(() => ""));
+  if (screen === undefined) return refuse("no-prompt", `pane ${request.paneId} shows no Codex approval prompt`);
+  if (screen.kind === "unrecognised") {
+    return refuse("unrecognised", `pane ${request.paneId} shows an approval-shaped Codex dialog this module cannot parse; a human must answer it`, screen);
+  }
+  if (screen.promptId !== request.promptId) {
+    return refuse("prompt-changed", `pane ${request.paneId} now shows a different prompt (${screen.promptId}); list again and cancel that one`, screen);
+  }
+  const target = screen.options.findIndex((option) => mcpLabel(option) === "Cancel");
+  if (target < 0) return refuse("cancel-missing", `the prompt offers no "Cancel" option (options: ${JSON.stringify(screen.options)})`, screen);
+
+  const shown = { kind: screen.kind, detail: screen.detail.slice(0, AUDIT_DETAIL_CHARS), option: screen.options[target] };
+  try {
+    await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "cancelling" }));
+  } catch (error) {
+    return { ok: false, attemptId, reason: "audit-failed", detail: `audit not written, nothing pressed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  try {
+    await client.agent.sendKeys({ target: request.paneId, keys: keysFor(screen, target) });
+  } catch (error) {
+    const detail = `whether a key may have reached the pane is unknown: ${error instanceof Error ? error.message : String(error)}`;
+    await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "keys-failed", detail })).catch(() => undefined);
+    return { ok: false, attemptId, reason: "keys-failed", detail };
+  }
+
+  try {
+    const deadline = deps.now().getTime() + deps.verifyTimeoutMs;
+    for (;;) {
+      const still = classifyCodexApprovalScreen(await readScreen(client, request.paneId).catch(() => ""));
+      if (!still || still.kind === "unrecognised" || still.promptId !== request.promptId) {
+        await deps.appendAudit(request.auditPath, record({ ...shown, outcome: "cancelled" })).catch(() => undefined);
         return { ok: true, attemptId, kind: screen.kind, detail: screen.detail };
       }
       if (deps.now().getTime() >= deadline) {

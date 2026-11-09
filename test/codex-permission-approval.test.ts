@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   approveCodexApproval,
   autoAnswerCodexApprovals,
+  cancelCodexApproval,
   classifyCodexApprovalScreen,
   onceOptionIndex,
   scanPendingCodexApprovals,
@@ -158,13 +159,20 @@ describe("classifyCodexApprovalScreen", () => {
   // the question (the tool-call cell and the stale-head note both wrap) —
   // neither of which this module parses into `detail`, so wrapping there
   // must not break classification.
-  test("GitHub's friendly 'submit a pull request review' wording is recognised despite scrollback above/below and wrapped body text", async () => {
+  test("GitHub's friendly 'submit a pull request review' wording is recognised despite scrollback above/below and wrapped body text, and the stale PR/commit context survives into detail", async () => {
     const raw = await fixture("pane-github-mcp-stale-review.txt");
     expect(raw).toContain("36160c"); // sanity: the stale head is actually in this fixture
     const prompt = classifyCodexApprovalScreen(raw) as CodexPermissionPrompt;
     expect(prompt.kind).toBe("mcp-tool");
     expect(prompt.server).toBe("GitHub");
-    expect(prompt.detail).toBe("GitHub.submit a pull request review");
+    // FACTORY-1044 review fix (comment 52566): the body block between the
+    // question and the option list (action/PR/commit, including the
+    // line-wrapped stale-head note) is folded into `detail`, not dropped —
+    // this is the one piece of context that actually matters once the
+    // dialog is recognised and gated rather than shown raw.
+    expect(prompt.detail).toBe(
+      'GitHub.submit a pull request review — action: REQUEST_CHANGES pull request: #4 commit: 36160c1b9a2e4f7d8c3b5a6e9f0d1c2b3a4e5f6a (this PR\'s current head has since moved past this commit — the review target below may no longer match what is actually open on GitHub)',
+    );
   });
 
   // A GitHub action never captured before (not one of the ticket's two
@@ -388,8 +396,12 @@ describe("approveCodexApproval", () => {
     expect(keysSent["w1:p1"]).toBeUndefined();
     expect(d.audit.map((r) => r.outcome)).toEqual(["option-missing"]);
     // The stale-head detail actually reached the refusal record — the whole
-    // point of recognising rather than leaving this "unrecognised".
-    expect(d.audit[0]).toMatchObject({ kind: "mcp-tool", screenDetail: "GitHub.submit a pull request review" });
+    // point of recognising rather than leaving this "unrecognised". FACTORY-1044
+    // review fix (comment 52566): check the literal stale commit survived,
+    // not just the generic action name.
+    expect(d.audit[0]).toMatchObject({ kind: "mcp-tool" });
+    expect((d.audit[0] as { screenDetail: string }).screenDetail).toContain("GitHub.submit a pull request review");
+    expect((d.audit[0] as { screenDetail: string }).screenDetail).toContain("36160c1b9a2e4f7d8c3b5a6e9f0d1c2b3a4e5f6a");
   });
 
   test("keys that leave the same prompt on screen are reported as not-cleared, never claimed as approved", async () => {
@@ -400,6 +412,107 @@ describe("approveCodexApproval", () => {
     const result = await approveCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
     expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
     expect(d.audit.map((r) => r.outcome)).toEqual(["approving", "not-cleared"]);
+  });
+});
+
+// FACTORY-1044 review fix (comment 52566): the ticket's "supported scoped
+// recovery can cancel safely" requirement — a deliberately SEPARATE,
+// explicitly-invoked operation from approveCodexApproval above, never
+// reached by autoAnswerCodexApprovals' own unattended sweep.
+describe("cancelCodexApproval", () => {
+  const base = { paneId: "w1:p1", operator: "brooswit", auditPath: "/audit.jsonl" };
+
+  function deps() {
+    const audit: Record<string, unknown>[] = [];
+    let clock = 0;
+    return {
+      appendAudit: async (_path: string, line: string) => { audit.push(JSON.parse(line)); },
+      now: () => new Date(Date.UTC(2026, 8, 26) + clock),
+      wait: async (ms: number) => { clock += ms; },
+      verifyTimeoutMs: 1_000,
+      pollMs: 250,
+      audit,
+    };
+  }
+
+  test("cancels the stale GitHub review dialog by selecting 'Cancel', verifies it cleared, audits before and after", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [review] } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: true, kind: "mcp-tool" });
+    // Cancel sits at the last option (index 3), never the "Allow" at index 0 —
+    // the cursor starts on "Allow" (index 0), so pressing Cancel takes 3 "down"s.
+    expect(keysSent["w1:p1"]).toEqual([["down", "down", "down", "enter"]]);
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "cancelled"]);
+    expect(d.audit[0]).toMatchObject({ vendor: "codex", operator: "brooswit", paneId: "w1:p1", scope: "cancel", option: "Cancel                  Cancel this tool call" });
+    // The literal stale context (never pressed, but recorded) is the same
+    // thing a human reading this cancel's audit trail would want to see.
+    expect((d.audit[0] as { detail: string }).detail).toContain("36160c1b9a2e4f7d8c3b5a6e9f0d1c2b3a4e5f6a");
+  });
+
+  test("never selects 'Allow', 'Allow for this session', or 'Always allow' — only ever 'Cancel'", async () => {
+    const mcp = await fixture("pane-mcp-tool.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [mcp] } });
+    const prompt = classifyCodexApprovalScreen(mcp) as CodexPermissionPrompt;
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, deps());
+    expect(result).toMatchObject({ ok: true, kind: "mcp-tool" });
+    const keys = keysSent["w1:p1"]![0]!;
+    // Starting cursor is index 0 ("Allow"); Cancel is index 3 — 3 "down"s.
+    expect(keys).toEqual(["down", "down", "down", "enter"]);
+  });
+
+  test("a dialog with no 'Cancel' option at all is refused as cancel-missing, nothing pressed", async () => {
+    const cmd = await fixture("pane-command-outside-cwd.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [cmd] } });
+    const prompt = classifyCodexApprovalScreen(cmd) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "cancel-missing" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancel-missing"]);
+  });
+
+  test("a different prompt than the caller saw is refused, nothing pressed — never cancels a dialog that replaced the one the caller looked at", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const convert = await fixture("pane-github-mcp-convert-draft.txt");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [convert] } });
+    const reviewPrompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: reviewPrompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "prompt-changed" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["prompt-changed"]);
+  });
+
+  test("an unrecognised dialog is refused, logged to the audit trail, and never pressed", async () => {
+    const badMcp = (await fixture("pane-mcp-tool.txt")).replace("    4. Cancel                  Cancel this tool call\n", "");
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [badMcp] } });
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: "whatever" }, d);
+    expect(result).toMatchObject({ ok: false, reason: "unrecognised" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["unrecognised"]);
+  });
+
+  test("no prompt, or no operator, is refused and recorded, nothing pressed", async () => {
+    const { client, keysSent } = codexClient({ "w1:p1": { reads: [] } });
+    const d = deps();
+    expect(await cancelCodexApproval(client, { ...base, promptId: "x" }, d)).toMatchObject({ ok: false, reason: "no-prompt" });
+    expect(await cancelCodexApproval(client, { ...base, operator: " ", promptId: "x" }, d)).toMatchObject({ ok: false, reason: "invalid-operator" });
+    expect(keysSent["w1:p1"]).toBeUndefined();
+    expect(d.audit.map((r) => r.outcome)).toEqual(["no-prompt", "invalid-operator"]);
+  });
+
+  test("keys that leave the same prompt on screen are reported as not-cleared, never claimed as cancelled", async () => {
+    const review = await fixture("pane-github-mcp-stale-review.txt");
+    const { client } = codexClient({ "w1:p1": { reads: [review, review] } });
+    const prompt = classifyCodexApprovalScreen(review) as CodexPermissionPrompt;
+    const d = deps();
+    const result = await cancelCodexApproval(client, { ...base, promptId: prompt.promptId }, d);
+    expect(result).toMatchObject({ ok: false, reason: "not-cleared" });
+    expect(d.audit.map((r) => r.outcome)).toEqual(["cancelling", "not-cleared"]);
   });
 });
 
@@ -478,7 +591,17 @@ describe("autoAnswerCodexApprovals", () => {
     const { client, keysSent } = codexClient({ "w1:p1": { reads: [review] } });
     const results = await autoAnswerCodexApprovals(client, { auditPath: path });
     expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
-    expect((results[0] as { reason: string }).reason).toContain("GitHub.submit a pull request review");
+    const reason = (results[0] as { reason: string }).reason;
+    expect(reason).toContain("GitHub.submit a pull request review");
+    // FACTORY-1044 review fix (comment 52566): the literal stale context —
+    // action, PR number, and the obsolete commit — must survive into the
+    // skip reason, not just the generic action name, or a human reading it
+    // has no way to tell this review target is stale without re-opening the
+    // pane themselves.
+    expect(reason).toContain("REQUEST_CHANGES");
+    expect(reason).toContain("#4");
+    expect(reason).toContain("36160c1b9a2e4f7d8c3b5a6e9f0d1c2b3a4e5f6a");
+    expect(reason).toContain("has since moved past this commit");
     expect(keysSent["w1:p1"]).toBeUndefined();
     // No audit record at all: `onceOptionIndex` returning -1 is checked
     // BEFORE `approveCodexApproval` is ever called (same as any other

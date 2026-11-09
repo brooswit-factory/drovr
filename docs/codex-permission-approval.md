@@ -162,12 +162,33 @@ this module has never seen is still gated by construction. `approveCodexApproval
 `autoAnswerCodexApprovals` treat that exactly like any other
 no-approve-once-option dialog: refused/`skipped`, never pressed. The reason
 this module still bothers to recognise (rather than leave `"unrecognised"`)
-is that `detail` then carries the specific server/tool/action text — e.g. a
-stale PR head or a PR number embedded in Codex's own prompt text — so the
-skip reason tells a human exactly what is waiting instead of an opaque
-unparsed excerpt. GitHub review/PR-state actions write to a real PR other
-humans see; they are deliberately held to a stricter bar than this module's
-own "approve-once is always fine" default for every other MCP server.
+is that `detail` then carries the specific context a human needs to judge
+the pending action — not just the generic action name. For a GitHub
+`mcp-tool` prompt specifically, `detail` also folds in whatever body text
+Codex shows BETWEEN the question line and the option list — e.g.
+`action: REQUEST_CHANGES` / `pull request: #4` / `commit: <sha> (… has
+since moved past this commit …)` for a stale-head PR review — as
+`"<server>.<action> — <body>"`. Every other `mcp-tool` server's own body
+text (e.g. the generic capture's `note: probe test`) is deliberately left
+out of `detail`, to avoid changing that shape's existing "server.tool"
+format. GitHub review/PR-state actions write to a real PR other humans see;
+they are deliberately held to a stricter bar than this module's own
+"approve-once is always fine" default for every other MCP server.
+
+**Scoped recovery: `cancelCodexApproval`.** A gated GitHub `mcp-tool`
+dialog is never auto-pressed, but an operator who has READ the stale
+context above and decided the pending action should be thrown away (e.g. a
+PR review queued against a head the PR has since moved past) can cancel it
+explicitly with `cancelCodexApproval` — the same audit-first /
+re-read-and-refuse-a-changed-prompt / verify-cleared shape as
+`approveCodexApproval`, but selecting the dialog's own `"Cancel"` option
+instead of the approve-once one (never `"Allow"`, `"Allow for this
+session"`, or `"Always allow"`). It refuses with `"cancel-missing"` for any
+recognised dialog that has no `"Cancel"` option at all (only `mcp-tool`
+ever does). This is a SEPARATE function the caller must invoke on
+purpose — it is never reached by `autoAnswerCodexApprovals`'s own
+unattended sweep, which has no way to know on its own whether a pending
+review is actually safe to discard.
 
 ### Directory trust — a separate, pre-existing dialog
 

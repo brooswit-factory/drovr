@@ -214,6 +214,7 @@ export {
   onceOptionIndex,
   scanPendingCodexApprovals,
   approveCodexApproval,
+  cancelCodexApproval,
   autoAnswerCodexApprovals,
   type CodexPermissionKind,
   type CodexPermissionPrompt,
@@ -226,6 +227,8 @@ export {
   type ApproveCodexApprovalRequest,
   type ApproveCodexApprovalResult,
   type ApproveCodexApprovalRefusalReason,
+  type CancelCodexApprovalResult,
+  type CancelCodexApprovalRefusalReason,
   type AutoAnswerCodexApprovalsOptions,
   type AutoAnswerCodexApprovalResult,
 } from "./codex-permission-approval.js";
