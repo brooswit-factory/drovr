@@ -140,9 +140,20 @@ A vendor-contributed extension (GitHub's) drops "the"/"MCP server" for its
 own short server name in the first variant, and for some actions (submitting
 or dismissing a PR review, converting a PR to draft, …) Codex shows a
 friendly action description instead of a raw tool name at all — no quoted
-tool, no "run tool" verb. Both are still recognised into `kind: "mcp-tool"`,
+tool, no "run tool" verb. Both are recognised into `kind: "mcp-tool"`,
 carrying the parsed server name on `server` and `"<server>.<tool-or-action>"`
 on `detail`.
+
+**The friendly, unquoted-tool wording is recognised ONLY for GitHub.**
+Unlike the quoted-tool variant (which names any server), the friendly
+"Allow X to Y?" sentence has only ever been captured for GitHub's own
+extension and carries no quoted tool name to tell a real action apart from
+an ordinary sentence. Recognising it for an unseen, arbitrary server would
+hand that dialog to `onceOptionIndex`, which presses "Allow" once for any
+`mcp-tool` prompt that is NOT GitHub — auto-approving an unknown vendor's
+action sight unseen. So the match itself is restricted to `server ===
+"GitHub"` at recognition time; the same sentence naming any other server
+stays `kind: "unrecognised"` rather than being guessed into `mcp-tool`.
 
 **Recognised is not the same as pressable.** `onceOptionIndex` returns `-1`
 unconditionally for any `mcp-tool` prompt whose `server` is `"GitHub"` —
@@ -174,7 +185,8 @@ corrected by the pre-existing `src/codex-trust.ts` (marks the agent
 | `Would you like to make the following edits?` | `file-edit` | `Yes, proceed` (position 1) | `Yes, and don't ask again for these files` |
 | `Allow the <server> MCP server to run tool "<tool>"?` | `mcp-tool` | `Allow` (position 1) | `Allow for this session`, `Always allow` |
 | `Allow <server> to run tool "<tool>"?` | `mcp-tool` | `Allow` (position 1), unless `server` is `GitHub` (see below) | same as above |
-| `Allow <server> to <friendly action>?` | `mcp-tool` | `Allow` (position 1), unless `server` is `GitHub` (see below) | same as above |
+| `Allow GitHub to <friendly action>?` | `mcp-tool` | never — `server` is always `GitHub` here (see below) | same as above |
+| `Allow <any other server> to <friendly action>?` | `unrecognised` | — (never recognised, so never pressed) | — |
 | *(directory trust — separate dialog, see above)* | *(not this module)* | — | — |
 
 **GitHub is the one exception to "`mcp-tool` always has a pressable

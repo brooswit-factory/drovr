@@ -179,6 +179,20 @@ describe("classifyCodexApprovalScreen", () => {
     expect(prompt.detail).toBe("GitHub.merge a pull request");
   });
 
+  // Self-review correction: the friendly, unquoted-tool wording ("Allow X to
+  // Y?") has only ever been observed for GitHub's extension. A same-shaped
+  // dialog naming a DIFFERENT server must stay unrecognised rather than be
+  // guessed into `mcp-tool` — recognising it would hand it to `onceOptionIndex`,
+  // which presses "Allow" once for every `mcp-tool` prompt whose server is
+  // not GitHub, auto-approving an unseen vendor's action sight unseen. That
+  // is exactly the "unknown/out-of-scope actions remain gated" violation
+  // this ticket forbids.
+  test("a non-GitHub server's friendly, unquoted-tool wording stays unrecognised, never auto-pressed", async () => {
+    const raw = await fixture("pane-mcp-friendly-non-github.txt");
+    const screen = classifyCodexApprovalScreen(raw);
+    expect(screen?.kind).toBe("unrecognised");
+  });
+
   // Parity: every pre-existing shape this module already recognised still
   // classifies exactly as before FACTORY-1044 — the new GitHub wording
   // variants and the new `server` field must never change an existing

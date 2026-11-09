@@ -185,9 +185,27 @@ const QUESTION_MCP_VARIANTS = [QUESTION_MCP, QUESTION_MCP_NAMED, QUESTION_MCP_FR
  * GitHub tool this module has never seen still names the same server, so it
  * is gated by construction rather than needing its own entry added later —
  * "other GitHub tool names in the same dialog family, not just these two"
- * per the ticket. `onceOptionIndex` below is what actually enforces this;
- * recognising the dialog's shape and gating whether it can be pressed are
- * two separate questions, and this constant only answers the second one.
+ * per the ticket.
+ *
+ * Used TWICE, at two different points, for two different reasons (self-
+ * review correction — an earlier version of this ticket used it only at
+ * press-time below, which left an unseen non-GitHub vendor's `QUESTION_MCP_
+ * FRIENDLY`-shaped dialog recognised as `mcp-tool` and then auto-pressed,
+ * since the press-time gate only ever special-cases GitHub and defaults
+ * every OTHER server to "press Allow once"):
+ *   1. At RECOGNITION time, in `classifyCodexApprovalScreen`'s variant-match
+ *      loop above: `QUESTION_MCP_FRIENDLY` (no quoted tool name, so nothing
+ *      else distinguishes it from an ordinary sentence) is only accepted
+ *      when its own captured server name is GitHub's — the only vendor this
+ *      friendly, unquoted wording has ever actually been observed for. A
+ *      same-shaped sentence naming any other server stays `unrecognised`
+ *      rather than being guessed into `mcp-tool`.
+ *   2. At PRESS time, in `onceOptionIndex` below: having been recognised,
+ *      every GitHub `mcp-tool` prompt (friendly-worded or not) is still
+ *      never auto-pressed, regardless of which action it names.
+ * Recognising the dialog's shape and gating whether it can be pressed remain
+ * two separate questions — this constant now answers both of them, each at
+ * its own call site, rather than only the second.
  */
 const GITHUB_MCP_SERVER = /^github$/i;
 /** A generic tripwire: something approval-shaped is on screen even if the specific shape above did not match. */
@@ -289,10 +307,28 @@ export function classifyCodexApprovalScreen(raw: string): CodexApprovalScreen | 
   // in specificity order per-line (rather than picking whichever variant
   // happens to find the earliest match on its own) keeps a quoted-tool-name
   // dialog from being read with the generic/unquoted detail text.
+  //
+  // FACTORY-1044 self-review fix: `QUESTION_MCP_FRIENDLY` is only ever
+  // observed for GitHub's extension (no other vendor's friendly-worded,
+  // unquoted-tool dialog has been captured) and `onceOptionIndex`'s GitHub
+  // carve-out only ever gates a prompt that ALREADY classified as
+  // `kind: "mcp-tool"`. Letting `QUESTION_MCP_FRIENDLY` match any server name
+  // here would recognise an unseen non-GitHub vendor's friendly-worded dialog
+  // as `mcp-tool` too — and since `onceOptionIndex` presses "Allow" once for
+  // any `mcp-tool` prompt whose server is NOT GitHub, that unseen dialog
+  // would be auto-pressed, the exact "unknown/out-of-scope actions remain
+  // gated" violation this ticket forbids. So the friendly variant's own match
+  // is additionally restricted to `GITHUB_MCP_SERVER` right here, at
+  // recognition time — not left to the press-time gate below, which runs too
+  // late to stop a non-GitHub friendly dialog from being classified at all.
   let mcpQ = -1;
   let mcpMatch: RegExpExecArray | undefined;
   for (let i = 0; i < lines.length; i++) {
-    const pattern = QUESTION_MCP_VARIANTS.find((p) => p.test(lines[i]!));
+    const pattern = QUESTION_MCP_VARIANTS.find((p) => {
+      const m = p.exec(lines[i]!);
+      if (!m) return false;
+      return p !== QUESTION_MCP_FRIENDLY || GITHUB_MCP_SERVER.test(m[1]!.trim());
+    });
     if (pattern) { mcpQ = i; mcpMatch = pattern.exec(lines[i]!)!; break; }
   }
   if (mcpQ >= 0) {
