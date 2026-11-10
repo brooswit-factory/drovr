@@ -765,6 +765,87 @@ captures) and the 50-capture replay need `bin/drovr-replay.mjs` and
 agentvelocity's captures, neither of which exist on this host; both are
 reported as outstanding on the ticket rather than estimated.
 
+### GUARD 8 — the acceptEdits-mode dir-only variant of option 2 (FACTORY-682)
+
+Every Edit/Create-file capture above was driven in `--permission-mode
+default`. A session already running `--permission-mode acceptEdits` shows
+the identical dialog — same header, same diff, same question, same footer —
+for a file outside its trusted root, but its option 2 is worded differently:
+there is nothing left to "switch to" (the session is already in accept-edits
+mode), so the "switch to accept edits (…) for this session; Yes, and " lead-in
+GUARD 1's compound shape always carried is dropped entirely, leaving a bare
+
+```
+ Do you want to make this edit to ci.yml?
+ ❯ 1. Yes
+   2. Yes, and always allow access to /home/booswrit/work/smooth-slopes/.github/workflows for this
+      session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend
+```
+
+No live pane on this repo's own host could be driven into accept-edits mode
+to capture this directly; the question/option/footer text above is instead
+confirmed verbatim from two independent live sources that agree exactly on
+the wording — Jira FACTORY-1041 comment 52788 (the stalled pane's own
+captured prompt) and Confluence AGENTS space page 67272705 comment 68780036
+(an independent static-plus-live reading of the same pane) — both dated
+2026-11-10. Neither source captured the diff body itself, so
+`test/fixtures/file-edit-approval/pane-acceptedits-dir-only-edit-header-visible.txt`
+uses a placeholder diff (plausible `ci.yml` lines, not a verified capture);
+see that fixture directory's own README for the full provenance note.
+
+Before this fix, `FILE_EDIT_OPTION_2` required the "switch to accept edits …"
+text to be *present*, with only the trailing "; Yes, and always allow access
+to …" clause optional — so this bare wording matched neither alternative,
+`fileEditDirectory` (then inlined as a single `.exec(...)?.[1]`) returned
+`undefined`, and `path` stayed `undefined` even though a directory WAS right
+there in the dialog's own text. GUARD 1(c) then refused both scopes for the
+`path === undefined` case exactly as it does for the ordinary in-trusted-root
+shape — correct for that shape (no directory exists to answer with), but
+here it meant a directory-bearing dialog went unanswered and escalated for no
+reason, the exact "lizard skips it, only the periodic sweep ever catches it"
+symptom this ticket was filed about.
+
+The fix makes the "switch to accept edits …; Yes, and " lead-in itself
+optional (not just its own trailing directory clause), as a sibling
+alternative to the lead-in being absent entirely with the directory clause
+required in its place:
+
+```ts
+const FILE_EDIT_OPTION_2 =
+  /^Yes, and (?:switch to accept edits \(auto-approve file edits and common file commands\) for this session(?:; Yes, and always allow access to (.+) for this session)?|always allow access to (.+) for this session) \(shift\+tab\)$/;
+```
+
+The directory now lands in whichever of the two groups actually matched —
+group 1 for the pre-existing compound shape, group 2 for this new dir-only
+one, never both — so the extraction site (`fileEditDirectory`, used by both
+`makePermissionPrompt` and `classifyFileEditNoSeparator`'s GUARD 2 `.test()`
+check) reads `match[1] ?? match[2]` rather than needing a single unified
+group. Shape 1 (plain, no directory anywhere) still matches neither group,
+so `path` is still correctly `undefined` there — this fix only widens
+recognition of the directory-bearing shapes, it does not touch the
+already-correct no-directory case.
+
+Consequences, all already covered by the pre-existing GUARD 1(b)/GUARD 1(c)
+machinery with no further change needed:
+
+- `path` is now derived for this shape exactly as for the pre-existing
+  compound one, so `optionFor(prompt, "once")` returns plain `"Yes"`'s index
+  — the prompt is answered with option 1 (ALLOW ONCE), never left to
+  escalate.
+- `optionFor(prompt, "always")` still returns `-1` unconditionally for `tool
+  === "Edit file" || tool === "Create file"` (GUARD 1(b)/GUARD 4), regardless
+  of which option-2 shape is on screen — this dialog's own "Yes, and …"
+  option IS the directory grant on this shape, so refusing `"always"` here is
+  precisely what keeps drovr from ever auto-trusting a persistent directory,
+  not an incidental side effect.
+- Recognition itself is unchanged: this shape was already recognised as an
+  `Edit file`/`Create file` prompt via the ordinary `SEPARATOR` (or
+  no-separator-file-edit) arm before this fix — only `path`'s derivation from
+  option 2's text was blind to it. No new `recognizedVia` value was needed.
+
 ## Guarantees
 
 - **Only the prompt the operator saw.** The screen is re-read before any key
