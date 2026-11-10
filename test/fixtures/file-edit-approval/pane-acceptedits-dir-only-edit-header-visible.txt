@@ -1,0 +1,24 @@
+❯ Edit the file /home/booswrit/work/smooth-slopes/.github/workflows/ci.yml: add a build job.
+  Use the Edit tool directly with the full absolute path, do not ask me anything first.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(/home/booswrit/work/smooth-slopes/.github/workflows/ci.yml)
+
+──────────────────────────────────────────────────────────────────────────────────────────────────
+ Edit file
+ ../../../../smooth-slopes/.github/workflows/ci.yml
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1  name: ci
+ 2
+ 3  jobs:
+ 4 +
+ 5 +  build:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to ci.yml?
+ ❯ 1. Yes
+   2. Yes, and always allow access to /home/booswrit/work/smooth-slopes/.github/workflows for this
+      session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend

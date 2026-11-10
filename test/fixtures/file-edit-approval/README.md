@@ -1,6 +1,7 @@
 # file-edit-approval fixtures
 
-All `pane-*.txt` files here are REAL captures: a live `claude` 2.1.251 pane,
+Every `pane-*.txt` file here except `pane-acceptedits-dir-only-edit-header-visible.txt`
+(see its own entry below) is a REAL capture: a live `claude` 2.1.251 pane,
 launched in `--permission-mode default`, driven through `herdr agent prompt`
 to edit or create a file, then read with `herdr pane read --source visible`.
 No screen in this directory was invented from the ticket's prose or from
@@ -24,10 +25,30 @@ FACTORY-460's diagnosis-comment probes.
   wrapped onto three physical lines, granting both the accept-edits toggle
   and the directory access in a single affirmative choice. This is the
   capture GUARD 1's path derivation is built against.
+- `pane-acceptedits-dir-only-edit-header-visible.txt` (FACTORY-682) — a
+  session already running `--permission-mode acceptEdits`, editing a file
+  outside its trusted root. NOT a direct capture like the two above: no live
+  pane on this host could be driven into accept-edits mode to reproduce it.
+  Its question line, option set and footer ("Yes, and always allow access to
+  /home/booswrit/work/smooth-slopes/.github/workflows for this session
+  (shift+tab)", exactly) are reconstructed from two independent live sources
+  that agree on the exact text verbatim: Jira FACTORY-1041 comment 52788
+  (the stalled pane's own captured prompt, 2026-11-10) and Confluence AGENTS
+  space page 67272705 comment 68780036 (an independent static-plus-live
+  reading of the same pane, same timestamp window, quoting the identical
+  option 2 string). Neither source captured the diff body itself — the body
+  in this fixture ("name: ci" / "jobs:" / "build:") is a PLACEHOLDER, chosen
+  only to satisfy the diff-gutter shape the header-visible `SEPARATOR` arm
+  expects, structurally copied from `pane-outside-dir-edit-header-visible.txt`'s
+  own real diff with the content swapped for plausible `ci.yml` lines. Do
+  not read the diff body as verified; the question/options/footer are. See
+  GUARD 8 in `docs/permission-approval.md` for how recognition and `path`
+  derivation treat this shape, and the top-of-file doc comment in
+  `src/permission-approval.ts` for the same two-source citation.
 
-Both `pane-*.txt` captures have their header (the `─{10,}` separator, the
+All three `pane-*.txt` files have their header (the `─{10,}` separator, the
 "Edit file" title, and the path/basename subtitle line) fully visible, so
-both already classify via the EXISTING general `SEPARATOR` arm in
+all three already classify via the EXISTING general `SEPARATOR` arm in
 `classifyPermissionPrompt` — they establish the baseline shape before any
 truncation.
 

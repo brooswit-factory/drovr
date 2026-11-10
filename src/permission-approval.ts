@@ -139,6 +139,28 @@ import { readPaneWithDeadline, type PaneReadDeadlineOptions, type UnreadablePane
  * refuses both scopes for an `undefined` `path`, so the prompt escalates
  * instead of being answered.
  *
+ * A session already running `--permission-mode acceptEdits` (FACTORY-682)
+ * shows this same Edit/Create-file dialog for a path outside its trusted
+ * root, but option 2 drops the "switch to accept edits" lead-in entirely —
+ * there is nothing left to switch to — leaving a bare "Yes, and always allow
+ * access to <dir> for this session (shift+tab)". Before this fix that bare
+ * wording didn't match `FILE_EDIT_OPTION_2`, so `path` stayed `undefined`
+ * and GUARD 1(c) escalated the prompt exactly as it does for the ordinary
+ * in-trusted-root case — except here a directory IS available in the
+ * dialog's own text, so escalating instead of pressing option 1 was this
+ * shape going unanswered for no reason, not a deliberate refusal to guess.
+ * Measured live (Confluence AGENTS space, page 67272705, comment 68780036;
+ * corroborated in Jira FACTORY-1041 comment 52788): `Edit file` /
+ * `/home/booswrit/work/smooth-slopes/.github/workflows/ci.yml`; options
+ * `["Yes", "Yes, and always allow access to
+ * /home/booswrit/work/smooth-slopes/.github/workflows for this session
+ * (shift+tab)", "No"]`; footer "Esc to cancel · Tab to amend" — see GUARD 8
+ * in `docs/permission-approval.md` and `test/fixtures/file-edit-approval/README.md`
+ * for this capture's provenance and its limits (the option/question text is
+ * independently confirmed from the live pane; the diff body itself was never
+ * captured by either source, so the fixture's body is a placeholder, clearly
+ * marked as such).
+ *
  * What it cannot answer: an auto-mode classifier denial. That refuses the
  * tool call outright and leaves nothing on screen to approve; only a
  * permission rule the session reads at start can change it.
@@ -266,21 +288,45 @@ const DIFF_GUTTER = /^\d+(\s|$)/;
  */
 const FILE_EDIT_QUESTION = /^Do you want to (make this edit to|create) (\S.*)\?$/;
 /**
- * The file-edit/create dialog's own "Yes, and …" option, measured in two
- * shapes on claude 2.1.251 (`test/fixtures/file-edit-approval/README.md`):
- * plain, when the edited file is already inside the session's trusted root,
- * and compound — wrapping a second "Yes, and always allow access to <dir>
- * for this session" grant into the SAME option — when it is not. Capturing
- * group 1 is the directory, present only in the compound form; `undefined`
- * on the plain form is not a parse failure, it is the dialog correctly
- * reporting "no directory to grant" for an already-trusted path — `optionFor`
- * then refuses both scopes for a prompt whose derived `path` is `undefined`
- * (GUARD 1(c)). This option is also the one `optionFor` below refuses for
- * `scope: "always"` unconditionally, because on EITHER shape it switches the
- * session to accept-edits mode — GUARD 1(b)/GUARD 4.
+ * The file-edit/create dialog's own "Yes, and …" option. Measured in THREE
+ * shapes, the third added by FACTORY-682:
+ *
+ * 1. Plain — `--permission-mode default`, file already inside the session's
+ *    trusted root: "Yes, and switch to accept edits (…) for this session
+ *    (shift+tab)", no directory anywhere (`test/fixtures/file-edit-approval/README.md`).
+ * 2. Compound — `--permission-mode default`, file outside the trusted root:
+ *    the same "switch to accept edits" text, wrapping a second "Yes, and
+ *    always allow access to <dir> for this session" grant into the SAME
+ *    option (`pane-outside-dir-edit-header-visible.txt`).
+ * 3. Dir-only (FACTORY-682) — `--permission-mode acceptEdits`, file outside
+ *    the trusted root: there is nothing left to "switch to" (the session is
+ *    already in accept-edits mode), so option 2 is bare: "Yes, and always
+ *    allow access to <dir> for this session (shift+tab)" — the compound
+ *    form's own directory clause, with the "switch to accept edits …; Yes,
+ *    and " lead-in dropped entirely rather than merely made optional text.
+ *    See `test/fixtures/file-edit-approval/README.md` for this shape's
+ *    verified-but-not-directly-captured provenance and GUARD 8 in
+ *    `docs/permission-approval.md`.
+ *
+ * Capturing groups 1 and 2 both hold the directory — group 1 for shape 2,
+ * group 2 for shape 3 — never both at once, so a caller reads whichever is
+ * set (`match[1] ?? match[2]`) rather than needing a third, unified group.
+ * `undefined` in both on shape 1 is not a parse failure, it is the dialog
+ * correctly reporting "no directory to grant" for an already-trusted path —
+ * `optionFor` then refuses both scopes for a prompt whose derived `path` is
+ * `undefined` (GUARD 1(c)). This option is also the one `optionFor` below
+ * refuses for `scope: "always"` unconditionally, because on EVERY shape it
+ * either switches the session to accept-edits mode or (shape 3) the session
+ * is already there — GUARD 1(b)/GUARD 4.
  */
 const FILE_EDIT_OPTION_2 =
-  /^Yes, and switch to accept edits \(auto-approve file edits and common file commands\) for this session(?:; Yes, and always allow access to (.+) for this session)? \(shift\+tab\)$/;
+  /^Yes, and (?:switch to accept edits \(auto-approve file edits and common file commands\) for this session(?:; Yes, and always allow access to (.+) for this session)?|always allow access to (.+) for this session) \(shift\+tab\)$/;
+
+/** The directory `FILE_EDIT_OPTION_2` captured, from whichever of its two shape-specific groups matched — see the regex's own doc comment. */
+function fileEditDirectory(option: string): string | undefined {
+  const match = FILE_EDIT_OPTION_2.exec(option);
+  return match?.[1] ?? match?.[2];
+}
 
 /**
  * Shared tail for every recognised arm: computes `promptId` and the
@@ -302,7 +348,7 @@ function makePermissionPrompt(
   let path: string | undefined;
   if (tool === "Edit file" || tool === "Create file") {
     const basename = FILE_EDIT_QUESTION.exec(question);
-    const directory = options[1] !== undefined ? FILE_EDIT_OPTION_2.exec(options[1])?.[1] : undefined;
+    const directory = options[1] !== undefined ? fileEditDirectory(options[1]) : undefined;
     if (basename && directory) path = `${directory}/${basename[2]}`;
   }
   return { tool, request, question, options, cursor, promptId, path, recognizedVia };

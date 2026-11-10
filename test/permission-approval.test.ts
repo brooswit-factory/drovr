@@ -998,6 +998,28 @@ describe("classifyPermissionPrompt", () => {
       expect(prompt!.path).toBe("/tmp/claude-1002/outside-dir/OUTSIDE.md");
     });
 
+    // FACTORY-682: a session already running `--permission-mode acceptEdits`
+    // shows the same dialog for a path outside its trusted root, but option 2
+    // drops the "switch to accept edits" lead-in entirely (there's nothing
+    // left to switch to) — a bare "Yes, and always allow access to <dir> for
+    // this session (shift+tab)". Before this fix that bare wording did not
+    // match FILE_EDIT_OPTION_2, so `path` stayed undefined and the prompt
+    // escalated (GUARD 1(c)) instead of being answered. See
+    // test/fixtures/file-edit-approval/README.md for this fixture's
+    // provenance.
+    test("header visible, acceptEdits dir-only option 2 (FACTORY-682): path is still derived", () => {
+      const prompt = classifyPermissionPrompt(fileEditFixture("pane-acceptedits-dir-only-edit-header-visible.txt"));
+      expect(prompt).toBeDefined();
+      expect(prompt!.tool).toBe("Edit file");
+      expect(prompt!.recognizedVia).toBe("separator");
+      expect(prompt!.options).toEqual([
+        "Yes",
+        "Yes, and always allow access to /home/booswrit/work/smooth-slopes/.github/workflows for this session (shift+tab)",
+        "No",
+      ]);
+      expect(prompt!.path).toBe("/home/booswrit/work/smooth-slopes/.github/workflows/ci.yml");
+    });
+
     // FACTORY-586 DoD #3: every already-recognised fixture must classify
     // EXACTLY as it did before this ticket's bound — same promptId, tool,
     // request, path, recognizedVia — since the bound is narrowing a rule
@@ -1893,6 +1915,35 @@ describe("autoAnswerPermissions", () => {
     test("header visible, in trusted root: scope always is also skipped, nothing pressed", async () => {
       const path = await freshAuditPath();
       const { client, keysSent } = autoClient({ "w1:p1": { reads: [fileEditFixture("pane-notes-md-edit-header-visible.txt")] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "always" });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
+      expect(keysSent["w1:p1"]).toBeUndefined();
+      expect(await readAudit(path)).toEqual([]);
+    });
+
+    // FACTORY-682: the acceptEdits dir-only variant now derives `path`
+    // (asserted above), so it must be answered the same way the existing
+    // outside-trusted-root shape already is — option 1 (plain "Yes"), never
+    // the directory-granting "always allow" option, regardless of what the
+    // caller asks for.
+    test("header visible, acceptEdits dir-only (FACTORY-682): answered with option 1 (ALLOW ONCE) under scope once", async () => {
+      const path = await freshAuditPath();
+      const prompt = fileEditFixture("pane-acceptedits-dir-only-edit-header-visible.txt");
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [prompt, prompt, AFTER] } });
+      const results = await autoAnswerPermissions(client, { auditPath: path, scope: "once" });
+      expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "answered", tool: "Edit file", recognizedVia: "separator" }]);
+      expect(keysSent["w1:p1"]).toEqual([["enter"]]);
+      const audit = await readAudit(path);
+      expect(audit.map((r) => r.outcome)).toEqual(["approving", "approved"]);
+      expect(audit[0]).toMatchObject({ operator: "drovr-auto", scope: "once", option: "Yes" });
+    });
+
+    // scope "always" must never be granted here either — never auto-trust a
+    // persistent directory, even though this shape's own option 2 is the
+    // directory grant itself (GUARD 1b/4, tool-based refusal, unchanged).
+    test("header visible, acceptEdits dir-only (FACTORY-682): scope always is skipped, directory never auto-granted", async () => {
+      const path = await freshAuditPath();
+      const { client, keysSent } = autoClient({ "w1:p1": { reads: [fileEditFixture("pane-acceptedits-dir-only-edit-header-visible.txt")] } });
       const results = await autoAnswerPermissions(client, { auditPath: path, scope: "always" });
       expect(results).toMatchObject([{ paneId: "w1:p1", outcome: "skipped" }]);
       expect(keysSent["w1:p1"]).toBeUndefined();
