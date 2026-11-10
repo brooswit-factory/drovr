@@ -1,6 +1,6 @@
 export const DROVR_PACKAGE_NAME = "@brooswit/drovr";
 export { ManagedConversationLifecycle, type ManagedConversationLifecycleOptions, type ManagedConversationMessageOptions, type ManagedConversationCommitContext } from "./managed-conversation-lifecycle.js";
-export { ManagedHerdrLifecycle, type ManagedHerdrIdentity, type ManagedHerdrLifecycleOptions, type ManagedHerdrStartRequest, type ManagedHerdrResult } from "./managed-herdr-lifecycle.js";
+export { stagedTargetName, ManagedHerdrLifecycle, type ManagedHerdrIdentity, type ManagedHerdrLifecycleOptions, type ManagedHerdrStartRequest, type ManagedHerdrResult } from "./managed-herdr-lifecycle.js";
 export { readNativeTranscript, readClaudeTranscriptTail, nativeTranscriptReply, NativeTranscriptUnavailableError, type NativeTranscriptOptions, type ClaudeTranscriptTail } from "./native-transcript.js";
 export {
   createResidentAgentMessenger,
