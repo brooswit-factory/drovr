@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.16.15
+
+`FILE_EDIT_OPTION_2` (`permission-approval.ts`) now also recognises the
+Edit/Create-file dialog's acceptEdits-mode dir-only option 2 (FACTORY-682):
+a session already running `--permission-mode acceptEdits`, editing a file
+outside its trusted root, shows a bare "Yes, and always allow access to
+`<dir>` for this session (shift+tab)" — there's nothing left to "switch to"
+accept-edits for, so the pre-existing compound option's own "switch to
+accept edits …; Yes, and " lead-in is dropped entirely rather than merely
+optional. The regex previously required that lead-in to be present, so this
+bare wording matched neither alternative, `path` stayed `undefined`, and the
+prompt escalated (GUARD 1(c)) instead of being answered — only the
+dialog-monitor's periodic sweep ever cleared it, not the live lizard pass.
+
+The fix makes the lead-in itself optional, with the directory clause
+required in its place when it's absent, and extracts via a shared
+`fileEditDirectory()` helper (the directory can now land in either of two
+mutually-exclusive capture groups). Recognition itself needed no change —
+this shape was already classified as an `Edit file`/`Create file` prompt;
+only `path` derivation was blind to it. `scope: "always"` remains refused
+unconditionally for this tool (GUARD 1(b)/GUARD 4, unchanged): the directory
+is never auto-granted, only option 1 (ALLOW ONCE) is ever pressed. See
+GUARD 8 in `docs/permission-approval.md`.
+
+Release asset: `brooswit-drovr-0.16.15.tgz`.
+
 ## 0.16.14
 
 `classifyCodexApprovalScreen` (`codex-permission-approval.ts`) now recognises
