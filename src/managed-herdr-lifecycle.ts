@@ -2,7 +2,7 @@ import {continueOwnedTarget,type OwnedTargetContinuation} from './owned-target-c
 import { transcriptLimit, assertTranscriptCharacters, type TranscriptLimits } from './transcript-limits.js';
 import { createHash, randomUUID } from "node:crypto";
 import type { results } from "@brooswit/herdr-sdk";
-import { buildAgentStartParams, mergeDevelopmentChannels, type ManagedAgentLaunch, type ManagedAgentProvider } from "./agent-runtime.js";
+import { buildAgentStartParams, mergeDevelopmentChannels, pullOllamaModel, type ManagedAgentLaunch, type ManagedAgentProvider } from "./agent-runtime.js";
 import { startManagedAgent, type AgentStartOptions } from "./agent-start.js";
 import { HANDOFF_ACK, ManagedConversationSession } from "./conversation-session.js";
 import type { DrovrClient } from "./drovr-client.js";
@@ -14,6 +14,17 @@ export interface ManagedHerdrIdentity {
   provider: ManagedAgentProvider;
   cwd: string;
   home?: string;
+}
+
+/**
+ * FACTORY-1050: narrows `ManagedAgentProvider` down to `NativeTranscriptOptions["provider"]`
+ * for the staged-handoff/native-acknowledgement path only (`nativeTranscript`/
+ * `awaitAcknowledgement` below) — see `nativeTranscript`'s own doc comment for why
+ * `ollama` is refused here rather than silently widened.
+ */
+function assertNativeTranscriptProvider(provider: ManagedAgentProvider): NativeTranscriptOptions["provider"] {
+  if (provider === "ollama") throw new Error('native-transcript handoff is not supported for provider "ollama"');
+  return provider;
 }
 
 export interface ManagedHerdrLifecycleOptions {
@@ -40,6 +51,14 @@ export interface ManagedHerdrLifecycleOptions {
   launchPendingTimeoutMs?: number;
   /** Native history reader injection; never supply terminal-screen text. */
   readTranscript?: (options: NativeTranscriptOptions) => Promise<string>;
+  /**
+   * FACTORY-1050: pull injection for the `ollama` provider's required
+   * pull-then-launch sequencing (jira comment 54274) — tests supply a
+   * mocked implementation so no run of this suite ever invokes a real
+   * `ollama pull`; the default is `pullOllamaModel` itself (a real
+   * subprocess, Ollama-installed hosts only).
+   */
+  pullOllamaModel?: typeof pullOllamaModel;
 }
 
 export interface ManagedHerdrStartRequest {
@@ -267,6 +286,21 @@ export class ManagedHerdrLifecycle {
             const prepared = await request.prepare(account.provider);
             if (prepared.launch.provider !== account.provider || prepared.launch.cwd !== this.options.cwd) throw new Error("Launch does not match selected provider and workspace");
             const launch = applyNeutralLaunchInputs(prepared.launch, request);
+            // FACTORY-1050 (jira comment 54274): "before EVERY Ollama Claude
+            // launch, pull the selected model and launch only after
+            // successful pull" — "NEVER launch after failed pull". Checked
+            // here, before any workspace/pane is even created for this
+            // attempt, so a failed pull never leaves a half-created,
+            // never-to-launch workspace behind. `HandoffBlocked` is this
+            // class's own established "report clearly, change nothing"
+            // failure (see every other throw site in this method) — it
+            // surfaces as `{status: "blocked", reason}` from the outer
+            // catch below, exactly like every other precondition failure
+            // here, never a silent fallback to a plain Claude launch.
+            if (launch.provider === "ollama") {
+              const pull = await (this.options.pullOllamaModel ?? pullOllamaModel)(launch.model);
+              if (!pull.ok) throw new HandoffBlocked(pull.reason);
+            }
             const created = await this.options.client.workspace.create({ label: request.label, cwd: this.options.cwd, ...(prepared.env ? { env: prepared.env } : {}) });
             const root = created.root_pane;
             const paneId = typeof root === "string" ? root : root?.pane_id;
@@ -329,7 +363,7 @@ export class ManagedHerdrLifecycle {
                     committed = true;
                   },
                 });
-                await session.switchProvider(account.provider, request.reason ?? `Replace ${old.provider} worker with imported history`);
+                await session.switchProvider(assertNativeTranscriptProvider(account.provider), request.reason ?? `Replace ${old.provider} worker with imported history`);
                 }
                 // Retirement failure leaves the acknowledged target current, but dispatches no work.
                 await this.options.client.pane.close(old.paneId);
@@ -391,15 +425,26 @@ export class ManagedHerdrLifecycle {
   }
 
   private async nativeTranscript(identity: ManagedHerdrIdentity): Promise<string> {
+    // FACTORY-1050: `readNativeTranscript`/`nativeTranscriptReply` are
+    // independently typed to "claude"|"codex"|"agy" (`native-transcript.ts`)
+    // — no verified native-transcript format exists for an `ollama`-launched
+    // pane (same unverified-behavior exclusion as resume-in-place; this
+    // ticket's own exclusions forbid the live Ollama testing that could
+    // establish one), so the staged-handoff/native-acknowledgement path
+    // this method and `awaitAcknowledgement` below serve refuses it loudly
+    // rather than guessing. `start()`'s own ordinary fresh-launch path
+    // (`buildAgentStartParams`) is unaffected — this guard is local to the
+    // handoff/rollout feature, never the general launch path.
+    const provider = assertNativeTranscriptProvider(identity.provider);
     const { agent } = await this.options.client.agent.get(identity.paneId);
-    if (agent.pane_id !== identity.paneId || agent.cwd !== identity.cwd || agent.agent !== identity.provider) throw new Error("Native transcript worker identity changed");
+    if (agent.pane_id !== identity.paneId || agent.cwd !== identity.cwd || agent.agent !== provider) throw new Error("Native transcript worker identity changed");
     const session = agent?.agent_session;
-    if (!session || session.agent !== identity.provider) throw new Error("Exact pane has no matching native session reference");
+    if (!session || session.agent !== provider) throw new Error("Exact pane has no matching native session reference");
     const reference = JSON.stringify([session.agent, session.kind, session.value]);
     const pinned = this.nativeSessions.get(identity.paneId);
     if (pinned && pinned !== reference) throw new Error("Native session reference changed during lifecycle");
     this.nativeSessions.set(identity.paneId, reference);
-    const text = await (this.options.readTranscript ?? readNativeTranscript)({ provider: identity.provider, session: { kind: session.kind, value: session.value }, cwd: identity.cwd, maxBytes: this.transcriptBytes, ...(identity.home ? { home: identity.home } : {}) });
+    const text = await (this.options.readTranscript ?? readNativeTranscript)({ provider, session: { kind: session.kind, value: session.value }, cwd: identity.cwd, maxBytes: this.transcriptBytes, ...(identity.home ? { home: identity.home } : {}) });
     if (typeof text !== "string" || Buffer.byteLength(text, "utf8") > this.transcriptBytes) throw new Error("Native transcript exceeds the byte limit; refusing truncation");
     return text;
   }
@@ -416,7 +461,7 @@ export class ManagedHerdrLifecycle {
         if (remaining <= 0) break;
         const last = await Promise.race([
           (async () => {
-            const reply = nativeTranscriptReply(target.provider, await this.nativeTranscript(target))?.trim();
+            const reply = nativeTranscriptReply(assertNativeTranscriptProvider(target.provider), await this.nativeTranscript(target))?.trim();
             if (!reply?.startsWith(token + "\n") || !reply.slice(token.length).trim()) return undefined;
             // Native output can be flushed before Herdr observes turn completion.
             await this.assertStable(target);

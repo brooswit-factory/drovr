@@ -4,7 +4,7 @@ import { realTmpdir } from "./support/tmp";
 import { join } from "node:path";
 import {
   ManagedConversationRunner, runConversationProcess,
-  type ManagedAgentProvider, type RunProcess,
+  type ConversationProvider, type RunProcess,
 } from "../src/index.js";
 import { ManagedConversationQuotaError } from "../src/managed-conversation.js";
 
@@ -20,9 +20,9 @@ const codex = (response = "ready", conversationId = id) => events(
   { type: "turn.completed", usage: { input_tokens: 15289, cached_input_tokens: 12160, cache_write_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0 } },
 );
 const output = { agy, codex, claude };
-const providers: ManagedAgentProvider[] = ["agy", "codex", "claude"];
+const providers: ConversationProvider[] = ["agy", "codex", "claude"];
 
-function fixture(provider: ManagedAgentProvider, permissionMode?: string) {
+function fixture(provider: ConversationProvider, permissionMode?: string) {
   const calls: { argv: readonly string[]; cwd: string }[] = [];
   const run: RunProcess = async (argv, cwd) => {
     calls.push({ argv, cwd });
@@ -115,7 +115,7 @@ describe("direct managed conversations", () => {
   });
 
   test.each(providers)("%s rejects incomplete or unsuccessful results even with exit zero", async provider => {
-    const invalid: Record<ManagedAgentProvider, string[]> = {
+    const invalid: Record<ConversationProvider, string[]> = {
       agy: ["null", "[]", "{}", JSON.stringify({ status: "FAILURE", conversation_id: id, response: "secret" }), JSON.stringify({ status: "SUCCESS", conversation_id: "", response: "secret" })],
       claude: ["null", "{}", claude().replace('"is_error":false', '"is_error":true'), claude().replace('"subtype":"success"', '"subtype":"error_max_turns"'), claude().replace('"result":"ready"', '"result":null')],
       codex: ["", events({ type: "thread.started", thread_id: id }), events({ type: "turn.completed" }), codex() + "\n" + events({ type: "error", message: "secret" }), codex() + "\n" + events({ type: "turn.failed", error: { message: "secret" } })],

@@ -1,8 +1,22 @@
 import { transcriptLimit, assertTranscriptCharacters } from './transcript-limits.js';
-import type { ManagedAgentProvider } from "./agent-runtime.js";
 import type { ManagedConversationResult } from "./managed-conversation.js";
 
-export interface ConversationIdentity { provider: ManagedAgentProvider; conversationId: string }
+/**
+ * FACTORY-1050: the managed-conversation/handoff subsystem (this file,
+ * `managed-conversation.ts`, `managed-conversation-lifecycle.ts`, native
+ * transcript reading) is independently runtime-restricted to these three
+ * providers everywhere below (`.includes(...)` guards, unchanged by this
+ * ticket) — `ollama` was deliberately never added to `ManagedAgentProvider`
+ * import here. Typed as its OWN narrower alias, rather than the wider
+ * `ManagedAgentProvider` (`./agent-runtime.ts`, which now also has
+ * `"ollama"`), so that widening stays statically contained to the
+ * provider-launch surface and never silently reaches a conversation API
+ * this ticket's own scope exclusions (no verified Ollama handoff/native-
+ * transcript behavior) explicitly keep out.
+ */
+export type ConversationProvider = "claude" | "codex" | "agy";
+
+export interface ConversationIdentity { provider: ConversationProvider; conversationId: string }
 export interface ConversationSessionOptions {
   current?: ConversationIdentity;
   cwd: string;
@@ -10,7 +24,7 @@ export interface ConversationSessionOptions {
   maxTranscriptChars?: number;
   /** Read a consistent snapshot of saved history, not terminal-screen contents. */
   readTranscript: () => Promise<string>;
-  createRunner: (provider: ManagedAgentProvider) => { message(text: string, id?: string): Promise<ManagedConversationResult> };
+  createRunner: (provider: ConversationProvider) => { message(text: string, id?: string): Promise<ManagedConversationResult> };
   /** Atomically persist the new identity. The previous identity remains current on failure. */
   commit: (identity: ConversationIdentity) => Promise<void>;
 }
@@ -38,13 +52,13 @@ export class ManagedConversationSession {
 
   get current(): ConversationIdentity | undefined { return this.active ? { ...this.active } : undefined; }
 
-  switchProvider(provider: ManagedAgentProvider, reason: string): Promise<ConversationIdentity> {
+  switchProvider(provider: ConversationProvider, reason: string): Promise<ConversationIdentity> {
     const pending = this.queue.catch(() => {}).then(() => this.switchNow(provider, reason));
     this.queue = pending;
     return pending;
   }
 
-  private async switchNow(provider: ManagedAgentProvider, reason: string): Promise<ConversationIdentity> {
+  private async switchNow(provider: ConversationProvider, reason: string): Promise<ConversationIdentity> {
     if (!["agy", "codex", "claude"].includes(provider)) throw new Error("Unsupported handoff provider");
     if (!reason.trim() || reason.length > 1024) throw new Error("Handoff reason must be 1-1024 characters");
     if (this.active?.provider === provider) return { ...this.active };

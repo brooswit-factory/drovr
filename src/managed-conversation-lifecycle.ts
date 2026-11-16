@@ -1,8 +1,23 @@
 import type { ManagedAgentProvider } from "./agent-runtime.js";
+import type { ConversationProvider } from "./conversation-session.js";
 import { ManagedConversationSession, type ConversationIdentity, type ConversationSessionOptions } from "./conversation-session.js";
 import { ManagedConversationQuotaError, type ManagedConversationResult } from "./managed-conversation.js";
 import { readNativeTranscript, NativeTranscriptUnavailableError } from "./native-transcript.js";
-import { processProviderAvailability, runWithProviderFallback, type ProviderAvailabilityRegistry } from "./provider-fallback.js";
+import { processProviderAvailability, runWithProviderFallback, type ProviderAvailabilityRegistry, type ProviderAccount } from "./provider-fallback.js";
+
+/**
+ * FACTORY-1050: `runWithProviderFallback`'s `attempt` callback is pinned to
+ * `ProviderAccount` — `ManagedAgentProvider`-wide, since that utility is
+ * shared with the ordinary launch/quota system where `ollama` is a real
+ * value — even though THIS lifecycle only ever feeds it `this.providers`
+ * (`readonly ConversationProvider[]`). The narrowing is therefore always
+ * safe in practice; this makes it explicit rather than casting silently,
+ * and still throws loudly in the impossible case instead of assuming it.
+ */
+function asConversationProvider(provider: ManagedAgentProvider): ConversationProvider {
+  if (provider !== "claude" && provider !== "codex" && provider !== "agy") throw new Error("Unsupported conversation provider");
+  return provider;
+}
 
 export interface ManagedConversationMessageOptions {
   /** Exclusive journal cutoff: the pending user event is not imported history. */
@@ -20,7 +35,7 @@ export interface ManagedConversationCommitContext {
 export interface ManagedConversationLifecycleOptions {
   current?: ConversationIdentity;
   cwd: string;
-  providers: readonly ManagedAgentProvider[];
+  providers: readonly ConversationProvider[];
   accountId: string;
   availability?: ProviderAvailabilityRegistry;
   createRunner: ConversationSessionOptions["createRunner"];
@@ -35,7 +50,7 @@ export interface ManagedConversationLifecycleOptions {
 export class ManagedConversationLifecycle {
   private active: ConversationIdentity | undefined;
   private queue: Promise<unknown> = Promise.resolve();
-  private readonly providers: readonly ManagedAgentProvider[];
+  private readonly providers: readonly ConversationProvider[];
 
   constructor(private readonly options: ManagedConversationLifecycleOptions) {
     if (!options.accountId.trim()) throw new Error("Provider accountId must be nonempty");
@@ -55,7 +70,7 @@ export class ManagedConversationLifecycle {
     return pending;
   }
 
-  private validateProvider(provider: ManagedAgentProvider): void {
+  private validateProvider(provider: ConversationProvider): void {
     if (!["agy", "codex", "claude"].includes(provider)) throw new Error("Unsupported conversation provider");
   }
 
@@ -83,7 +98,7 @@ export class ManagedConversationLifecycle {
     this.active = { ...next };
   }
 
-  private async switchNow(provider: ManagedAgentProvider, reason: string, beforeSequence?: number): Promise<ConversationIdentity> {
+  private async switchNow(provider: ConversationProvider, reason: string, beforeSequence?: number): Promise<ConversationIdentity> {
     const previous = this.current;
     const session = new ManagedConversationSession({
       ...(previous ? { current: previous } : {}), cwd: this.options.cwd,
@@ -97,7 +112,7 @@ export class ManagedConversationLifecycle {
     return session.switchProvider(provider, reason);
   }
 
-  switchProvider(provider: ManagedAgentProvider, reason = "Explicit provider switch"): Promise<ConversationIdentity> {
+  switchProvider(provider: ConversationProvider, reason = "Explicit provider switch"): Promise<ConversationIdentity> {
     return this.serialize(async () => {
       try { return await this.switchNow(provider, reason); }
       catch (cause) {
@@ -118,7 +133,8 @@ export class ManagedConversationLifecycle {
       const outcome = await runWithProviderFallback({
         priority: priority.map(provider => ({ provider, accountId: this.options.accountId })),
         availability: this.options.availability ?? processProviderAvailability,
-        attempt: async ({ provider }) => {
+        attempt: async (account: ProviderAccount) => {
+          const provider = asConversationProvider(account.provider);
           let value: ManagedConversationResult;
           try {
             if (this.active && provider !== this.active.provider) await this.switchNow(provider, reason, beforeSequence);

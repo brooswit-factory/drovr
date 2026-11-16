@@ -1,4 +1,4 @@
-import type { ManagedAgentProvider } from "./agent-runtime.js";
+import type { ConversationProvider } from "./conversation-session.js";
 import type { ProviderQuotaRefusal } from "./provider-fallback.js";
 import { detectSessionLimitRefusal } from "./session-limit.js";
 import { codexTurnErrorQuota } from "./codex-usage-limit.js";
@@ -80,7 +80,7 @@ export const runConversationProcess: RunProcess = async (argv, cwd) => {
 };
 
 export interface ManagedConversationRunnerOptions {
-  provider: ManagedAgentProvider;
+  provider: ConversationProvider;
   cwd: string;
   /** "yolo", "plan", or otherwise "accept-edits", matching USRR's AGY behavior. */
   permissionMode?: string;
@@ -179,7 +179,7 @@ function parseCodex(stdout: string): ManagedConversationResult {
 
 /** Single-provider transport; ManagedConversationLifecycle owns selection and identity, with durable storage through its commit callback. */
 export class ManagedConversationRunner {
-  readonly provider: ManagedAgentProvider;
+  readonly provider: ConversationProvider;
   private readonly cwd: string;
   private readonly mode: "accept-edits" | "plan" | "yolo";
   private readonly run: RunProcess;

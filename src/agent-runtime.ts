@@ -1,6 +1,86 @@
 import type { ParamsOf } from "@brooswit/herdr-sdk";
 
-export type ManagedAgentProvider = "claude" | "codex" | "agy";
+export type ManagedAgentProvider = "claude" | "codex" | "agy" | "ollama";
+
+/**
+ * FACTORY-1050: the EXACT three model choices John authorized for the
+ * "Ollama Claude" launcher — no fourth, no normalization, no substitution.
+ * `"qwen3.8:27b"` (jira comment 54276) is the CONFIRMED spelling, superseding
+ * an earlier `"qwen.3.8:27b"` that a registry lookup (comment 54275) flagged
+ * as a likely typo — never silently "correct" this list again without an
+ * equivalent explicit confirmation; preserve it byte-for-byte. This is the
+ * one place both repos source it from (butchr's `AGENT_HARNESSES`-adjacent
+ * catalog, `rule-form-catalog.ts`, duplicates this literal list for the same
+ * leaf-module/no-node-import reason `AGENT_HARNESSES` itself already
+ * duplicates Drovr's `ManagedAgentProvider` union — see that module's own
+ * top comment).
+ */
+export const OLLAMA_CLAUDE_MODELS = ["qwen3.5:4b", "gemma4:12b", "qwen3.8:27b"] as const;
+export type OllamaClaudeModel = (typeof OLLAMA_CLAUDE_MODELS)[number];
+
+/**
+ * FACTORY-1050 (jira comment 54274): the desired semantics are
+ * `ollama pull <model> && ollama launch claude --model <model>` — but as a
+ * LITERAL argv array for a SEPARATE, dedicated process, never a shell
+ * string handed to `/bin/sh -c`. No value ever gets concatenated into a
+ * command line here, so there is nothing for `model` to inject into even
+ * before it's checked against `OLLAMA_CLAUDE_MODELS` — the safety property
+ * holds independent of that allowlist, which is what "safe argv/process
+ * sequencing, not arbitrary shell interpolation" (the ticket's own words)
+ * asks for.
+ */
+export function ollamaPullArgv(model: OllamaClaudeModel): string[] {
+  return ["ollama", "pull", model];
+}
+
+/** The result of running `ollamaPullArgv`'s argv as a real process — the ONLY shape `pullOllamaModel` below needs from whatever runs it. */
+export interface OllamaPullProcessResult {
+  exitCode: number;
+  /** Trailing diagnostic text, when the pull failed; never required on success. */
+  stderr?: string;
+}
+
+export type OllamaPullResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Pulls the selected model and reports success/failure explicitly — never
+ * throws on a failed pull, so a caller cannot forget to check before
+ * proceeding to `buildAgentStartParams`'s `ollama` branch. `run` is
+ * injectable so tests cover success/failure/ordering with a mocked process
+ * runner and never invoke a real `ollama pull` (this ticket's own explicit
+ * exclusion); the default implementation is the only place that would ever
+ * shell out for real, and even that never goes through a shell — `Bun.spawn`
+ * with a literal argv array, identical in spirit to `inventoryCodexMcpServers`'s
+ * own `Bun.spawnSync` default above, but async (`spawnSync`
+ * would block the daemon's event loop for as long as a real pull takes).
+ */
+export async function pullOllamaModel(
+  model: OllamaClaudeModel,
+  run: (argv: readonly string[]) => Promise<OllamaPullProcessResult> = async (argv) => {
+    const proc = Bun.spawn([...argv], { stdout: "pipe", stderr: "pipe" });
+    const exitCode = await proc.exited;
+    if (exitCode === 0) return { exitCode };
+    return { exitCode, stderr: await new Response(proc.stderr).text() };
+  },
+): Promise<OllamaPullResult> {
+  let result: OllamaPullProcessResult;
+  try {
+    result = await run(ollamaPullArgv(model));
+  } catch (error) {
+    // A thrown runner (e.g. ENOENT: `ollama` not installed/on PATH) is just
+    // as much "cannot launch" as a nonzero exit — reported the same way,
+    // never left to crash the caller.
+    return { ok: false, reason: `ollama pull ${model} failed to start: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (result.exitCode !== 0) {
+    const detail = result.stderr?.trim();
+    return {
+      ok: false,
+      reason: `ollama pull ${model} failed (exit code ${result.exitCode})${detail ? `: ${detail.slice(0, 500)}` : ""}`,
+    };
+  }
+  return { ok: true };
+}
 
 export interface ManagedAgentProcess {
   argv?: readonly string[] | null;
@@ -9,12 +89,25 @@ export interface ManagedAgentProcess {
 
 const executableName = (value: string): string => value.replace(/\\/g, "/").split("/").pop() ?? value;
 
+/**
+ * FACTORY-1050: `ollama` alone is not enough — the bare `ollama` CLI has
+ * many unrelated subcommands (`pull`, `run`, `serve`, …), and only
+ * `ollama launch claude ...` is the managed Claude-harness launcher this
+ * module knows how to build/compare argv for. Checked positionally
+ * (`argv[1]`/`argv[2]`), not via `includes`, so a future `ollama launch
+ * codex` (if Ollama ever ships one) is never misclassified as this provider.
+ */
+function isOllamaClaudeLaunch(process: ManagedAgentProcess): boolean {
+  return (process.argv?.[1] === "launch" && process.argv?.[2] === "claude");
+}
+
 export function managedAgentProviderOfProcess(process: ManagedAgentProcess): ManagedAgentProvider | undefined {
   const command = executableName(process.argv?.[0] ?? "");
   const name = executableName(process.name ?? "");
   if (command === "claude" || name === "claude") return "claude";
   if (command === "codex" || name === "codex") return "codex";
   if (command === "agy" || name === "agy") return "agy";
+  if ((command === "ollama" || name === "ollama") && isOllamaClaudeLaunch(process)) return "ollama";
   return undefined;
 }
 
@@ -230,7 +323,13 @@ export function buildProviderLaunchArgs(
   provider: ManagedAgentProvider,
   inputs: ProviderLaunchInputs,
 ): string[] {
-  if (provider !== "claude") return [];
+  // FACTORY-1050: `ollama launch claude` is a thin launcher in front of the
+  // SAME real Claude harness `claude` itself is, so it takes the identical
+  // MCP/development-channel flags, spelled identically. Never add
+  // Ollama-specific flag knowledge here; see `buildAgentStartParams`'s
+  // `ollama` branch below for where those flags are PLACED in argv relative
+  // to `ollama launch claude --model <model>`.
+  if (provider !== "claude" && provider !== "ollama") return [];
   const channels = developmentChannelsOf(inputs);
   const approved = [...new Set(inputs.mcpServersApproved?.map(safeName) ?? [])];
   return [
@@ -297,7 +396,34 @@ export interface AgyAgentLaunch extends AgentLaunchBase {
   skipPermissions?: boolean;
 }
 
-export type ManagedAgentLaunch = ClaudeAgentLaunch | CodexAgentLaunch | AgyAgentLaunch;
+/**
+ * FACTORY-1050: the fourth, narrow launcher — `ollama launch claude --model
+ * <model>` fronting the SAME real Claude harness `ClaudeAgentLaunch` above
+ * drives, which is why every field below mirrors that interface exactly
+ * (required `model`, narrowed to the three authorized literals instead of a
+ * free string; required `effort`/`mcpConfigPath`; optional
+ * `permissionMode`/`strictMcpConfig`) rather than inventing Ollama-specific
+ * concepts. Deliberately NOT given resume-in-place support: Drovr's
+ * `--resume` mechanism is documented elsewhere (`checkManagedAgentArgv`'s
+ * callers, butchr's `herd.ts`) as verified for `claude` only, and this
+ * ticket's explicit exclusions forbid any live Ollama/model testing that
+ * could verify `ollama launch claude --resume <id>` actually behaves the
+ * same way — so, like `codex`/`agy` today, an `ollama` session is always a
+ * fresh launch, never resumed in place. This is a scope boundary, not an
+ * oversight.
+ */
+export interface OllamaAgentLaunch extends AgentLaunchBase {
+  provider: "ollama";
+  model: OllamaClaudeModel;
+  effort: string;
+  /** Claude always launches against an explicit MCP configuration, same as `ClaudeAgentLaunch.mcpConfigPath`. */
+  mcpConfigPath: string;
+  permissionMode?: string;
+  /** See `ClaudeAgentLaunch.strictMcpConfig`'s own doc comment — identical semantics, same underlying harness. */
+  strictMcpConfig?: boolean;
+}
+
+export type ManagedAgentLaunch = ClaudeAgentLaunch | CodexAgentLaunch | AgyAgentLaunch | OllamaAgentLaunch;
 
 /**
  * On win32, herdr joins a Codex pane's argv into a single PowerShell
@@ -371,6 +497,27 @@ export function buildAgentStartParams(
       args: [
         launch.prompt,
         ...(launch.model ? ["--model", launch.model] : []),
+        "--effort", launch.effort,
+        "--permission-mode", launch.permissionMode ?? "bypassPermissions",
+        ...buildProviderLaunchArgs("claude", launch),
+      ],
+    };
+  }
+
+  if (launch.provider === "ollama") {
+    // FACTORY-1050: the literal command John authorized —
+    // `ollama launch claude --model <model>` — with the prompt and every
+    // other Claude flag following exactly where they sit for a direct
+    // `claude` launch (see `ClaudeAgentLaunch`'s branch above): the
+    // underlying process IS the real Claude harness, so its own flag
+    // grammar is unchanged, only prefixed by the `ollama launch claude
+    // --model <model>` positionals that select which local model backs it.
+    return {
+      ...common,
+      kind: "ollama",
+      args: [
+        "launch", "claude", "--model", launch.model,
+        launch.prompt,
         "--effort", launch.effort,
         "--permission-mode", launch.permissionMode ?? "bypassPermissions",
         ...buildProviderLaunchArgs("claude", launch),

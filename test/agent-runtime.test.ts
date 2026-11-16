@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentStartParams, checkManagedAgentArgv, inventoryCodexMcpServers, managedAgentProviderOfProcess, parseCodexMcpInventory, type AgyAgentLaunch, type CodexAgentLaunch } from "../src/index.js";
+import { buildAgentStartParams, buildProviderLaunchArgs, checkManagedAgentArgv, inventoryCodexMcpServers, managedAgentProviderOfProcess, parseCodexMcpInventory, OLLAMA_CLAUDE_MODELS, ollamaPullArgv, pullOllamaModel, type AgyAgentLaunch, type CodexAgentLaunch, type OllamaAgentLaunch } from "../src/index.js";
 
 describe("provider-owned agent launch plans", () => {
   test("recognizes managed providers from executable or process name", () => {
@@ -8,6 +8,14 @@ describe("provider-owned agent launch plans", () => {
     expect(managedAgentProviderOfProcess({ argv: ["/home/worker/.local/bin/agy"] })).toBe("agy");
     expect(managedAgentProviderOfProcess({ name: "agy" })).toBe("agy");
     expect(managedAgentProviderOfProcess({ argv: ["fish"], name: "fish" })).toBeUndefined();
+  });
+
+  test("FACTORY-1050: recognizes only `ollama launch claude ...`, never a bare or differently-subcommanded ollama process", () => {
+    expect(managedAgentProviderOfProcess({ argv: ["/usr/local/bin/ollama", "launch", "claude", "--model", "qwen3.5:4b"] })).toBe("ollama");
+    expect(managedAgentProviderOfProcess({ argv: ["node"], name: "ollama launch claude" })).toBeUndefined();
+    expect(managedAgentProviderOfProcess({ argv: ["ollama", "pull", "qwen3.5:4b"] })).toBeUndefined();
+    expect(managedAgentProviderOfProcess({ argv: ["ollama", "run", "qwen3.5:4b"] })).toBeUndefined();
+    expect(managedAgentProviderOfProcess({ argv: ["ollama"] })).toBeUndefined();
   });
 
   test("checks provider-owned persistent launch arguments", () => {
@@ -93,6 +101,93 @@ describe("provider-owned agent launch plans", () => {
         "--dangerously-load-development-channels=server:butchr",
       ],
     });
+  });
+
+  test("FACTORY-1050: OLLAMA_CLAUDE_MODELS is exactly the three authorized literal strings, in order, including the unusual qwen3.8:27b spelling", () => {
+    expect(OLLAMA_CLAUDE_MODELS).toEqual(["qwen3.5:4b", "gemma4:12b", "qwen3.8:27b"]);
+  });
+
+  test.each(OLLAMA_CLAUDE_MODELS)("FACTORY-1050: builds the exact `ollama launch claude --model %s ...` argv, preserving the Claude harness's own flags unmodified", (model) => {
+    const launch: OllamaAgentLaunch = {
+      provider: "ollama",
+      name: "butchr-test-ollama",
+      paneId: "w1:p4",
+      cwd: "/work/TEST-4",
+      prompt: "follow your CLAUDE.md",
+      model,
+      effort: "high",
+      mcpConfigPath: "/work/TEST-4/mcp.json",
+      developmentChannels: ["server:butchr"],
+      timeoutMs: 30_000,
+    };
+    expect(buildAgentStartParams(launch)).toEqual({
+      kind: "ollama",
+      name: "butchr-test-ollama",
+      pane_id: "w1:p4",
+      timeout_ms: 30_000,
+      args: [
+        "launch", "claude", "--model", model,
+        "follow your CLAUDE.md",
+        "--effort", "high",
+        "--permission-mode", "bypassPermissions",
+        "--mcp-config", "/work/TEST-4/mcp.json",
+        "--dangerously-load-development-channels=server:butchr",
+      ],
+    });
+  });
+
+  test("FACTORY-1050: an explicit ollama permissionMode and strictMcpConfig forward exactly like a direct Claude launch", () => {
+    expect(buildAgentStartParams({
+      provider: "ollama",
+      name: "butchr-test-ollama",
+      paneId: "w1:p4",
+      cwd: "/work/TEST-4",
+      prompt: "follow your CLAUDE.md",
+      model: "gemma4:12b",
+      effort: "low",
+      mcpConfigPath: "/work/TEST-4/mcp.json",
+      permissionMode: "acceptEdits",
+      strictMcpConfig: true,
+    }).args).toEqual([
+      "launch", "claude", "--model", "gemma4:12b",
+      "follow your CLAUDE.md",
+      "--effort", "low",
+      "--permission-mode", "acceptEdits",
+      "--mcp-config", "/work/TEST-4/mcp.json",
+      "--strict-mcp-config",
+    ]);
+  });
+
+  test("FACTORY-1050: buildProviderLaunchArgs treats `ollama` identically to `claude` (same underlying harness, same flags)", () => {
+    const inputs = { mcpConfigPath: "/w/mcp.json", developmentChannels: ["server:butchr"] };
+    expect(buildProviderLaunchArgs("ollama", inputs)).toEqual(buildProviderLaunchArgs("claude", inputs));
+  });
+
+  test.each(OLLAMA_CLAUDE_MODELS)("FACTORY-1050: ollamaPullArgv(%s) is the literal, never-shell-interpolated `ollama pull <model>` argv", (model) => {
+    expect(ollamaPullArgv(model)).toEqual(["ollama", "pull", model]);
+  });
+
+  test("FACTORY-1050: pullOllamaModel runs the pull argv through the injected runner and reports success without ever touching a real process", async () => {
+    const calls: Array<readonly string[]> = [];
+    const result = await pullOllamaModel("qwen3.5:4b", async (argv) => {
+      calls.push(argv);
+      return { exitCode: 0 };
+    });
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual([["ollama", "pull", "qwen3.5:4b"]]);
+  });
+
+  test("FACTORY-1050: pullOllamaModel reports a clear, non-throwing failure on a nonzero pull exit code", async () => {
+    const result = await pullOllamaModel("gemma4:12b", async () => ({ exitCode: 1, stderr: "pull model manifest: file does not exist" }));
+    expect(result).toEqual({
+      ok: false,
+      reason: 'ollama pull gemma4:12b failed (exit code 1): pull model manifest: file does not exist',
+    });
+  });
+
+  test("FACTORY-1050: pullOllamaModel reports a clear failure, never throws, even when the runner itself throws (e.g. ollama not installed)", async () => {
+    const result = await pullOllamaModel("qwen3.8:27b", async () => { throw new Error("spawn ENOENT"); });
+    expect(result).toEqual({ ok: false, reason: "ollama pull qwen3.8:27b failed to start: spawn ENOENT" });
   });
 
   test("BUTCHR-453: strictMcpConfig: true produces --strict-mcp-config in a Claude launch's argv", () => {
