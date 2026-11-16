@@ -542,4 +542,43 @@ describe("FACTORY-1050: ollama pull-before-launch sequencing", () => {
     expect(result.status).toBe("success");
     expect(pullCalls).toEqual([]);
   });
+
+  // Self-review finding (jira FACTORY-1050 comment 54283): resolveCurrent()
+  // only recognized "claude"/"codex"/"agy" for an EXISTING agent discovered
+  // at this workspace's cwd — an already-running "ollama" agent (the
+  // ordinary case after a daemon restart, or a later start()/status call
+  // while one is still up) was rejected outright with "Unsupported current
+  // provider", never reaching the pull gate or anything else. Fixed by
+  // adding "ollama" to that allowlist; this test is the regression coverage
+  // the finding asked for — rehydration succeeds, and critically, it never
+  // attempts a native-transcript read (`events` would carry a `read:...`
+  // entry if it had) or any resume — see `assertNativeTranscriptProvider`'s
+  // own doc comment for why those stay excluded even though this allowlist
+  // widened.
+  test("rehydrates an existing ollama agent via resolveCurrent() without attempting any native-transcript read or resume", async () => {
+    const f = fixture({ oldProvider: "ollama" });
+    const current = await f.lifecycle.resolveCurrent();
+    expect(current?.pane_id).toBe("old");
+    expect(current?.agent).toBe("ollama");
+    expect(f.lifecycle.current).toMatchObject({ paneId: "old", provider: "ollama" });
+    expect(f.events.some(e => e.startsWith("read:"))).toBe(false);
+  });
+
+  // The ordinary "already running, no explicit replace requested" success
+  // path (same shape as every other provider's own version of this check)
+  // — start() itself, not just the bare resolveCurrent() call above.
+  test("start() rehydrates an already-running ollama agent as a plain success, no new pane, no pull", async () => {
+    const pullCalls: string[] = [];
+    const f = fixture({
+      oldProvider: "ollama",
+      provider: "ollama",
+      pullOllamaModel: async (model) => { pullCalls.push(model); return { ok: true }; },
+    });
+    const { replacePaneId, ...requestWithoutReplace } = f.request;
+    const result = await f.lifecycle.start(requestWithoutReplace);
+    expect(result).toMatchObject({ status: "success", value: "old" });
+    expect(f.lifecycle.current).toMatchObject({ paneId: "old", provider: "ollama" });
+    expect(pullCalls).toEqual([]);
+    expect(f.events).not.toContain("create");
+  });
 });

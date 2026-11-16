@@ -180,7 +180,15 @@ export class ManagedHerdrLifecycle {
     if (matches.length > 1) throw new HandoffBlocked("Multiple workers at workspace; explicit current identity required");
     const found = matches[0];
     if (found) {
-      if (!found.agent || !["claude", "codex", "agy"].includes(found.agent)) throw new HandoffBlocked("Unsupported current provider");
+      // FACTORY-1050: "ollama" joins this allowlist for ordinary identity
+      // tracking (an already-running agent at this workspace, rediscovered
+      // after a daemon restart or a later start() call) — it is a real,
+      // trackable `ManagedAgentProvider`, just not one the native-transcript/
+      // continuation paths (`nativeTranscript`, `start()`'s `continuation`
+      // branch) accept; those stay gated by `assertNativeTranscriptProvider`
+      // separately, so this change does not widen what those unverified
+      // paths will do.
+      if (!found.agent || !["claude", "codex", "agy", "ollama"].includes(found.agent)) throw new HandoffBlocked("Unsupported current provider");
       this.active = { paneId: found.pane_id, provider: found.agent as ManagedAgentProvider, cwd: this.options.cwd };
     }
     return found;
