@@ -58,9 +58,22 @@ export async function pullOllamaModel(
   model: OllamaClaudeModel,
   run: (argv: readonly string[]) => Promise<OllamaPullProcessResult> = async (argv) => {
     const proc = Bun.spawn([...argv], { stdout: "pipe", stderr: "pipe" });
-    const exitCode = await proc.exited;
+    // Drain BOTH pipes concurrently with the exit wait, not after it: a real
+    // `ollama pull` writes a large, long-running progress stream to stdout.
+    // Reading either pipe only once `exited` resolves is a classic deadlock
+    // — once the OS pipe buffer fills, the child blocks on its own write()
+    // forever, so it never exits, so a read that starts only after exit
+    // never starts at all. `Response(...).text()` consumes a stream AS it
+    // arrives, so running it alongside `proc.exited` (not sequenced after)
+    // is what keeps the child's writes unblocked regardless of how verbose
+    // or long the real pull is.
+    const [exitCode, , stderrText] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
     if (exitCode === 0) return { exitCode };
-    return { exitCode, stderr: await new Response(proc.stderr).text() };
+    return { exitCode, stderr: stderrText };
   },
 ): Promise<OllamaPullResult> {
   let result: OllamaPullProcessResult;
@@ -512,6 +525,19 @@ export function buildAgentStartParams(
     // underlying process IS the real Claude harness, so its own flag
     // grammar is unchanged, only prefixed by the `ollama launch claude
     // --model <model>` positionals that select which local model backs it.
+    //
+    // OPEN COMPATIBILITY QUESTION, not resolved here: whether `ollama
+    // launch` itself requires a `--` delimiter before forwarding the rest
+    // of argv to the wrapped harness (a pattern some wrapper CLIs use, e.g.
+    // `npm run x -- --flag`) is UNVERIFIED — this ticket's own exclusions
+    // forbid installing/running a real `ollama` binary to check its actual
+    // passthrough grammar, and the ticket's own authorizing text gives only
+    // the literal command above with no delimiter. Implemented EXACTLY as
+    // authorized (no delimiter) rather than guessing one is needed; if a
+    // real `ollama launch claude` does require `--` here, every flag below
+    // would need to move after it — confirm against the real CLI (or its
+    // documentation) before this path is ever used against a live install.
+    // Not something a mocked test can settle either way.
     return {
       ...common,
       kind: "ollama",

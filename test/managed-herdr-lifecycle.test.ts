@@ -496,14 +496,21 @@ describe("FACTORY-1050: ollama pull-before-launch sequencing", () => {
     const f = fixture({
       provider: "ollama",
       noExisting: true,
-      pullOllamaModel: async (model) => { pullCalls.push(model); return { ok: true }; },
+      // Recorded into the SAME shared `events` array `create`/`start:<pane>`
+      // land in, so ordering is asserted against one timeline, not two
+      // independent arrays that merely happen to both be non-empty.
+      pullOllamaModel: async (model) => { pullCalls.push(model); f.events.push(`pull:${model}`); return { ok: true }; },
     });
     const result = await f.lifecycle.start(f.request);
     expect(result).toMatchObject({ status: "success", account: account("ollama"), value: "new-1" });
     expect(f.lifecycle.current).toMatchObject({ paneId: "new-1", provider: "ollama" });
     expect(pullCalls).toEqual(["qwen3.5:4b"]);
-    // The pull is recorded before the workspace/pane is ever created.
-    expect(f.events.indexOf("create")).toBeGreaterThan(-1);
+    const pullIndex = f.events.indexOf("pull:qwen3.5:4b");
+    const createIndex = f.events.indexOf("create");
+    const startIndex = f.events.indexOf("start:new-1");
+    expect(pullIndex).toBeGreaterThan(-1);
+    expect(createIndex).toBeGreaterThan(pullIndex);
+    expect(startIndex).toBeGreaterThan(createIndex);
     expect(f.launches[0]?.kind).toBe("ollama");
     expect(f.launches[0]?.args.slice(0, 4)).toEqual(["launch", "claude", "--model", "qwen3.5:4b"]);
   });
