@@ -325,7 +325,19 @@ export class ManagedHerdrLifecycle {
                     + `Begin your response with ${token} on its own line, followed by Ready for the task brief.`;
                   freshLaunchAttempted=true;
                   await startManagedAgent(this.options.client,buildAgentStartParams({...targetLaunch,paneId,prompt:bootstrap}),this.options.startOptions);
-                  await this.awaitAcknowledgement(target,token);
+                  // FACTORY-1050 (independent review, drovr PR #106): `ollama`
+                  // has no verified native-transcript format, so it cannot use
+                  // `awaitAcknowledgement` — that reads the target's own
+                  // transcript to content-match its exact reply, exactly the
+                  // capability this ticket's exclusions forbid verifying for
+                  // this provider. `awaitReady` below is the "safe fresh-launch
+                  // readiness path ... without importing history" that review
+                  // asked for instead: it confirms the target is alive and has
+                  // finished the turn (idle/done), never inspecting what it
+                  // said — a strictly weaker guarantee than the content-matched
+                  // acknowledgement every other provider gets.
+                  if (account.provider === "ollama") await this.awaitReady(target);
+                  else await this.awaitAcknowledgement(target, token);
                   await this.assertStable(old);
                   const {agent}=await this.options.client.agent.get(old.paneId);
                   if(JSON.stringify(agent.agent_session)!==sourceReference)throw new HandoffBlocked("Source native identity changed before fresh handoff commit");
@@ -485,5 +497,28 @@ export class ManagedHerdrLifecycle {
       if (elapsed < timeout) await this.wait(Math.min(interval, timeout - elapsed, remaining));
     }
     throw new HandoffBlocked("Target did not acknowledge an imported working summary before the deadline");
+  }
+
+  /**
+   * FACTORY-1050 (independent review, drovr PR #106): the fresh-launch
+   * readiness check for a provider with no verified native-transcript
+   * format (today: `"ollama"` only) — see this method's one call site's
+   * own doc comment for the full reasoning. Confirms the target pane still
+   * carries the expected identity and has finished its turn (idle/done,
+   * the SAME liveness signal `assertStable` already trusts elsewhere in
+   * this file), never reading or matching what it actually said.
+   */
+  private async awaitReady(target: ManagedHerdrIdentity): Promise<void> {
+    const interval = this.options.pollIntervalMs ?? 500;
+    const timeout = this.options.acknowledgementTimeoutMs ?? 120_000;
+    const deadline = performance.now() + timeout;
+    for (;;) {
+      const { agents } = await this.options.client.agent.list();
+      const found = agents.find(a => a.pane_id === target.paneId && a.cwd === target.cwd && a.agent === target.provider);
+      if (found && (found.agent_status === "idle" || found.agent_status === "done")) return;
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw new HandoffBlocked("Target did not become ready before the deadline");
+      await this.wait(Math.min(interval, remaining));
+    }
   }
 }

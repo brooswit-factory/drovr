@@ -582,3 +582,51 @@ describe("FACTORY-1050: ollama pull-before-launch sequencing", () => {
     expect(f.events).not.toContain("create");
   });
 });
+
+describe("FACTORY-1050: ollama fresh-session handoff (independent review, drovr PR #106)", () => {
+  // Fresh replacement into a provider with no verified native-transcript
+  // format used to hang until the acknowledgement deadline and then block
+  // outright — `awaitAcknowledgement` unconditionally tried to read the
+  // NEW target's own transcript, which `assertNativeTranscriptProvider`
+  // always refuses for "ollama". `awaitReady` (readiness via agent_status
+  // alone, never transcript content) fixes this; this test is the
+  // regression coverage for it.
+  test("a fresh replacement into ollama commits without ever reading the new target's native transcript, still pulls the model first, and retires the old worker only after the target is ready", async () => {
+    const pullCalls: string[] = [];
+    const f = fixture({
+      oldProvider: "codex",
+      provider: "ollama",
+      pullOllamaModel: async (model) => { pullCalls.push(model); return { ok: true }; },
+    });
+    const result = await f.lifecycle.start({ ...f.request, historyMode: "fresh" });
+    expect(result.status).toBe("success");
+    expect(pullCalls).toEqual(["qwen3.5:4b"]);
+    // Never reads the new ollama target's own native transcript to verify readiness.
+    expect(f.events).not.toContain("read:new-1");
+    expect(f.events.indexOf("close:old")).toBeGreaterThan(f.events.indexOf("start:new-1"));
+    expect(f.launches).toHaveLength(1);
+    expect(f.launches[0]?.kind).toBe("ollama");
+    expect(f.lifecycle.current).toMatchObject({ paneId: "new-1", provider: "ollama" });
+  });
+
+  test("an ollama target that never reaches idle/done blocks the handoff, never retiring the old worker", async () => {
+    const f = fixture({
+      oldProvider: "codex",
+      provider: "ollama",
+      slowRead: true, // irrelevant to the new readiness check, but gets a short 2ms acknowledgementTimeoutMs from the fixture so this test stays fast
+      pullOllamaModel: async () => ({ ok: true }),
+    });
+    // Force the new pane to stay "working" forever, never idle/done.
+    const originalStart = f.client.agent.start.bind(f.client.agent);
+    f.client.agent.start = async (params: any) => {
+      const result = await originalStart(params);
+      const row = f.rows().find(a => a.pane_id === params.pane_id);
+      if (row) row.agent_status = "working";
+      return result;
+    };
+    const result = await f.lifecycle.start({ ...f.request, historyMode: "fresh" });
+    expect(result.status).toBe("blocked");
+    expect(f.events).not.toContain("close:old");
+    expect(f.lifecycle.current?.paneId).toBe("old");
+  });
+});
