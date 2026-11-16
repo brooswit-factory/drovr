@@ -518,31 +518,35 @@ export function buildAgentStartParams(
   }
 
   if (launch.provider === "ollama") {
-    // FACTORY-1050: the literal command John authorized —
-    // `ollama launch claude --model <model>` — with the prompt and every
-    // other Claude flag following exactly where they sit for a direct
-    // `claude` launch (see `ClaudeAgentLaunch`'s branch above): the
-    // underlying process IS the real Claude harness, so its own flag
-    // grammar is unchanged, only prefixed by the `ollama launch claude
-    // --model <model>` positionals that select which local model backs it.
-    //
-    // OPEN COMPATIBILITY QUESTION, not resolved here: whether `ollama
-    // launch` itself requires a `--` delimiter before forwarding the rest
-    // of argv to the wrapped harness (a pattern some wrapper CLIs use, e.g.
-    // `npm run x -- --flag`) is UNVERIFIED — this ticket's own exclusions
-    // forbid installing/running a real `ollama` binary to check its actual
-    // passthrough grammar, and the ticket's own authorizing text gives only
-    // the literal command above with no delimiter. Implemented EXACTLY as
-    // authorized (no delimiter) rather than guessing one is needed; if a
-    // real `ollama launch claude` does require `--` here, every flag below
-    // would need to move after it — confirm against the real CLI (or its
-    // documentation) before this path is ever used against a live install.
-    // Not something a mocked test can settle either way.
+    // FACTORY-1050 (jira comment 54288, independently confirmed against
+    // https://docs.ollama.com/integrations/claude-code "Command-Line
+    // Syntax" / "Non-Interactive Example"): the DOCUMENTED grammar is
+    //   ollama launch claude --model <model> --yes -- <claude args...>
+    // `--yes` is Ollama's own launcher flag — "skips interactive selectors
+    // ... designed for scripts, Docker, or CI environments" — exactly this
+    // caller's situation (every butchr/drovr launch is unattended), and the
+    // docs call it required alongside `--model`. `--` is the documented
+    // delimiter: "Arguments after `--` are passed directly to Claude Code."
+    // Nothing Claude-side changes at that point — the same prompt/--effort/
+    // --permission-mode/--mcp-config/development-channels flags a direct
+    // `claude` launch gets (`ClaudeAgentLaunch`'s branch above), forwarded
+    // unchanged after the delimiter; `--yes` only controls the WRAPPER's
+    // own model/selector behavior and carries no Claude permission meaning
+    // of its own (comment 54288 is explicit on this point). The docs'
+    // own non-interactive example additionally passes Claude's `-p` flag —
+    // that is THEIR headless example, not a requirement imposed on this
+    // launch: an ordinary managed/interactive session keeps the prompt as
+    // a bare positional after `--`, exactly as a direct `claude` launch
+    // already does, never forced into `-p`'s headless-print mode.
+    // No minimum Ollama version or Windows-specific grammar is documented
+    // on that page for this command — none is assumed or invented here;
+    // an installation too old to support `launch`/`--yes` simply fails the
+    // real spawn, surfaced through the ordinary launch-failure path.
     return {
       ...common,
       kind: "ollama",
       args: [
-        "launch", "claude", "--model", launch.model,
+        "launch", "claude", "--model", launch.model, "--yes", "--",
         launch.prompt,
         "--effort", launch.effort,
         "--permission-mode", launch.permissionMode ?? "bypassPermissions",

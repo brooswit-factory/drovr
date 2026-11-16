@@ -107,7 +107,7 @@ describe("provider-owned agent launch plans", () => {
     expect(OLLAMA_CLAUDE_MODELS).toEqual(["qwen3.5:4b", "gemma4:12b", "qwen3.8:27b"]);
   });
 
-  test.each(OLLAMA_CLAUDE_MODELS)("FACTORY-1050: builds the exact `ollama launch claude --model %s ...` argv, preserving the Claude harness's own flags unmodified", (model) => {
+  test.each(OLLAMA_CLAUDE_MODELS)("FACTORY-1050: builds the exact `ollama launch claude --model %s --yes -- ...` argv (docs.ollama.com/integrations/claude-code), preserving the Claude harness's own flags unmodified after the delimiter", (model) => {
     const launch: OllamaAgentLaunch = {
       provider: "ollama",
       name: "butchr-test-ollama",
@@ -126,7 +126,7 @@ describe("provider-owned agent launch plans", () => {
       pane_id: "w1:p4",
       timeout_ms: 30_000,
       args: [
-        "launch", "claude", "--model", model,
+        "launch", "claude", "--model", model, "--yes", "--",
         "follow your CLAUDE.md",
         "--effort", "high",
         "--permission-mode", "bypassPermissions",
@@ -136,7 +136,7 @@ describe("provider-owned agent launch plans", () => {
     });
   });
 
-  test("FACTORY-1050: an explicit ollama permissionMode and strictMcpConfig forward exactly like a direct Claude launch", () => {
+  test("FACTORY-1050: an explicit ollama permissionMode and strictMcpConfig forward exactly like a direct Claude launch, still after the -- delimiter", () => {
     expect(buildAgentStartParams({
       provider: "ollama",
       name: "butchr-test-ollama",
@@ -149,13 +149,23 @@ describe("provider-owned agent launch plans", () => {
       permissionMode: "acceptEdits",
       strictMcpConfig: true,
     }).args).toEqual([
-      "launch", "claude", "--model", "gemma4:12b",
+      "launch", "claude", "--model", "gemma4:12b", "--yes", "--",
       "follow your CLAUDE.md",
       "--effort", "low",
       "--permission-mode", "acceptEdits",
       "--mcp-config", "/work/TEST-4/mcp.json",
       "--strict-mcp-config",
     ]);
+  });
+
+  test("FACTORY-1050: --yes and -- are literal, fixed argv elements — never derived from or affected by the model string", () => {
+    for (const model of OLLAMA_CLAUDE_MODELS) {
+      const args = buildAgentStartParams({
+        provider: "ollama", name: "n", paneId: "p", cwd: "/w", prompt: "x",
+        model, effort: "high", mcpConfigPath: "/w/mcp.json",
+      }).args!;
+      expect(args.slice(0, 6)).toEqual(["launch", "claude", "--model", model, "--yes", "--"]);
+    }
   });
 
   test("FACTORY-1050: buildProviderLaunchArgs treats `ollama` identically to `claude` (same underlying harness, same flags)", () => {
