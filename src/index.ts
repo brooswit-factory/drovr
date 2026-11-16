@@ -32,7 +32,7 @@ export {
   type ResidentDeliveryDeps,
   type ResidentDeliveryOptions,
 } from "./resident-delivery.js";
-export { ManagedConversationSession, HANDOFF_ACK, HANDOFF_CHUNK_CHARS, type ConversationIdentity, type ConversationSessionOptions } from "./conversation-session.js";
+export { ManagedConversationSession, HANDOFF_ACK, HANDOFF_CHUNK_CHARS, type ConversationIdentity, type ConversationSessionOptions, type ConversationProvider } from "./conversation-session.js";
 export { providerSetupSeed, applyProviderSetupSeed, type ProviderSetupFile } from "./provider-setup.js";
 
 export {
@@ -111,6 +111,13 @@ export {
   type ClaudeAgentLaunch,
   type CodexAgentLaunch,
   type AgyAgentLaunch,
+  type OllamaAgentLaunch,
+  OLLAMA_CLAUDE_MODELS,
+  type OllamaClaudeModel,
+  ollamaPullArgv,
+  pullOllamaModel,
+  type OllamaPullProcessResult,
+  type OllamaPullResult,
   type McpServerLaunchConfig,
   type DisabledMcpServer,
   type CodexMcpInventory,

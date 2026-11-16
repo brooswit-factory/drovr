@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { DrovrClient } from "../src/drovr-client.js";
 import { ManagedHerdrLifecycle, stagedTargetName, type ManagedHerdrStartRequest } from "../src/managed-herdr-lifecycle.js";
 import { ProviderAvailabilityRegistry } from "../src/provider-fallback.js";
-import type { ManagedAgentProvider } from "../src/agent-runtime.js";
+import type { ManagedAgentProvider, OllamaPullResult } from "../src/agent-runtime.js";
 
-function fixture(options: { source?: string; transcriptLimits?: import("../src/transcript-limits.js").TranscriptLimits; ackAt?: number; readFail?: boolean; startFail?: boolean; ack?: "missing" | "empty" | "prompt"; closeFail?: boolean; kickoffFail?: boolean; provider?: ManagedAgentProvider; large?: boolean; fastDone?: boolean; disappear?: boolean; slowRead?: boolean; oldProvider?: ManagedAgentProvider; priority?: ManagedAgentProvider[]; availability?: ProviderAvailabilityRegistry; kickoffScreen?: (provider: ManagedAgentProvider) => string | undefined; launchPending?: boolean; launchPendingClearsAfterPolls?: number; launchPendingTimeoutMs?: number } = {}) {
+function fixture(options: { source?: string; transcriptLimits?: import("../src/transcript-limits.js").TranscriptLimits; ackAt?: number; readFail?: boolean; startFail?: boolean; ack?: "missing" | "empty" | "prompt"; closeFail?: boolean; kickoffFail?: boolean; provider?: ManagedAgentProvider; large?: boolean; fastDone?: boolean; disappear?: boolean; slowRead?: boolean; oldProvider?: ManagedAgentProvider; priority?: ManagedAgentProvider[]; availability?: ProviderAvailabilityRegistry; kickoffScreen?: (provider: ManagedAgentProvider) => string | undefined; launchPending?: boolean; launchPendingClearsAfterPolls?: number; launchPendingTimeoutMs?: number; pullOllamaModel?: (model: string) => Promise<OllamaPullResult>; noExisting?: boolean } = {}) {
   const events: string[] = [];
   const kickedOff = new Set<string>();
   const screens = new Map<string, string>();
@@ -16,7 +16,7 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
   const source = options.source ?? (options.large ? "history".repeat(15_000) : "saved history with pending work");
   const histories = new Map<string, string>([["old", source]]);
   const row = (pane: string, provider: ManagedAgentProvider, launchPending?: boolean) => ({ pane_id: pane, cwd: "/work", agent: provider, agent_status: "idle", agent_session: { agent: provider, kind: "id", value: pane, source: "test" }, ...(launchPending ? { launch_pending: true } : {}) });
-  let rows = [{...row("old", options.oldProvider ?? "claude"), name: "role"}];
+  let rows = options.noExisting ? [] : [{...row("old", options.oldProvider ?? "claude"), name: "role"}];
   let count = 0;
   let launchPendingPolls = 0;
   const prompts: string[] = [];
@@ -90,7 +90,7 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
     },
   };
   const availability = options.availability ?? new ProviderAvailabilityRegistry();
-  const lifecycle = new ManagedHerdrLifecycle({ client: client as unknown as DrovrClient, cwd: "/work", availability, ...(options.transcriptLimits ? { transcriptLimits: options.transcriptLimits } : {}), ...(options.launchPendingTimeoutMs !== undefined ? { launchPendingTimeoutMs: options.launchPendingTimeoutMs } : {}), startOptions: { checkCanonicalMode: async () => "raw" as const }, wait: async () => {}, pollIntervalMs: 1, acknowledgementTimeoutMs: options.slowRead ? 2 : 100,
+  const lifecycle = new ManagedHerdrLifecycle({ client: client as unknown as DrovrClient, cwd: "/work", availability, ...(options.transcriptLimits ? { transcriptLimits: options.transcriptLimits } : {}), ...(options.launchPendingTimeoutMs !== undefined ? { launchPendingTimeoutMs: options.launchPendingTimeoutMs } : {}), ...(options.pullOllamaModel ? { pullOllamaModel: options.pullOllamaModel as any } : {}), startOptions: { checkCanonicalMode: async () => "raw" as const }, wait: async () => {}, pollIntervalMs: 1, acknowledgementTimeoutMs: options.slowRead ? 2 : 100,
     readTranscript: async ({ session }) => {
       events.push(`read:${session.value}`);
       if (options.readFail && session.value === "old") throw new Error("missing transcript");
@@ -99,11 +99,12 @@ function fixture(options: { source?: string; transcriptLimits?: import("../src/t
     },
   });
   const provider = options.provider ?? "codex";
-  const request: ManagedHerdrStartRequest = { priority: (options.priority ?? [provider]).map(p => ({ provider: p, accountId: "default" })), label: "role", replacePaneId: "old", kickoff: () => "kickoff", prepare: async provider => {
+  const request: ManagedHerdrStartRequest = { priority: (options.priority ?? [provider]).map(p => ({ provider: p, accountId: "default" })), label: "role", ...(options.noExisting ? {} : { replacePaneId: "old" }), kickoff: () => "kickoff", prepare: async provider => {
     events.push("prepare");
     return { launch: provider === "claude"
       ? { provider, cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch", effort: "high", mcpConfigPath: "/work/mcp.json" }
       : provider === "codex" ? { provider, cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch", mcpServers: [] }
+      : provider === "ollama" ? { provider, cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch", model: "qwen3.5:4b" as const, effort: "high", mcpConfigPath: "/work/mcp.json" }
       : { provider, cwd: "/work", name: "role", paneId: "ignored", prompt: "must not launch" } };
   } };
   return { lifecycle, availability, launches, client: client as unknown as DrovrClient, request, events, prompts, histories, rows: () => rows, gate: (value: Promise<void>) => { gate = value; } };
@@ -486,5 +487,146 @@ describe("explicit fresh-session handoffs",()=>{
   test("changed source native identity refuses fresh commit",async()=>{
     const f=fixture();const prompt=f.client.agent.start.bind(f.client.agent);f.client.agent.start=async(...args:any[])=>{const result=await (prompt as any)(...args);f.rows()[0]!.agent_session.value="changed";return result;};
     expect((await f.lifecycle.start({...f.request,historyMode:"fresh"})).status).toBe("blocked");expect(f.events).not.toContain("close:old");expect(f.lifecycle.current?.paneId).toBe("old");
+  });
+});
+
+describe("FACTORY-1050: ollama pull-before-launch sequencing", () => {
+  test("pulls the selected model before creating any pane, and only launches after a successful pull", async () => {
+    const pullCalls: string[] = [];
+    const f = fixture({
+      provider: "ollama",
+      noExisting: true,
+      // Recorded into the SAME shared `events` array `create`/`start:<pane>`
+      // land in, so ordering is asserted against one timeline, not two
+      // independent arrays that merely happen to both be non-empty.
+      pullOllamaModel: async (model) => { pullCalls.push(model); f.events.push(`pull:${model}`); return { ok: true }; },
+    });
+    const result = await f.lifecycle.start(f.request);
+    expect(result).toMatchObject({ status: "success", account: account("ollama"), value: "new-1" });
+    expect(f.lifecycle.current).toMatchObject({ paneId: "new-1", provider: "ollama" });
+    expect(pullCalls).toEqual(["qwen3.5:4b"]);
+    const pullIndex = f.events.indexOf("pull:qwen3.5:4b");
+    const createIndex = f.events.indexOf("create");
+    const startIndex = f.events.indexOf("start:new-1");
+    expect(pullIndex).toBeGreaterThan(-1);
+    expect(createIndex).toBeGreaterThan(pullIndex);
+    expect(startIndex).toBeGreaterThan(createIndex);
+    expect(f.launches[0]?.kind).toBe("ollama");
+    expect(f.launches[0]?.args.slice(0, 4)).toEqual(["launch", "claude", "--model", "qwen3.5:4b"]);
+  });
+
+  test("a failed pull blocks the launch outright: no workspace is created, no pane is started", async () => {
+    const pullCalls: string[] = [];
+    const f = fixture({
+      provider: "ollama",
+      noExisting: true,
+      pullOllamaModel: async (model) => { pullCalls.push(model); return { ok: false, reason: "ollama pull qwen3.5:4b failed (exit code 1): manifest not found" }; },
+    });
+    const result = await f.lifecycle.start(f.request);
+    expect(result).toMatchObject({ status: "blocked", reason: "ollama pull qwen3.5:4b failed (exit code 1): manifest not found" });
+    expect(pullCalls).toEqual(["qwen3.5:4b"]);
+    expect(f.events).not.toContain("create");
+    expect(f.launches).toHaveLength(0);
+    expect(f.lifecycle.current).toBeUndefined();
+  });
+
+  test("a non-ollama launch never consults pullOllamaModel at all", async () => {
+    const pullCalls: string[] = [];
+    const f = fixture({
+      oldProvider: "codex",
+      priority: ["claude", "codex"],
+      pullOllamaModel: async (model) => { pullCalls.push(model); return { ok: true }; },
+    });
+    f.availability.observePane(account("codex"), "idle", lunaReserve);
+    const result = await f.lifecycle.start(f.request);
+    expect(result.status).toBe("success");
+    expect(pullCalls).toEqual([]);
+  });
+
+  // Self-review finding (jira FACTORY-1050 comment 54283): resolveCurrent()
+  // only recognized "claude"/"codex"/"agy" for an EXISTING agent discovered
+  // at this workspace's cwd — an already-running "ollama" agent (the
+  // ordinary case after a daemon restart, or a later start()/status call
+  // while one is still up) was rejected outright with "Unsupported current
+  // provider", never reaching the pull gate or anything else. Fixed by
+  // adding "ollama" to that allowlist; this test is the regression coverage
+  // the finding asked for — rehydration succeeds, and critically, it never
+  // attempts a native-transcript read (`events` would carry a `read:...`
+  // entry if it had) or any resume — see `assertNativeTranscriptProvider`'s
+  // own doc comment for why those stay excluded even though this allowlist
+  // widened.
+  test("rehydrates an existing ollama agent via resolveCurrent() without attempting any native-transcript read or resume", async () => {
+    const f = fixture({ oldProvider: "ollama" });
+    const current = await f.lifecycle.resolveCurrent();
+    expect(current?.pane_id).toBe("old");
+    expect(current?.agent).toBe("ollama");
+    expect(f.lifecycle.current).toMatchObject({ paneId: "old", provider: "ollama" });
+    expect(f.events.some(e => e.startsWith("read:"))).toBe(false);
+  });
+
+  // The ordinary "already running, no explicit replace requested" success
+  // path (same shape as every other provider's own version of this check)
+  // — start() itself, not just the bare resolveCurrent() call above.
+  test("start() rehydrates an already-running ollama agent as a plain success, no new pane, no pull", async () => {
+    const pullCalls: string[] = [];
+    const f = fixture({
+      oldProvider: "ollama",
+      provider: "ollama",
+      pullOllamaModel: async (model) => { pullCalls.push(model); return { ok: true }; },
+    });
+    const { replacePaneId, ...requestWithoutReplace } = f.request;
+    const result = await f.lifecycle.start(requestWithoutReplace);
+    expect(result).toMatchObject({ status: "success", value: "old" });
+    expect(f.lifecycle.current).toMatchObject({ paneId: "old", provider: "ollama" });
+    expect(pullCalls).toEqual([]);
+    expect(f.events).not.toContain("create");
+  });
+});
+
+describe("FACTORY-1050: ollama fresh-session handoff (independent review, drovr PR #106)", () => {
+  // Fresh replacement into a provider with no verified native-transcript
+  // format used to hang until the acknowledgement deadline and then block
+  // outright — `awaitAcknowledgement` unconditionally tried to read the
+  // NEW target's own transcript, which `assertNativeTranscriptProvider`
+  // always refuses for "ollama". `awaitReady` (readiness via agent_status
+  // alone, never transcript content) fixes this; this test is the
+  // regression coverage for it.
+  test("a fresh replacement into ollama commits without ever reading the new target's native transcript, still pulls the model first, and retires the old worker only after the target is ready", async () => {
+    const pullCalls: string[] = [];
+    const f = fixture({
+      oldProvider: "codex",
+      provider: "ollama",
+      pullOllamaModel: async (model) => { pullCalls.push(model); return { ok: true }; },
+    });
+    const result = await f.lifecycle.start({ ...f.request, historyMode: "fresh" });
+    expect(result.status).toBe("success");
+    expect(pullCalls).toEqual(["qwen3.5:4b"]);
+    // Never reads the new ollama target's own native transcript to verify readiness.
+    expect(f.events).not.toContain("read:new-1");
+    expect(f.events.indexOf("close:old")).toBeGreaterThan(f.events.indexOf("start:new-1"));
+    expect(f.launches).toHaveLength(1);
+    expect(f.launches[0]?.kind).toBe("ollama");
+    expect(f.lifecycle.current).toMatchObject({ paneId: "new-1", provider: "ollama" });
+  });
+
+  test("an ollama target that never reaches idle/done blocks the handoff, never retiring the old worker", async () => {
+    const f = fixture({
+      oldProvider: "codex",
+      provider: "ollama",
+      slowRead: true, // irrelevant to the new readiness check, but gets a short 2ms acknowledgementTimeoutMs from the fixture so this test stays fast
+      pullOllamaModel: async () => ({ ok: true }),
+    });
+    // Force the new pane to stay "working" forever, never idle/done.
+    const originalStart = f.client.agent.start.bind(f.client.agent);
+    f.client.agent.start = async (params: any) => {
+      const result = await originalStart(params);
+      const row = f.rows().find(a => a.pane_id === params.pane_id);
+      if (row) row.agent_status = "working";
+      return result;
+    };
+    const result = await f.lifecycle.start({ ...f.request, historyMode: "fresh" });
+    expect(result.status).toBe("blocked");
+    expect(f.events).not.toContain("close:old");
+    expect(f.lifecycle.current?.paneId).toBe("old");
   });
 });
